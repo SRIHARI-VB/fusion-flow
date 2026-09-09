@@ -1,0 +1,222 @@
+"""Connector framework models: the generic lifecycle tables used by every
+connector, present and future (WhatsApp/Razorpay in phase 1).
+
+Per the plan's "Connector Lifecycle Framework" section, everything here is
+provider-agnostic - `connector_types` is the catalog a provider adapter
+registers itself against by `key`; `connector_instances` is the per-tenant
+row tracking the fixed state machine; `connector_credentials` holds only
+ciphertext (never selected into a response DTO - see
+`fusionflow.modules.connectors.schemas`); `connector_events` is the
+audit/health trail; `connector_oauth_states` correlates an OAuth callback
+back to the tenant/instance that started it.
+
+RLS note: `connector_types` is a **global catalog** (like
+`field_templates`), not tenant data, so it is deliberately NOT
+`TenantScopedMixin` - every other table here is tenant-scoped and needs a
+`fusionflow.db.rls.enable_tenant_rls(op, "<table>")` call in its eventual
+migration (not added yet - models only, per this wave's scope).
+"""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from fusionflow.db.base import Base, TenantScopedMixin, TimestampMixin
+
+
+class ConnectorCategory(str, enum.Enum):
+    MESSAGING = "messaging"
+    PAYMENT = "payment"
+    CALENDAR = "calendar"
+    MAIL = "mail"
+    SUPPORT_AGENT = "support_agent"
+    DASHBOARD = "dashboard"
+
+
+class ConnectorState(str, enum.Enum):
+    """Fixed lifecycle state machine (plan: "Connector Lifecycle Framework").
+
+    not_connected -> connecting -> connected -> action_required -> error
+    -> disconnected, with error/action_required able to loop back to
+    connecting via reconnect. Enforced in `service.py`, not by a DB
+    constraint (the set of legal transitions is app-level policy).
+    """
+
+    NOT_CONNECTED = "not_connected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    ACTION_REQUIRED = "action_required"
+    ERROR = "error"
+    DISCONNECTED = "disconnected"
+
+
+class HealthStatus(str, enum.Enum):
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    DOWN = "down"
+
+
+class ConnectorEventType(str, enum.Enum):
+    WEBHOOK_RECEIVED = "webhook_received"
+    SYNC = "sync"
+    OAUTH_CALLBACK = "oauth_callback"
+    ERROR = "error"
+
+
+class ConnectorType(Base, TimestampMixin):
+    """Global connector catalog - one row per provider adapter.
+
+    Not tenant-scoped: every business sees the same catalog. Seeded by
+    application code (or a future admin-managed template), not per-tenant
+    writes. `key` is what `ConnectorRegistry` (base.py) is keyed on.
+    """
+
+    __tablename__ = "connector_types"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
+    category: Mapped[ConnectorCategory] = mapped_column(
+        Enum(ConnectorCategory, name="connector_category", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    config_schema: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    oauth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_enabled_globally: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+
+    instances: Mapped[list["ConnectorInstance"]] = relationship(back_populates="connector_type")
+
+
+class ConnectorInstance(Base, TenantScopedMixin, TimestampMixin):
+    """One tenant's connection to one provider (e.g. "this business's WhatsApp number")."""
+
+    __tablename__ = "connector_instances"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    state: Mapped[ConnectorState] = mapped_column(
+        Enum(ConnectorState, name="connector_state", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+        default=ConnectorState.NOT_CONNECTED,
+        server_default=ConnectorState.NOT_CONNECTED.value,
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Safe-field allowlist only (e.g. WABA display phone number, Razorpay
+    # merchant id) - populated exclusively by adapter code, never raw
+    # provider payloads. See base.ConnectorAdapter docstring.
+    connected_identity: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    health_status: Mapped[HealthStatus | None] = mapped_column(
+        Enum(HealthStatus, name="connector_health_status", values_callable=lambda e: [m.value for m in e]),
+        nullable=True,
+    )
+    last_webhook_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Retained permanently after disconnect (plan: "for support") - never
+    # cleared by disconnect, unlike connected_identity/health which a
+    # reconnect will refresh.
+    provider_ref_ids: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    connector_type: Mapped[ConnectorType] = relationship(back_populates="instances")
+    credentials: Mapped[list["ConnectorCredential"]] = relationship(
+        back_populates="connector_instance", cascade="all, delete-orphan"
+    )
+    events: Mapped[list["ConnectorEvent"]] = relationship(
+        back_populates="connector_instance", cascade="all, delete-orphan"
+    )
+
+
+class ConnectorCredential(Base, TenantScopedMixin):
+    """Encrypted secret material for one connector instance.
+
+    Exactly one active row per instance in phase 1 - rotation overwrites
+    `ciphertext`/`redacted_preview` in place and stamps `rotated_at`
+    rather than inserting a new row, matching the field shape called for
+    in the plan. `ciphertext` is a Fernet token (see
+    `fusionflow.core.encryption`) over a small JSON blob so multi-field
+    secrets (e.g. Razorpay's key_id + key_secret + webhook_secret) fit in
+    one column. **Never** add this model to a Pydantic response schema.
+    """
+
+    __tablename__ = "connector_credentials"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_instance_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("connector_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    encryption_key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    redacted_preview: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    connector_instance: Mapped[ConnectorInstance] = relationship(back_populates="credentials")
+
+
+class ConnectorEvent(Base, TenantScopedMixin):
+    """Audit/health trail row - one per webhook delivery, sync, OAuth callback, or error."""
+
+    __tablename__ = "connector_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_instance_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_instances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[ConnectorEventType] = mapped_column(
+        Enum(ConnectorEventType, name="connector_event_type", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    connector_instance: Mapped[ConnectorInstance] = relationship(back_populates="events")
+
+
+class ConnectorOAuthState(Base, TenantScopedMixin):
+    """Short-lived CSRF-safe state for correlating an OAuth callback.
+
+    `connector_instance_id` is nullable because the instance may not
+    exist yet the first time a tenant starts a brand-new OAuth connect
+    (vs. a reconnect of an existing `error`/`action_required` instance).
+    """
+
+    __tablename__ = "connector_oauth_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_instances.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    state_token: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    redirect_context: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
