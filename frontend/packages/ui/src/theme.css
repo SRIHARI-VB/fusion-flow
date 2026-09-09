@@ -1,0 +1,76 @@
+/**
+ * fusion-flow design tokens (light + dark).
+ * Source of truth: docs/design/README.md "Palette tokens" section.
+ * Accent/success/surface values are exact; secondary/muted/border/destructive
+ * tokens are additions needed to build coherent real components.
+ */
+
+:root {
+  /* surfaces */
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  /* structure */
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #f97316;
+
+  /* muted / secondary */
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+
+  /* accent (brand) */
+  --accent: #f97316;
+  --accent-foreground: #ffffff;
+  --accent-soft: #ffedd5;
+
+  /* semantic */
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --success-soft: #dcfce7;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+
+  /* sidebar / chrome */
+  --sidebar: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-foreground: #334155;
+  --sidebar-active: #fff2e8;
+
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: #111214;
+  --foreground: #f1f5f9;
+  --card: #1a1b1e;
+  --card-foreground: #f1f5f9;
+
+  --border: #2a2b2f;
+  --input: #2a2b2f;
+  --ring: #f97316;
+
+  --muted: #1f2023;
+  --muted-foreground: #9aa3af;
+  --secondary: #1f2023;
+  --secondary-foreground: #f1f5f9;
+
+  --accent: #f97316;
+  --accent-foreground: #ffffff;
+  --accent-soft: #3a2412;
+
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --success-soft: #103b1f;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+
+  --sidebar: #1a1b1e;
+  --sidebar-border: #2a2b2f;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-active: #3a2412;
+}

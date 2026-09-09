@@ -1,0 +1,17 @@
+{
+  "name": "fusion-flow",
+  "private": true,
+  "version": "0.0.0",
+  "description": "fusion-flow monorepo root — npm workspaces (pnpm is not available in this sandbox; see frontend/web/README.md).",
+  "workspaces": [
+    "frontend/web",
+    "frontend/admin",
+    "frontend/packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=web",
+    "dev:admin": "npm run dev --workspace=admin",
+    "build:web": "npm run build --workspace=web",
+    "build:admin": "npm run build --workspace=admin"
+  }
+}

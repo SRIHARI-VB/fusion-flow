@@ -1,0 +1,15 @@
+{
+  "name": "@fusion-flow/ts-types",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Hand-written shared TS types mirroring the backend API contract. Will be replaced/augmented by OpenAPI-generated types once more backend endpoints exist.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
