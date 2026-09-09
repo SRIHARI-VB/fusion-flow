@@ -14,6 +14,7 @@ import {
   Workflow,
   Bot,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 
 export interface NavItem {
@@ -58,6 +59,9 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Settings",
-    items: [{ label: "Settings", path: "/settings", icon: Settings }],
+    items: [
+      { label: "Custom Fields", path: "/settings/custom-fields", icon: SlidersHorizontal },
+      { label: "Settings", path: "/settings", icon: Settings },
+    ],
   },
 ];

@@ -1,5 +1,12 @@
 import { apiClient } from "../../lib/api-client";
-import type { ApplyTemplateResponse, CustomFieldEntityType, FieldDefinition, FieldTemplate } from "./types";
+import type {
+  ApplyTemplateResponse,
+  CustomFieldEntityType,
+  FieldDefinition,
+  FieldDefinitionCreateInput,
+  FieldDefinitionUpdateInput,
+  FieldTemplate,
+} from "./types";
 
 const BASE = "/api/v1/custom-fields";
 
@@ -8,6 +15,23 @@ export async function listFieldDefinitions(entityType: CustomFieldEntityType): P
     params: { entity_type: entityType },
   });
   return data;
+}
+
+export async function createFieldDefinition(payload: FieldDefinitionCreateInput): Promise<FieldDefinition> {
+  const { data } = await apiClient.post<FieldDefinition>(`${BASE}/definitions`, payload);
+  return data;
+}
+
+export async function updateFieldDefinition(
+  id: string,
+  payload: FieldDefinitionUpdateInput,
+): Promise<FieldDefinition> {
+  const { data } = await apiClient.patch<FieldDefinition>(`${BASE}/definitions/${id}`, payload);
+  return data;
+}
+
+export async function deleteFieldDefinition(id: string): Promise<void> {
+  await apiClient.delete(`${BASE}/definitions/${id}`);
 }
 
 export async function listFieldTemplates(params?: {

@@ -7,6 +7,7 @@ import { SignupPage } from "./pages/Signup";
 import { SelectBusinessPage } from "./pages/SelectBusiness";
 import { DashboardPage } from "./pages/Dashboard";
 import { OnboardingPage } from "./features/onboarding";
+import { CustomFieldsSettingsPage } from "./features/custom-fields";
 import { ProductsPage, ServicesPage, CouponsPage, OffersPage } from "./features/catalog";
 import { CustomersPage } from "./features/customers";
 import { OrdersListPage, OrderDetailPage } from "./features/orders";
@@ -63,6 +64,7 @@ export default function App() {
 
         <Route path="/support-agent" element={<PlaceholderPage title="Support Agent" description="Hidden behind the support_agent_enabled feature flag until phase 2." />} />
 
+        <Route path="/settings/custom-fields" element={<CustomFieldsSettingsPage />} />
         <Route path="/settings" element={<PlaceholderPage title="Settings" description="Profile, members, messaging kill switch, danger zone." />} />
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -34,6 +34,13 @@ export interface FieldDefinitionCreateInput {
   sort_order?: number;
 }
 
+export interface FieldDefinitionUpdateInput {
+  label?: string;
+  options?: unknown[] | null;
+  required?: boolean;
+  sort_order?: number;
+}
+
 export interface FieldTemplateFieldSpec {
   key: string;
   label: string;
