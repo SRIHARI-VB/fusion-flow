@@ -1,0 +1,141 @@
+/** Mirrors `fusionflow.modules.workflows.schemas` / `engine.registry` /
+ * `engine.graph` on the backend. */
+
+export type WorkflowStatus = "draft" | "published" | "archived";
+export type ValidationStatus = "valid" | "invalid";
+export type RunStatus = "running" | "completed" | "failed" | "cancelled";
+export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
+export type NodeKind = "trigger" | "action" | "condition";
+export type IssueSeverity = "error" | "warning";
+
+export interface Workflow {
+  id: string;
+  name: string;
+  status: WorkflowStatus;
+  current_published_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ValidationIssue {
+  rule: string;
+  severity: IssueSeverity;
+  message: string;
+  node_id: string | null;
+}
+
+/** JSON Schema (subset), as produced by `pydantic.BaseModel.model_json_schema()`. */
+export interface JsonSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  properties?: Record<string, JsonSchemaProperty>;
+  required?: string[];
+}
+
+export interface JsonSchemaProperty {
+  type?: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  minLength?: number;
+  maxLength?: number;
+  anyOf?: Array<{ type?: string }>;
+}
+
+export interface NodeType {
+  node_type: string;
+  kind: NodeKind;
+  category: string;
+  label: string;
+  description: string;
+  config_schema: JsonSchema;
+  output_handles: string[] | null;
+}
+
+/** One React Flow node's `data` payload — matches the backend's
+ * `engine.graph.GraphNodeData` (camelCase `nodeType` alias). */
+export interface WorkflowNodeData {
+  nodeType: string;
+  label?: string;
+  config: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface WorkflowGraphNode {
+  id: string;
+  type?: string;
+  data: WorkflowNodeData;
+  position: { x: number; y: number };
+}
+
+export interface WorkflowGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+}
+
+export interface WorkflowGraphJson {
+  nodes: WorkflowGraphNode[];
+  edges: WorkflowGraphEdge[];
+}
+
+export interface WorkflowVersion {
+  id: string;
+  workflow_id: string;
+  version_number: number;
+  graph: WorkflowGraphJson;
+  validation_status: ValidationStatus | null;
+  validation_errors: ValidationIssue[] | null;
+  published_at: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PublishResponse {
+  workflow: Workflow;
+  version: WorkflowVersion;
+  valid: boolean;
+  issues: ValidationIssue[];
+}
+
+export interface RunStep {
+  id: string;
+  node_id: string;
+  node_type: string;
+  status: StepStatus;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  attempt: number;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflow_id: string;
+  workflow_version_id: string;
+  trigger_event_ref: string | null;
+  status: RunStatus;
+  started_at: string;
+  completed_at: string | null;
+  loop_guard_count: number;
+}
+
+export interface WorkflowRunDetail extends WorkflowRun {
+  steps: RunStep[];
+}
+
+/** The plan's 5 required publish-time validation rules, in a stable
+ * display order for the validation panel. */
+export const VALIDATION_RULES: Array<{ rule: string; label: string }> = [
+  { rule: "missing_required_fields", label: "Required fields" },
+  { rule: "disconnected_connector_reference", label: "Connector references" },
+  { rule: "unreachable_nodes", label: "Reachability" },
+  { rule: "invalid_branches", label: "Branch wiring" },
+  { rule: "unsafe_loops", label: "Loop safety" },
+];
