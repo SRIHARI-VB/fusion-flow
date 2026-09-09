@@ -10,7 +10,26 @@ Later waves: add each new module's models here as they are created.
 """
 
 from fusionflow.db.base import Base
+from fusionflow.modules.admin.models import (
+    AuditLog,
+    FeatureFlag,
+    FeatureFlagOverride,
+    ImpersonationSession,
+)
 from fusionflow.modules.auth.models import RefreshToken, User
+from fusionflow.modules.catalog.models import (
+    Coupon,
+    DiscountType,
+    Offer,
+    ProductService,
+    ProductServiceType,
+)
+from fusionflow.modules.custom_fields.models import (
+    EntityType,
+    FieldDefinition,
+    FieldTemplate,
+    FieldType,
+)
 from fusionflow.modules.tenancy.models import (
     Business,
     BusinessStatus,
@@ -19,11 +38,24 @@ from fusionflow.modules.tenancy.models import (
 )
 
 __all__ = [
+    "AuditLog",
     "Base",
     "Business",
     "BusinessStatus",
+    "Coupon",
+    "DiscountType",
+    "EntityType",
+    "FeatureFlag",
+    "FeatureFlagOverride",
+    "FieldDefinition",
+    "FieldTemplate",
+    "FieldType",
+    "ImpersonationSession",
     "Membership",
     "MembershipRole",
+    "Offer",
+    "ProductService",
+    "ProductServiceType",
     "RefreshToken",
     "User",
 ]
