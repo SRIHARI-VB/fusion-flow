@@ -26,13 +26,21 @@ export const useAuthStore = create<AuthState>((set) => ({
   claims: null,
   user: null,
   business: null,
-  setSession: (session) =>
+  setSession: (session) => {
+    const claims = decodeAccessToken(session.access_token);
+    // There is no singular `business` field on the response - resolve the
+    // active one by matching the token's `tenant_id` claim against the
+    // `businesses` list. `tenant_id` is null on a pre-tenant token
+    // (requires_business_selection: true), which correctly resolves to
+    // `undefined` here, i.e. no active business yet.
+    const business = session.businesses.find((b) => b.id === claims.tenant_id);
     set({
       accessToken: session.access_token,
-      claims: decodeAccessToken(session.access_token),
+      claims,
       user: session.user,
-      business: session.business,
-    }),
+      business: business ?? null,
+    });
+  },
   setAccessToken: (accessToken) =>
     set({ accessToken, claims: decodeAccessToken(accessToken) }),
   // Reflects an in-place business update (e.g. onboarding setting vertical /

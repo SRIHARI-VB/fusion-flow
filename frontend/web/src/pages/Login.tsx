@@ -33,17 +33,11 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       const session = await login(values);
+      setSession(session);
 
       // A "pre-tenant" token (multi-membership user) omits tenant_id — route to business select
       // instead of assuming every login lands on /dashboard.
-      if (!session.business) {
-        setSession(session);
-        navigate("/select-business");
-        return;
-      }
-
-      setSession(session);
-      navigate("/dashboard");
+      navigate(session.requires_business_selection ? "/select-business" : "/dashboard");
     } catch (err) {
       const axiosErr = err as AxiosError<{ detail?: string }>;
       setServerError(
