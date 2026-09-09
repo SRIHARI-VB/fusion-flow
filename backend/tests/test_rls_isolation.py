@@ -16,18 +16,22 @@ Cases:
      Risk #2 in the architecture plan, so it is pinned down here.
   4. cross-tenant INSERT -> rejected by the policy's WITH CHECK clause.
 
-!! STATUS: WRITTEN BUT NEVER EXECUTED !!
-The environment this was authored in had no Postgres, psql, pg_isready or
-docker, so this file has been reviewed for correctness but never run. See
-backend/README.md -> "Running the RLS isolation test" for the exact
-commands to execute it for real.
+!! STATUS: executed for real against live Supabase Postgres on 2026-09-09,
+all 4 cases pass. First run caught a real bug (fixed in migration
+0004_fix_rls_null_tenant_context / db/rls.py::enable_tenant_rls): once
+`SET LOCAL app.current_tenant_id` has been used at all on a physical
+connection, Postgres reverts the GUC to `''` on transaction end, not NULL,
+which made the "no tenant context" case throw a cast error instead of
+returning zero rows. The policy predicate now wraps the read in
+`NULLIF(..., '')` to restore the fail-safe.
 
 Two prerequisites that will otherwise make this test lie:
   * `alembic upgrade head` must have been applied (needs revision
-    0002_rls_smoke_test).
-  * `TEST_DATABASE_URL` must connect as a **non-superuser** role, since
-    superusers bypass RLS even with FORCE enabled. Asserted below rather
-    than left to produce a confusing failure.
+    0002_rls_smoke_test at minimum, 0004 for the NULLIF fix).
+  * `TEST_DATABASE_URL` must connect as a **non-superuser, non-BYPASSRLS**
+    role - Supabase's default `postgres` role is not a superuser but does
+    have `rolbypassrls = true`, which bypasses RLS just as completely.
+    Asserted below rather than left to produce a confusing false pass.
 """
 
 from __future__ import annotations
@@ -46,15 +50,29 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.needs_postgres, requires_postgres
 
 
 async def _assert_not_superuser(session: AsyncSession) -> None:
-    is_superuser = (
-        await session.execute(text("SELECT rolsuper FROM pg_roles WHERE rolname = current_user"))
-    ).scalar_one()
-    assert not is_superuser, (
-        "TEST_DATABASE_URL connects as a Postgres superuser. Superusers bypass "
-        "row-level security even with FORCE ROW LEVEL SECURITY, so this test "
-        "would pass or fail meaninglessly. Point it at a dedicated "
+    """Guards against both ways a role can bypass RLS.
+
+    `rolsuper` is the textbook check, but Supabase's default `postgres`
+    role is deliberately NOT a superuser (managed hosting) while still
+    carrying `rolbypassrls = true` - confirmed live on 2026-09-09: that
+    role connects fine and passes a rolsuper-only check, then silently
+    bypasses every policy, which would make this test lie just as badly
+    as an actual superuser would. Both attributes bypass RLS identically,
+    so both are asserted.
+    """
+    row = (
+        await session.execute(
+            text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+        )
+    ).one()
+    assert not row.rolsuper and not row.rolbypassrls, (
+        "TEST_DATABASE_URL connects as a role that bypasses row-level security "
+        f"(rolsuper={row.rolsuper}, rolbypassrls={row.rolbypassrls}) - either "
+        "attribute bypasses RLS even with FORCE ROW LEVEL SECURITY, so this "
+        "test would pass or fail meaninglessly. Point it at a dedicated "
         "low-privilege role - the same kind of role the API runs as in "
-        "production."
+        "production. Supabase's default `postgres` role is exactly this trap: "
+        "not a superuser, but rolbypassrls=true."
     )
 
 

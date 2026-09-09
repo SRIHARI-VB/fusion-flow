@@ -19,14 +19,28 @@ def enable_tenant_rls(op, table_name: str) -> None:
     if not _VALID_TABLE_NAME.match(table_name):
         raise ValueError(f"unsafe table name for RLS DDL: {table_name!r}")
 
+    # NULLIF(..., '') is required, not cosmetic: once `SET LOCAL
+    # app.current_tenant_id` has been used at all on a physical connection,
+    # Postgres does not revert the custom GUC to "unset" (NULL) when that
+    # transaction ends - it reverts to '' (empty string). Confirmed live
+    # against Supabase Postgres 2026-09-09: a bare
+    # `current_setting(..., true)::uuid` cast then throws
+    # invalid_text_representation instead of evaluating the policy to NULL/
+    # false, turning "tenant context was forgotten on this request" into a
+    # 500 error instead of the intended fail-safe (zero rows, no leak) -
+    # exactly the connection-pooling scenario Risk #2 in the architecture
+    # plan warned about. NULLIF maps '' back to NULL first, so the cast
+    # never runs on an empty string and the policy predicate evaluates to
+    # NULL (row filtered out) exactly like a truly-never-set GUC.
+    #
     # No trailing semicolons: Alembic terminates each statement itself, so
     # adding one here renders as `...;;` in `alembic upgrade head --sql`.
     op.execute(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY")
     op.execute(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY")
     op.execute(
         f"CREATE POLICY tenant_isolation ON {table_name}\n"
-        "  USING (tenant_id = current_setting('app.current_tenant_id', true)::uuid)\n"
-        "  WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::uuid)"
+        "  USING (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)\n"
+        "  WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)"
     )
 
 
