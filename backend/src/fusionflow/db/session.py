@@ -13,7 +13,12 @@ settings = get_settings()
 # /healthz can respond) even when Postgres is unreachable; a live
 # connection is only attempted the first time a request actually touches
 # the database.
-engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+# Deliberately `runtime_database_url`, not `DATABASE_URL` directly: the
+# running app must query as the low-privilege, non-BYPASSRLS role for RLS
+# to apply to it at all. Alembic (alembic/env.py) is the one place that
+# still uses DATABASE_URL directly, since migrations need the
+# owner/admin role's DDL rights. See config.py::RUNTIME_DATABASE_URL.
+engine = create_async_engine(settings.runtime_database_url, pool_pre_ping=True, future=True)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
