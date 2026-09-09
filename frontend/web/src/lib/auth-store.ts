@@ -17,6 +17,7 @@ interface AuthState {
   business: Business | null;
   setSession: (session: AuthTokens) => void;
   setAccessToken: (accessToken: string) => void;
+  setBusiness: (business: Business) => void;
   clear: () => void;
 }
 
@@ -34,6 +35,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     }),
   setAccessToken: (accessToken) =>
     set({ accessToken, claims: decodeAccessToken(accessToken) }),
+  // Reflects an in-place business update (e.g. onboarding setting vertical /
+  // marking onboarding complete) without minting new tokens - the business
+  // profile fields aren't part of the JWT claims, just `AuthTokens.business`.
+  setBusiness: (business) => set({ business }),
   clear: () => set({ accessToken: null, claims: null, user: null, business: null }),
 }));
 
