@@ -1,9 +1,15 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { Building2, Sparkles } from "lucide-react";
+import { Building2, FileText, Flag, LayoutTemplate, Sparkles, Wallet } from "lucide-react";
 import { Avatar, AvatarFallback, ThemeToggle, cn } from "@fusion-flow/ui";
 import { useAuthStore } from "../lib/auth-store";
 
-const navItems = [{ label: "Tenants", path: "/tenants", icon: Building2 }];
+const navItems = [
+  { label: "Tenants", path: "/tenants", icon: Building2 },
+  { label: "Audit log", path: "/audit-log", icon: FileText },
+  { label: "Feature flags", path: "/feature-flags", icon: Flag },
+  { label: "Templates", path: "/templates", icon: LayoutTemplate },
+  { label: "Billing", path: "/billing", icon: Wallet },
+];
 
 export function AdminLayout() {
   const user = useAuthStore((s) => s.user);
