@@ -1,0 +1,234 @@
+"""Catalog domain logic: products/services, coupons, offers.
+
+None of these functions commit - routers own the transaction boundary, same
+convention as `modules/tenancy/service.py` and `modules/custom_fields/service.py`.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any, Sequence
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from fusionflow.modules.catalog.models import Coupon, Offer, ProductService, ProductServiceType
+from fusionflow.modules.catalog.schemas import (
+    CouponCreate,
+    CouponUpdate,
+    OfferCreate,
+    OfferUpdate,
+    ProductServiceCreate,
+    ProductServiceUpdate,
+)
+from fusionflow.modules.custom_fields import service as custom_fields_service
+from fusionflow.modules.custom_fields.models import EntityType
+from fusionflow.modules.custom_fields.validation import CustomFieldValidationError, validate_custom_fields
+
+
+async def validate_entity_custom_fields(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    entity_type: EntityType,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Shared write-path guard for every catalog table's `custom_fields` column.
+
+    Loads the tenant's live `field_definitions` for `entity_type` and
+    validates/normalizes `payload` against them, raising an HTTP 422 with
+    field-level errors instead of ever persisting an unvalidated JSONB blob.
+    Reused by products, services, coupons and offers (see router.py).
+    """
+    definitions = await custom_fields_service.list_field_definitions(
+        session, tenant_id=tenant_id, entity_type=entity_type
+    )
+    try:
+        return validate_custom_fields(list(definitions), payload)
+    except CustomFieldValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "custom_fields validation failed", "errors": exc.errors},
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# ProductService
+# ---------------------------------------------------------------------------
+
+
+async def list_products_services(
+    session: AsyncSession, *, tenant_id: uuid.UUID, entity_type: ProductServiceType | None = None
+) -> Sequence[ProductService]:
+    stmt = select(ProductService).where(ProductService.tenant_id == tenant_id)
+    if entity_type is not None:
+        stmt = stmt.where(ProductService.entity_type == entity_type)
+    return (await session.execute(stmt.order_by(ProductService.created_at.desc()))).scalars().all()
+
+
+async def get_product_service(
+    session: AsyncSession, *, tenant_id: uuid.UUID, item_id: uuid.UUID
+) -> ProductService | None:
+    return (
+        await session.execute(
+            select(ProductService).where(ProductService.id == item_id, ProductService.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def create_product_service(
+    session: AsyncSession, *, tenant_id: uuid.UUID, payload: ProductServiceCreate, custom_fields: dict[str, Any]
+) -> ProductService:
+    item = ProductService(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        entity_type=payload.entity_type,
+        name=payload.name,
+        description=payload.description,
+        base_price=payload.base_price,
+        is_active=payload.is_active,
+        custom_fields=custom_fields,
+    )
+    session.add(item)
+    await session.flush()
+    return item
+
+
+async def update_product_service(
+    session: AsyncSession,
+    item: ProductService,
+    payload: ProductServiceUpdate,
+    custom_fields: dict[str, Any] | None,
+) -> ProductService:
+    if payload.name is not None:
+        item.name = payload.name
+    if payload.description is not None:
+        item.description = payload.description
+    if payload.base_price is not None:
+        item.base_price = payload.base_price
+    if payload.is_active is not None:
+        item.is_active = payload.is_active
+    if custom_fields is not None:
+        item.custom_fields = custom_fields
+    await session.flush()
+    return item
+
+
+async def delete_product_service(session: AsyncSession, item: ProductService) -> None:
+    await session.delete(item)
+    await session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Coupon
+# ---------------------------------------------------------------------------
+
+
+async def list_coupons(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequence[Coupon]:
+    stmt = select(Coupon).where(Coupon.tenant_id == tenant_id).order_by(Coupon.created_at.desc())
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def get_coupon(session: AsyncSession, *, tenant_id: uuid.UUID, coupon_id: uuid.UUID) -> Coupon | None:
+    return (
+        await session.execute(select(Coupon).where(Coupon.id == coupon_id, Coupon.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+
+
+async def create_coupon(
+    session: AsyncSession, *, tenant_id: uuid.UUID, payload: CouponCreate, custom_fields: dict[str, Any]
+) -> Coupon:
+    coupon = Coupon(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        code=payload.code,
+        discount_type=payload.discount_type,
+        discount_value=payload.discount_value,
+        valid_from=payload.valid_from,
+        valid_to=payload.valid_to,
+        usage_limit=payload.usage_limit,
+        custom_fields=custom_fields,
+    )
+    session.add(coupon)
+    await session.flush()
+    return coupon
+
+
+async def update_coupon(
+    session: AsyncSession, coupon: Coupon, payload: CouponUpdate, custom_fields: dict[str, Any] | None
+) -> Coupon:
+    if payload.discount_type is not None:
+        coupon.discount_type = payload.discount_type
+    if payload.discount_value is not None:
+        coupon.discount_value = payload.discount_value
+    if payload.valid_from is not None:
+        coupon.valid_from = payload.valid_from
+    if payload.valid_to is not None:
+        coupon.valid_to = payload.valid_to
+    if payload.usage_limit is not None:
+        coupon.usage_limit = payload.usage_limit
+    if custom_fields is not None:
+        coupon.custom_fields = custom_fields
+    await session.flush()
+    return coupon
+
+
+async def delete_coupon(session: AsyncSession, coupon: Coupon) -> None:
+    await session.delete(coupon)
+    await session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Offer
+# ---------------------------------------------------------------------------
+
+
+async def list_offers(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequence[Offer]:
+    stmt = select(Offer).where(Offer.tenant_id == tenant_id).order_by(Offer.created_at.desc())
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def get_offer(session: AsyncSession, *, tenant_id: uuid.UUID, offer_id: uuid.UUID) -> Offer | None:
+    return (
+        await session.execute(select(Offer).where(Offer.id == offer_id, Offer.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+
+
+async def create_offer(
+    session: AsyncSession, *, tenant_id: uuid.UUID, payload: OfferCreate, custom_fields: dict[str, Any]
+) -> Offer:
+    offer = Offer(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name=payload.name,
+        applies_to=payload.applies_to,
+        active_from=payload.active_from,
+        active_to=payload.active_to,
+        custom_fields=custom_fields,
+    )
+    session.add(offer)
+    await session.flush()
+    return offer
+
+
+async def update_offer(
+    session: AsyncSession, offer: Offer, payload: OfferUpdate, custom_fields: dict[str, Any] | None
+) -> Offer:
+    if payload.name is not None:
+        offer.name = payload.name
+    if payload.applies_to is not None:
+        offer.applies_to = payload.applies_to
+    if payload.active_from is not None:
+        offer.active_from = payload.active_from
+    if payload.active_to is not None:
+        offer.active_to = payload.active_to
+    if custom_fields is not None:
+        offer.custom_fields = custom_fields
+    await session.flush()
+    return offer
+
+
+async def delete_offer(session: AsyncSession, offer: Offer) -> None:
+    await session.delete(offer)
+    await session.flush()
