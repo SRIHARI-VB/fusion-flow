@@ -6,6 +6,20 @@ import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
 import { SelectBusinessPage } from "./pages/SelectBusiness";
 import { DashboardPage } from "./pages/Dashboard";
+import { OnboardingPage } from "./features/onboarding";
+import { ProductsPage, ServicesPage, CouponsPage, OffersPage } from "./features/catalog";
+import { CustomersPage } from "./features/customers";
+import { OrdersListPage, OrderDetailPage } from "./features/orders";
+import { PaymentsPage } from "./features/payments";
+import { TicketsListPage, TicketDetailPage } from "./features/tickets";
+import { KbPage } from "./features/kb";
+import {
+  ConnectorsGridPage,
+  ConnectorDetailPage,
+  WhatsAppConnectPage,
+  RazorpayConnectPage,
+} from "./features/connectors";
+import { WorkflowsListPage, WorkflowEditorPage, WorkflowRunsPage } from "./features/workflows";
 
 export default function App() {
   return (
@@ -23,25 +37,29 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
 
-        <Route path="/onboarding" element={<PlaceholderPage title="Onboarding" description="Business info, vertical selection, template application, and optional invite/connect steps." />} />
+        <Route path="/onboarding" element={<OnboardingPage />} />
 
-        <Route path="/products" element={<PlaceholderPage title="Products" />} />
-        <Route path="/services" element={<PlaceholderPage title="Services" />} />
-        <Route path="/coupons" element={<PlaceholderPage title="Coupons" />} />
-        <Route path="/offers" element={<PlaceholderPage title="Offers" />} />
+        <Route path="/products" element={<ProductsPage />} />
+        <Route path="/services" element={<ServicesPage />} />
+        <Route path="/coupons" element={<CouponsPage />} />
+        <Route path="/offers" element={<OffersPage />} />
 
-        <Route path="/customers" element={<PlaceholderPage title="Customers" />} />
-        <Route path="/orders" element={<PlaceholderPage title="Orders" />} />
-        <Route path="/payments" element={<PlaceholderPage title="Payments" />} />
-        <Route path="/tickets" element={<PlaceholderPage title="Tickets" />} />
-        <Route path="/kb" element={<PlaceholderPage title="Knowledge Base" />} />
+        <Route path="/customers" element={<CustomersPage />} />
+        <Route path="/orders" element={<OrdersListPage />} />
+        <Route path="/orders/:id" element={<OrderDetailPage />} />
+        <Route path="/payments" element={<PaymentsPage />} />
+        <Route path="/tickets" element={<TicketsListPage />} />
+        <Route path="/tickets/:id" element={<TicketDetailPage />} />
+        <Route path="/kb" element={<KbPage />} />
 
-        <Route path="/connectors" element={<PlaceholderPage title="Connectors" description="Generic connector grid — WhatsApp, Razorpay, and future providers." />} />
-        <Route path="/connectors/:instanceId" element={<PlaceholderPage title="Connector Detail" />} />
+        <Route path="/connectors" element={<ConnectorsGridPage />} />
+        <Route path="/connectors/whatsapp/connect" element={<WhatsAppConnectPage />} />
+        <Route path="/connectors/razorpay/connect" element={<RazorpayConnectPage />} />
+        <Route path="/connectors/:instanceId" element={<ConnectorDetailPage />} />
 
-        <Route path="/workflows" element={<PlaceholderPage title="Workflows" />} />
-        <Route path="/workflows/:id/edit" element={<PlaceholderPage title="Workflow Editor" description="React Flow canvas + config drawer + validation panel + publish." />} />
-        <Route path="/workflows/:id/runs" element={<PlaceholderPage title="Workflow Runs" />} />
+        <Route path="/workflows" element={<WorkflowsListPage />} />
+        <Route path="/workflows/:id/edit" element={<WorkflowEditorPage />} />
+        <Route path="/workflows/:id/runs" element={<WorkflowRunsPage />} />
 
         <Route path="/support-agent" element={<PlaceholderPage title="Support Agent" description="Hidden behind the support_agent_enabled feature flag until phase 2." />} />
 
