@@ -5,8 +5,6 @@ SQLAlchemy resolves string-based relationship targets (e.g. `Membership.user
 imported before the first mapper configuration. Importing this one module
 guarantees that. Alembic's `env.py` also imports it so autogenerate sees the
 full metadata, and `main.py` imports it at startup.
-
-Later waves: add each new module's models here as they are created.
 """
 
 from fusionflow.db.base import Base
@@ -24,17 +22,50 @@ from fusionflow.modules.catalog.models import (
     ProductService,
     ProductServiceType,
 )
+from fusionflow.modules.connectors.models import (
+    ConnectorCategory,
+    ConnectorCredential,
+    ConnectorEvent,
+    ConnectorEventType,
+    ConnectorInstance,
+    ConnectorOAuthState,
+    ConnectorState,
+    ConnectorType,
+    HealthStatus,
+)
 from fusionflow.modules.custom_fields.models import (
     EntityType,
     FieldDefinition,
     FieldTemplate,
     FieldType,
 )
+from fusionflow.modules.customers.models import Customer
+from fusionflow.modules.kb.models import KbArticle, KbArticleStatus
+from fusionflow.modules.orders.models import Order, OrderStatus
+from fusionflow.modules.payments.models import Payment, PaymentStatus
 from fusionflow.modules.tenancy.models import (
     Business,
     BusinessStatus,
     Membership,
     MembershipRole,
+)
+from fusionflow.modules.tickets.models import (
+    Ticket,
+    TicketMessage,
+    TicketMessageAuthorType,
+    TicketStatus,
+)
+from fusionflow.modules.workflows.models import (
+    RunStatus,
+    StepStatus,
+    ValidationStatus,
+    Workflow,
+    WorkflowRun,
+    WorkflowRunStep,
+    WorkflowStatus,
+    WorkflowTrigger,
+    WorkflowTriggerInbox,
+    WorkflowVersion,
 )
 
 __all__ = [
@@ -42,7 +73,16 @@ __all__ = [
     "Base",
     "Business",
     "BusinessStatus",
+    "ConnectorCategory",
+    "ConnectorCredential",
+    "ConnectorEvent",
+    "ConnectorEventType",
+    "ConnectorInstance",
+    "ConnectorOAuthState",
+    "ConnectorState",
+    "ConnectorType",
     "Coupon",
+    "Customer",
     "DiscountType",
     "EntityType",
     "FeatureFlag",
@@ -50,12 +90,33 @@ __all__ = [
     "FieldDefinition",
     "FieldTemplate",
     "FieldType",
+    "HealthStatus",
     "ImpersonationSession",
+    "KbArticle",
+    "KbArticleStatus",
     "Membership",
     "MembershipRole",
     "Offer",
+    "Order",
+    "OrderStatus",
+    "Payment",
+    "PaymentStatus",
     "ProductService",
     "ProductServiceType",
     "RefreshToken",
+    "RunStatus",
+    "StepStatus",
+    "Ticket",
+    "TicketMessage",
+    "TicketMessageAuthorType",
+    "TicketStatus",
     "User",
+    "ValidationStatus",
+    "Workflow",
+    "WorkflowRun",
+    "WorkflowRunStep",
+    "WorkflowStatus",
+    "WorkflowTrigger",
+    "WorkflowTriggerInbox",
+    "WorkflowVersion",
 ]

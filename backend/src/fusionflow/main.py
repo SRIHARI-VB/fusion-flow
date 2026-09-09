@@ -20,6 +20,11 @@ from fusionflow.api import api_router
 from fusionflow.config import Settings, get_settings
 from fusionflow.core.cache import get_cache_backend
 from fusionflow.core.jobs import get_job_queue
+from fusionflow.modules.admin.router import router as admin_router
+from fusionflow.modules.workflows.engine.outbox_poller import (
+    register_outbox_poller,
+    start_outbox_poller,
+)
 
 # Imported for its side effect: registers every ORM class with the
 # SQLAlchemy registry so string-based relationships resolve. Do not remove.
@@ -46,6 +51,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.BACKGROUND_JOBS_ENABLED,
         settings.AI_ENABLED,
     )
+
+    # Workflow trigger dispatch (transactional outbox -> workflow_triggers
+    # match -> workflow_runs). Runs on the same pluggable JobQueue as
+    # everything else, so it is a no-op-safe asyncio task in dev and would
+    # be a Celery/Redis Streams consumer in prod - see core/jobs.py.
+    register_outbox_poller(app.state.jobs)
+    await start_outbox_poller(app.state.jobs)
+
     yield
     close = getattr(app.state.cache, "aclose", None)
     if close is not None:
@@ -90,6 +103,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "environment": settings.ENVIRONMENT}
 
     app.include_router(api_router)
+    # `/api/admin/*` is mounted separately from `api_router` (not nested
+    # under `/api/v1`) - it carries its own `AuditLoggingRoute` route class
+    # and its own `require_platform_admin` gate, and its prefix is baked
+    # into the router itself.
+    app.include_router(admin_router)
     return app
 
 
