@@ -34,3 +34,6 @@ pnpm-debug.log*
 
 # Supabase/local infra
 infra/docker/volumes/
+
+# Local agent/harness state
+.claude/
