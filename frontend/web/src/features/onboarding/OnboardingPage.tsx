@@ -11,12 +11,14 @@ import { applyFieldTemplate, listFieldTemplates } from "../custom-fields";
 import { updateBusiness } from "./api";
 import { applyBusinessTemplate, listBusinessTemplates } from "./business-templates-api";
 
-const VERTICALS = [
-  { value: "retail", label: "Retail" },
-  { value: "salon", label: "Salon & Beauty" },
-  { value: "restaurant", label: "Restaurant" },
-  { value: "other", label: "Other" },
-];
+/** Turns a raw vertical slug (e.g. "salon_beauty") into a display label ("Salon Beauty"). */
+function verticalLabel(value: string): string {
+  return value
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
 
 const businessSchema = z.object({
   name: z.string().min(1, "Business name is required"),
@@ -74,16 +76,29 @@ export function OnboardingPage() {
     },
   });
 
+  // Fetched unconditionally (not gated to the "template" step) since the
+  // "business" step's vertical dropdown is now derived from these same
+  // templates, instead of a hardcoded list.
   const { data: businessTemplates = [], isLoading: templatesLoading } = useQuery({
     queryKey: ["business-templates"],
     queryFn: listBusinessTemplates,
-    enabled: step === "template",
   });
   // Prefer templates matching the vertical chosen in step 1, but don't
   // hide everything else - the catalog may not have one for every
   // vertical yet, and "other" always falls through to the full list.
   const matchingTemplates = businessTemplates.filter((t) => !t.vertical || t.vertical === vertical);
   const templatesToShow = matchingTemplates.length > 0 ? matchingTemplates : businessTemplates;
+
+  // Verticals offered in step 1 are whatever the live template catalog
+  // actually covers, plus a static "Other" fallback - no more hardcoded list
+  // to keep in sync by hand as admins add/rename templates.
+  const templateVerticals = Array.from(
+    new Set(businessTemplates.map((t) => t.vertical).filter((v): v is string => !!v)),
+  );
+  const VERTICALS = [
+    ...templateVerticals.map((v) => ({ value: v, label: verticalLabel(v) })),
+    { value: "other", label: "Other" },
+  ];
 
   const applyMutation = useMutation({
     mutationFn: async (templateId: string) => {
@@ -160,10 +175,11 @@ export function OnboardingPage() {
                   id="vertical"
                   className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   defaultValue={business?.vertical ?? ""}
+                  disabled={templatesLoading}
                   {...register("vertical")}
                 >
                   <option value="" disabled>
-                    Select a vertical...
+                    {templatesLoading ? "Loading verticals..." : "Select a vertical..."}
                   </option>
                   {VERTICALS.map((v) => (
                     <option key={v.value} value={v.value}>
