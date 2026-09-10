@@ -70,6 +70,12 @@ class CreateTicketExecutor(NodeExecutor):
     label = "Create Ticket"
     description = "Creates a support ticket for this business, optionally linked to an existing customer."
     config_model = CreateTicketConfig
+    # A transient DB hiccup during the insert is the retry target here -
+    # see send_whatsapp_message.py's matching comment for why the service
+    # call below is deliberately left un-caught rather than turned into an
+    # immediate, permanent `Failure`.
+    retryable = True
+    max_retries = 2
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         config = CreateTicketConfig.model_validate(context.config)
@@ -84,14 +90,11 @@ class CreateTicketExecutor(NodeExecutor):
                 except ValueError:
                     return Failure(f"customer_id {resolved!r} is not a valid UUID")
 
-        try:
-            ticket = await tickets_service.create_ticket(
-                context.session,
-                context.tenant_id,
-                TicketCreate(subject=subject, customer_id=customer_id),
-            )
-        except Exception as exc:  # noqa: BLE001 - any DB/validation failure fails this node only
-            return Failure(str(exc))
+        ticket = await tickets_service.create_ticket(
+            context.session,
+            context.tenant_id,
+            TicketCreate(subject=subject, customer_id=customer_id),
+        )
 
         return Success(output={"ticket_id": str(ticket.id)})
 

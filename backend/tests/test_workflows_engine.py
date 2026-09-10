@@ -156,6 +156,132 @@ async def test_unknown_node_type_fails_the_run_without_raising() -> None:
     assert result.status == RunStatus.FAILED
 
 
+async def test_retryable_node_recovers_within_max_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fusionflow.modules.workflows.engine import run_loop
+    from fusionflow.modules.workflows.engine.registry import ExecutionContext, NodeExecutor, NodeResult, Success
+
+    monkeypatch.setattr(run_loop.asyncio, "sleep", lambda *_a, **_k: _noop_sleep())
+
+    attempts: list[int] = []
+
+    class _FlakyThenSucceeds(NodeExecutor):
+        node_type = "test.flaky_then_succeeds"
+        kind = "action"
+        retryable = True
+        max_retries = 2
+
+        async def execute(self, context: ExecutionContext) -> NodeResult:
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise RuntimeError("transient")
+            return Success()
+
+    node_executor_registry.register(_FlakyThenSucceeds())
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [_node("trigger", "manual.test_trigger"), _node("flaky", "test.flaky_then_succeeds")],
+                "edges": [_edge("e1", "trigger", "flaky")],
+            }
+        )
+        run = _run()
+        session = FakeSession()
+
+        result = await execute_run(session, run, graph)
+
+        assert result.status == RunStatus.COMPLETED
+        assert len(attempts) == 3
+        flaky_step = next(s for s in session.added if s.node_id == "flaky")
+        assert flaky_step.attempt == 3
+        assert flaky_step.status == StepStatus.SUCCEEDED
+    finally:
+        del node_executor_registry._executors["test.flaky_then_succeeds"]
+
+
+async def test_retryable_node_fails_run_after_exhausting_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fusionflow.modules.workflows.engine import run_loop
+    from fusionflow.modules.workflows.engine.registry import ExecutionContext, NodeExecutor, NodeResult
+
+    monkeypatch.setattr(run_loop.asyncio, "sleep", lambda *_a, **_k: _noop_sleep())
+
+    attempts: list[int] = []
+
+    class _AlwaysFails(NodeExecutor):
+        node_type = "test.always_fails"
+        kind = "action"
+        retryable = True
+        max_retries = 2
+
+        async def execute(self, context: ExecutionContext) -> NodeResult:
+            attempts.append(1)
+            raise RuntimeError("permanently broken")
+
+    node_executor_registry.register(_AlwaysFails())
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [_node("trigger", "manual.test_trigger"), _node("bad", "test.always_fails")],
+                "edges": [_edge("e1", "trigger", "bad")],
+            }
+        )
+        run = _run()
+        session = FakeSession()
+
+        result = await execute_run(session, run, graph)
+
+        assert result.status == RunStatus.FAILED
+        assert len(attempts) == 3  # 1 initial + 2 retries
+        bad_step = next(s for s in session.added if s.node_id == "bad")
+        assert bad_step.attempt == 3
+        assert bad_step.status == StepStatus.FAILED
+        assert "permanently broken" in bad_step.error
+    finally:
+        del node_executor_registry._executors["test.always_fails"]
+
+
+async def _noop_sleep() -> None:
+    return None
+
+
+async def test_non_retryable_node_fails_immediately_on_first_exception() -> None:
+    """Default `retryable = False` - unchanged, backward-compatible
+    behavior for every existing node type: one attempt, no backoff."""
+    from fusionflow.modules.workflows.engine.registry import ExecutionContext, NodeExecutor, NodeResult
+
+    attempts: list[int] = []
+
+    class _AlwaysFailsNonRetryable(NodeExecutor):
+        node_type = "test.always_fails_non_retryable"
+        kind = "action"
+
+        async def execute(self, context: ExecutionContext) -> NodeResult:
+            attempts.append(1)
+            raise RuntimeError("boom")
+
+    node_executor_registry.register(_AlwaysFailsNonRetryable())
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [
+                    _node("trigger", "manual.test_trigger"),
+                    _node("bad", "test.always_fails_non_retryable"),
+                ],
+                "edges": [_edge("e1", "trigger", "bad")],
+            }
+        )
+        run = _run()
+        session = FakeSession()
+
+        result = await execute_run(session, run, graph)
+
+        assert result.status == RunStatus.FAILED
+        assert len(attempts) == 1
+        bad_step = next(s for s in session.added if s.node_id == "bad")
+        assert bad_step.attempt == 1
+    finally:
+        del node_executor_registry._executors["test.always_fails_non_retryable"]
+
+
 async def test_loop_guard_force_fails_runaway_cycles(monkeypatch: pytest.MonkeyPatch) -> None:
     from fusionflow.modules.workflows.engine import run_loop
 

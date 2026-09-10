@@ -143,8 +143,15 @@ async def test_send_whatsapp_message_interpolates_and_calls_adapter(monkeypatch:
     ]
 
 
-async def test_send_whatsapp_message_wraps_adapter_exception_as_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_send_whatsapp_message_propagates_adapter_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An adapter exception is deliberately left un-caught (unlike a plain
+    config/lookup error, which stays a `Failure`) so run_loop.py's
+    retry-with-backoff (this node is `retryable = True`) actually gets a
+    chance to retry it instead of the node swallowing it into a single,
+    permanent `Failure` before retry logic ever sees it."""
     executor = send_whatsapp_node.SendWhatsAppMessageExecutor()
+    assert executor.retryable is True
+    assert executor.max_retries == 2
     tenant_id = uuid.uuid4()
     instance = _fake_connector_instance(tenant_id)
 
@@ -166,10 +173,8 @@ async def test_send_whatsapp_message_wraps_adapter_exception_as_failure(monkeypa
         variables={},
     )
 
-    result = await executor.execute(context)
-
-    assert isinstance(result, Failure)
-    assert "no credential stored" in result.error
+    with pytest.raises(RuntimeError, match="no credential stored"):
+        await executor.execute(context)
 
 
 async def test_send_whatsapp_message_missing_connector_instance_is_a_failure(
@@ -249,8 +254,12 @@ async def test_create_ticket_invalid_customer_id_is_a_failure() -> None:
     assert "not a valid UUID" in result.error
 
 
-async def test_create_ticket_wraps_service_exception_as_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_ticket_propagates_service_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """See test_send_whatsapp_message_propagates_adapter_exception's
+    docstring - same reasoning, this node is also `retryable = True`."""
     executor = create_ticket_node.CreateTicketExecutor()
+    assert executor.retryable is True
+    assert executor.max_retries == 2
 
     async def fake_create_ticket(session: Any, tid: uuid.UUID, payload: Any) -> Ticket:
         raise RuntimeError("db exploded")
@@ -259,7 +268,5 @@ async def test_create_ticket_wraps_service_exception_as_failure(monkeypatch: pyt
 
     context = _context({"subject": "hi"}, {})
 
-    result = await executor.execute(context)
-
-    assert isinstance(result, Failure)
-    assert "db exploded" in result.error
+    with pytest.raises(RuntimeError, match="db exploded"):
+        await executor.execute(context)

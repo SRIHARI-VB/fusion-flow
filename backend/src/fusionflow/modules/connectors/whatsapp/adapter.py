@@ -385,12 +385,17 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             # the outbox row and the audit row commit together or not at
             # all (transactional outbox, see event_bus.py). The caller
             # (webhooks.py) commits once after this returns.
+            # `message_id` is WhatsApp's own delivery id - Meta redelivers
+            # webhooks on a missed/slow ack, and this dedupe_key is what
+            # stops a redelivery from firing the workflow a second time
+            # (see event_bus.publish_trigger_event's docstring).
             await event_bus.publish_trigger_event(
                 session,
                 tenant_id=instance.tenant_id,
                 event_type="whatsapp.message_received",
                 payload=inbound_message,
                 connector_instance_id=instance.id,
+                dedupe_key=inbound_message.get("message_id"),
             )
 
         return [event]

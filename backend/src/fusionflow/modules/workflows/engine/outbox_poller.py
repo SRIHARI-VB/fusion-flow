@@ -7,14 +7,9 @@ protocol from `core/jobs.py` (never `asyncio.create_task`/Celery directly)
 per the plan's "provision but skip in dev" rule — see `register_handler`
 usage below.
 
-**Startup wiring this module cannot do itself** (outside this agent's
-allowed file scope — `main.py` belongs to Wave 0): `main.py`'s `lifespan`
-needs, right after `app.state.jobs = get_job_queue(settings)`:
+Startup wiring lives in `main.py`'s `lifespan`, right after
+`app.state.jobs = get_job_queue(settings)`:
 
-    from fusionflow.modules.workflows.engine.outbox_poller import (
-        register_outbox_poller,
-        start_outbox_poller,
-    )
     register_outbox_poller(app.state.jobs)
     await start_outbox_poller(app.state.jobs)
 
@@ -28,6 +23,13 @@ once, soon"): `_poll_forever_job` polls once, sleeps `interval_seconds`,
 then re-enqueues itself. `InProcessAsyncQueue`'s bounded retry-on-exception
 wraps each pass, so one failing pass doesn't kill the polling loop
 outright — only that pass's attempt is retried/logged.
+
+Two safety properties added for multi-process/production correctness:
+`_process_tenant_inbox` locks its inbox rows with `FOR UPDATE SKIP LOCKED`
+so two concurrent pollers (a horizontal scale-out scenario) divide the
+work instead of double-processing the same row, and `poll_once` only
+visits tenants that actually have unprocessed inbox rows (one indexed
+query) instead of scanning every tenant in `businesses` every cycle.
 """
 
 from __future__ import annotations
@@ -70,16 +72,17 @@ def _now() -> datetime:
 async def poll_once(
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
 ) -> int:
-    """One pass over every tenant's unprocessed inbox rows. Returns the
-    number of inbox rows processed (matched or not).
+    """One pass over every tenant that actually has unprocessed inbox rows.
+    Returns the number of inbox rows processed (matched or not).
 
-    Iterates tenants first (reading `businesses`, a platform table with no
-    RLS policy) rather than querying `workflow_trigger_inbox` without a
-    tenant context, because RLS would silently return zero rows for an
-    unscoped query (see `db/session.py`'s `SET LOCAL` docstring / plan
-    Risk #2) — this lets the poller run under the same low-privilege,
-    RLS-subject DB role as request handlers instead of needing a
-    BYPASSRLS role reserved for `/api/admin/*`.
+    The candidate-tenant lookup itself still needs a tenant context to
+    legally read `workflow_trigger_inbox` under RLS (see `db/session.py`'s
+    `SET LOCAL` docstring / plan Risk #2), so it goes through `businesses`
+    (a platform table with no RLS policy) exactly as before — the
+    optimization is querying each candidate' inbox once, cheaply, from
+    inside that same scoped connection rather than unconditionally running
+    the full dispatch path for every tenant regardless of whether it has
+    any pending work.
     """
     async with session_factory() as session:
         tenant_ids = (await session.execute(select(Business.id))).scalars().all()
@@ -88,11 +91,27 @@ async def poll_once(
     for tenant_id in tenant_ids:
         async with session_factory() as session:
             await set_tenant_context(session, tenant_id)
+            has_pending = (
+                await session.execute(
+                    select(WorkflowTriggerInbox.id)
+                    .where(
+                        WorkflowTriggerInbox.tenant_id == tenant_id,
+                        WorkflowTriggerInbox.processed_at.is_(None),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if has_pending is None:
+                continue
             processed += await _process_tenant_inbox(session, tenant_id)
     return processed
 
 
 async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    # `with_for_update(skip_locked=True)`: if this app ever runs more than
+    # one backend process, two pollers racing on the same tenant divide the
+    # work instead of double-processing the same row (each locks out the
+    # rows the other has already claimed instead of blocking on them).
     rows = (
         await session.execute(
             select(WorkflowTriggerInbox)
@@ -101,6 +120,7 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
                 WorkflowTriggerInbox.processed_at.is_(None),
             )
             .order_by(WorkflowTriggerInbox.created_at)
+            .with_for_update(skip_locked=True)
         )
     ).scalars().all()
 

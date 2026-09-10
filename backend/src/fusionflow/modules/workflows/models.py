@@ -21,11 +21,13 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -220,11 +222,28 @@ class WorkflowTriggerInbox(Base, TenantScopedMixin):
     recorded both — no lost trigger events."""
 
     __tablename__ = "workflow_trigger_inbox"
+    __table_args__ = (
+        Index(
+            "uq_workflow_trigger_inbox_tenant_dedupe_key",
+            "tenant_id",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("dedupe_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_type: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     connector_instance_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # A provider-supplied delivery/event id (e.g. a webhook's own event id),
+    # when the caller has one - lets `publish_trigger_event` detect a
+    # redelivered webhook and skip creating a second inbox row (and thus a
+    # second `WorkflowRun`) for it. Null for callers with no natural
+    # dedupe key (e.g. `order.created`, which is a one-shot domain write,
+    # not a redeliverable webhook) - the partial unique index only applies
+    # when set.
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

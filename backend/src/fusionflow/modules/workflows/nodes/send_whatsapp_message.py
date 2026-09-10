@@ -75,6 +75,15 @@ class SendWhatsAppMessageExecutor(NodeExecutor):
         "connector instance."
     )
     config_model = SendWhatsAppMessageConfig
+    # This node makes a real outbound network call (the WhatsApp Cloud
+    # API) - a flaky/slow response is exactly the transient-failure class
+    # run_loop.py's retry-with-backoff exists for. The adapter call below
+    # is deliberately left un-caught (unlike a plain config/lookup error,
+    # which stays a clean `Failure`) so a transient exception propagates
+    # to run_loop and gets retried instead of being silently swallowed
+    # into a single, permanent `Failure` before retry logic ever sees it.
+    retryable = True
+    max_retries = 2
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         config = SendWhatsAppMessageConfig.model_validate(context.config)
@@ -92,12 +101,9 @@ class SendWhatsAppMessageExecutor(NodeExecutor):
         if instance is None:
             return Failure(f"connector instance {connector_instance_id} not found for this tenant")
 
-        try:
-            await whatsapp_adapter.send_text_message(
-                instance=instance, to=to, body=body, session=context.session
-            )
-        except Exception as exc:  # noqa: BLE001 - any adapter/network failure fails this node only
-            return Failure(str(exc))
+        await whatsapp_adapter.send_text_message(
+            instance=instance, to=to, body=body, session=context.session
+        )
 
         return Success(output={"to": to, "body": body})
 

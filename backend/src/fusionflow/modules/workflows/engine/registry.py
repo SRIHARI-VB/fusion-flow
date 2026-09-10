@@ -124,6 +124,13 @@ class NodeExecutor(abc.ABC):
     # loop-safe when used inside a cycle (validation.py rule 5). None means
     # this node type can never make a cycle safe.
     loop_safety_field: str | None = None
+    # Opt-in retry-with-backoff (run_loop.py): default off, so every
+    # existing node type keeps today's fail-fast-on-exception behavior
+    # unless it explicitly opts in. Meant for nodes that make real outbound
+    # calls (a flaky third-party API, a transient DB hiccup) - not for pure
+    # in-process nodes, where a retry can never change the outcome.
+    retryable: bool = False
+    max_retries: int = 0
 
     @classmethod
     def meta(cls) -> NodeTypeMeta:

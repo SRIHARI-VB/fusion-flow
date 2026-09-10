@@ -13,8 +13,10 @@ the JobQueue interface" rule for anything scheduling-adjacent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -45,6 +47,14 @@ WORKFLOW_LOOP_GUARD_MAX = int(os.environ.get("WORKFLOW_LOOP_GUARD_MAX", "500"))
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _retry_backoff_seconds(attempt: int) -> float:
+    """Exponential backoff with jitter, capped — `attempt` is the attempt
+    number that just failed (1-based). Small and bounded on purpose: a
+    node retry is meant to ride out a sub-second-to-few-second transient
+    blip, not to turn the run loop into a long-running scheduler."""
+    return min(2 ** (attempt - 1), 8) + random.uniform(0, 0.25)
 
 
 class RunLoopError(Exception):
@@ -126,14 +136,40 @@ async def execute_run(
             variables=variables,
         )
 
-        try:
-            result = await executor.execute(context)
-        except Exception as exc:  # noqa: BLE001 - a node bug must not crash the run loop
-            logger.exception("workflow node %s (%s) raised", node.id, node.data.node_type)
+        max_attempts = 1 + (executor.max_retries if executor.retryable else 0)
+        result = None
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            step.attempt = attempt
+            try:
+                result = await executor.execute(context)
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001 - a node bug must not crash the run loop
+                last_exc = exc
+                if attempt < max_attempts:
+                    logger.warning(
+                        "workflow node %s (%s) raised on attempt %d/%d, retrying: %s",
+                        node.id,
+                        node.data.node_type,
+                        attempt,
+                        max_attempts,
+                        exc,
+                    )
+                    await asyncio.sleep(_retry_backoff_seconds(attempt))
+
+        if last_exc is not None:
+            logger.exception(
+                "workflow node %s (%s) raised after %d attempt(s)",
+                node.id,
+                node.data.node_type,
+                max_attempts,
+                exc_info=last_exc,
+            )
             step.status = StepStatus.FAILED
-            step.error = str(exc)
+            step.error = str(last_exc)
             step.completed_at = _now()
-            await _fail_run(run, f"node {node.id} raised: {exc}")
+            await _fail_run(run, f"node {node.id} raised after {max_attempts} attempt(s): {last_exc}")
             return run
 
         step.completed_at = _now()
