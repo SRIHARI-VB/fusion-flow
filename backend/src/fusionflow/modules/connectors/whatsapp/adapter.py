@@ -212,6 +212,58 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             except httpx.HTTPError as exc:
                 logger.warning("[whatsapp] best-effort unsubscribe failed: %s", exc)
 
+    async def send_text_message(
+        self, *, instance: ConnectorInstance, to: str, body: str, session: AsyncSession
+    ) -> None:
+        """Send an outbound text message via the WhatsApp Cloud API.
+
+        Called by the `send_whatsapp_message` workflow node executor. Follows
+        the same stub-if-not-configured convention as every other real call
+        in this file - see the module docstring.
+        """
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] WHATSAPP_APP_ID/WHATSAPP_APP_SECRET not configured - "
+                "stub mode: skipping the real Graph API send-message call "
+                "(instance=%s, to=%s, body=%r)",
+                instance.id,
+                to,
+                body,
+            )
+            return
+
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        phone_number_id = (instance.provider_ref_ids or {}).get("phone_number_id")
+        if not phone_number_id:
+            raise RuntimeError(f"connector instance {instance.id} has no phone_number_id on record")
+
+        # TODO(meta-graph-api): send a text message via the WhatsApp Cloud API.
+        #   POST /{phone_number_id}/messages
+        #     Authorization: Bearer {access_token}
+        #     {
+        #       "messaging_product": "whatsapp",
+        #       "recipient_type": "individual",
+        #       "to": "{to}",
+        #       "type": "text",
+        #       "text": {"preview_url": false, "body": "{body}"}
+        #     }
+        async with httpx.AsyncClient(base_url=settings.WHATSAPP_GRAPH_API_BASE_URL, timeout=15.0) as client:
+            response = await client.post(
+                f"/{phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {secret['access_token']}"},
+                json={
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": to,
+                    "type": "text",
+                    "text": {"preview_url": False, "body": body},
+                },
+            )
+            response.raise_for_status()
+
     def verify_webhook_signature(self, *, raw_payload: bytes, headers: Mapping[str, str]) -> bool:
         """Meta's `X-Hub-Signature-256` scheme: HMAC-SHA256 over the raw
         body, keyed by the **App Secret** (app-level, shared by every WABA
@@ -268,6 +320,36 @@ class WhatsAppAdapter(base.ConnectorAdapter):
         )
         return rows.scalars().first()
 
+    @staticmethod
+    def _extract_inbound_message(body: dict[str, Any]) -> dict[str, Any] | None:
+        """Pull the first inbound user message out of a WhatsApp Cloud API
+        webhook body, or return None if this webhook is a status callback
+        (`.statuses`) or otherwise doesn't carry a `.messages` entry.
+
+        Real shape (Meta docs):
+          entry[0].changes[0].value.messages[0] = {
+            "from": "<wa_id>", "id": "<message_id>", "timestamp": "...",
+            "type": "text", "text": {"body": "..."}
+          }
+        """
+        entries = body.get("entry") or []
+        for entry in entries:
+            for change in entry.get("changes") or []:
+                value = change.get("value") or {}
+                messages = value.get("messages") or []
+                if not messages:
+                    continue
+                message = messages[0]
+                text_body = (message.get("text") or {}).get("body")
+                return {
+                    "from": message.get("from"),
+                    "message_id": message.get("id"),
+                    "message_type": message.get("type"),
+                    "text": text_body,
+                    "timestamp": message.get("timestamp"),
+                }
+        return None
+
     async def handle_webhook(
         self,
         *,
@@ -290,6 +372,27 @@ class WhatsAppAdapter(base.ConnectorAdapter):
         )
         session.add(event)
         await session.flush()
+
+        inbound_message = self._extract_inbound_message(body)
+        if inbound_message is not None:
+            # Deferred import: `modules.workflows` (package __init__) imports
+            # its built-in nodes, one of which (`send_whatsapp_message`)
+            # imports *this* module for the `adapter` singleton - importing
+            # `event_bus` at module level here would be a circular import.
+            from fusionflow.modules.workflows.engine import event_bus
+
+            # Same transaction/session as the ConnectorEvent write above -
+            # the outbox row and the audit row commit together or not at
+            # all (transactional outbox, see event_bus.py). The caller
+            # (webhooks.py) commits once after this returns.
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="whatsapp.message_received",
+                payload=inbound_message,
+                connector_instance_id=instance.id,
+            )
+
         return [event]
 
 
