@@ -63,6 +63,21 @@ class Business(Base, TimestampMixin):
     messaging_paused: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Set once at onboarding (POST /business-templates/{id}/apply) - the
+    # "starter kit" bundle (custom fields + connector allowlist + plan)
+    # this tenant picked. Nullable: signup doesn't require picking one.
+    # FK by table name only (no import of modules.admin) to avoid a
+    # cross-module import cycle, matching the convention TenantScopedMixin
+    # already uses for businesses.id - see db/base.py.
+    business_template_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("business_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    # Pricing/entitlement tier - admin-assigned only (POST
+    # /admin/tenants/{id}/plan, or implicitly via business_template_id's
+    # own plan_id at template-apply time), never tenant-editable.
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), nullable=True
+    )
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="business", cascade="all, delete-orphan"

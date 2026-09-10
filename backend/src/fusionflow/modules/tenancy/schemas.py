@@ -34,6 +34,11 @@ class BusinessMembershipOut(BaseModel):
     role: MembershipRole
     messaging_paused: bool
     onboarding_completed_at: datetime | None = None
+    # Populated from `modules.admin.models.Plan` via `Business.plan_id`
+    # (added in migration 0006 alongside business_template_id) - null
+    # when the tenant has no plan assigned. Read-only; a tenant never
+    # sets this itself (see plan.py's admin-only assignment endpoint).
+    plan_name: str | None = None
 
 
 class BusinessUpdateRequest(BaseModel):

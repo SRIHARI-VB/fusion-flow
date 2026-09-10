@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fusionflow.modules.admin.models import Plan
 from fusionflow.modules.auth.models import User
 from fusionflow.modules.tenancy.models import Business, Membership, MembershipRole
 from fusionflow.modules.tenancy.schemas import BusinessMembershipOut, BusinessUpdateRequest
@@ -93,19 +94,31 @@ async def list_memberships_for_user(
 async def list_business_memberships(
     session: AsyncSession, user_id: uuid.UUID
 ) -> list[BusinessMembershipOut]:
-    """DTO form of `list_memberships_for_user`.
+    """DTO form of `list_memberships_for_user`, plus each business's plan name.
 
-    Shared by `GET /businesses/mine` and `GET /auth/me` so both surfaces
-    stay in sync without one router importing the other.
+    Deliberately does its own query (rather than reusing
+    `list_memberships_for_user` + a second round-trip) so `GET
+    /businesses/mine` can show a real plan name - `list_memberships_for_user`
+    itself stays untouched since `modules.auth.service`'s login/refresh
+    paths also call it and passing a plan name through there isn't needed
+    for those latency-sensitive flows (the frontend already falls back to
+    "Free Plan" until this endpoint's response arrives).
     """
+    rows = await session.execute(
+        select(Membership, Business, Plan.name)
+        .join(Business, Business.id == Membership.business_id)
+        .outerjoin(Plan, Plan.id == Business.plan_id)
+        .where(Membership.user_id == user_id, Membership.accepted_at.is_not(None))
+        .order_by(Membership.invited_at)
+    )
     return [
-        to_business_membership_out(membership, business)
-        for membership, business in await list_memberships_for_user(session, user_id)
+        to_business_membership_out(membership, business, plan_name=plan_name)
+        for membership, business, plan_name in rows.all()
     ]
 
 
 def to_business_membership_out(
-    membership: Membership, business: Business
+    membership: Membership, business: Business, *, plan_name: str | None = None
 ) -> BusinessMembershipOut:
     return BusinessMembershipOut(
         id=business.id,
@@ -116,6 +129,7 @@ def to_business_membership_out(
         role=membership.role,
         messaging_paused=business.messaging_paused,
         onboarding_completed_at=business.onboarding_completed_at,
+        plan_name=plan_name,
     )
 
 

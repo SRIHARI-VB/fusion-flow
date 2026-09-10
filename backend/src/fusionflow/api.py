@@ -10,6 +10,7 @@ route-grouping section, which lists webhooks under `/api/v1/*`.
 from fastapi import APIRouter
 
 from fusionflow.modules.auth.router import router as auth_router
+from fusionflow.modules.business_templates.router import router as business_templates_router
 from fusionflow.modules.catalog.router import (
     coupons_router,
     offers_router,
@@ -31,6 +32,7 @@ API_V1_PREFIX = "/api/v1"
 
 api_router = APIRouter(prefix=API_V1_PREFIX)
 api_router.include_router(auth_router)
+api_router.include_router(business_templates_router)
 api_router.include_router(tenancy_router)
 api_router.include_router(custom_fields_router)
 api_router.include_router(products_router)
