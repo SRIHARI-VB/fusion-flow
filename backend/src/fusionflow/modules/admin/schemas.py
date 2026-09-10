@@ -278,6 +278,10 @@ class ConnectorAccessRequestAdminOut(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
     business_name: str
+    # Lets the admin UI distinguish a request created as part of a brand-new
+    # signup application (business still PENDING_APPROVAL) from one an
+    # already-active tenant filed later for an additional module/connector.
+    business_status: BusinessStatus
     connector_type_id: uuid.UUID
     connector_type_key: str
     status: str

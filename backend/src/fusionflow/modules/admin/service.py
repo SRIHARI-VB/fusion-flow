@@ -922,6 +922,7 @@ async def list_connector_access_requests(*, status_filter: str | None = None) ->
             "id": request.id,
             "tenant_id": request.tenant_id,
             "business_name": business.name,
+            "business_status": business.status.value,
             "connector_type_id": request.connector_type_id,
             "connector_type_key": connector_type.key,
             "status": request.status.value,
