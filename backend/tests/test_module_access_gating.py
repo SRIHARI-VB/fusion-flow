@@ -3,9 +3,12 @@
 tickets, ...).
 
 Same fake-session/monkeypatch approach as `test_connectors_access_gating.py`
-and `test_admin_plan_entitlements.py` - no Postgres needed, this module's
-own logic branches only on already-unit-tested `connector_service` calls
-plus one direct `session.get(Business, ...)` for the grandfathering check.
+and `test_admin_plan_entitlements.py` - no Postgres needed. `require_module_access`
+calls `connector_service.get_connector_access_map` (the single source of
+truth for override/bundle/request resolution, unit-tested on its own in
+`test_connectors_access_gating.py`) plus one direct `session.get(Business,
+...)` for the grandfathering check - tests here monkeypatch
+`get_connector_access_map` directly rather than re-deriving its internals.
 """
 
 from __future__ import annotations
@@ -59,6 +62,13 @@ class _FakeSession:
         return self._get_result
 
 
+def _patch_access_map(monkeypatch, connector_type: ConnectorType, resolved_status: str) -> None:
+    async def _fake_access_map(_session, *, tenant_id, connector_type_ids):
+        return {connector_type.id: resolved_status}
+
+    monkeypatch.setattr(connector_service, "get_connector_access_map", _fake_access_map)
+
+
 async def test_unregistered_module_key_raises_500(monkeypatch) -> None:
     async def _fake_lookup(_session, _key):
         return None
@@ -73,17 +83,15 @@ async def test_unregistered_module_key_raises_500(monkeypatch) -> None:
 
 async def test_grandfathered_tenant_with_no_template_is_granted(monkeypatch) -> None:
     """COMPAT branch: a pre-template-system ACTIVE tenant gets free access
-    to FEATURE-category modules."""
+    to FEATURE-category modules when there is no override/bundle/request
+    resolution at all ("not_requested")."""
     connector_type = _feature_connector_type()
 
     async def _fake_lookup(_session, _key):
         return connector_type
 
-    async def _fail_if_called(*_args, **_kwargs):
-        raise AssertionError("the normal entitlement check should be skipped for grandfathered tenants")
-
     monkeypatch.setattr(connector_service, "get_connector_type_by_key", _fake_lookup)
-    monkeypatch.setattr(connector_service, "_tenant_has_connector_access", _fail_if_called)
+    _patch_access_map(monkeypatch, connector_type, "not_requested")
 
     business = _business(business_template_id=None, status=BusinessStatus.ACTIVE)
     session = _FakeSession(get_result=business)
@@ -99,12 +107,11 @@ async def test_templated_tenant_without_module_in_bundle_is_denied(monkeypatch) 
     async def _fake_lookup(_session, _key):
         return connector_type
 
-    async def _fake_has_access(_session, *, tenant_id, connector_type_id):
-        return False
-
     monkeypatch.setattr(connector_service, "get_connector_type_by_key", _fake_lookup)
-    monkeypatch.setattr(connector_service, "_tenant_has_connector_access", _fake_has_access)
+    _patch_access_map(monkeypatch, connector_type, "not_requested")
 
+    # Templated (non-None business_template_id) so the grandfathering
+    # compat branch never applies - "not_requested" must 403 here.
     business = _business(business_template_id=uuid.uuid4(), status=BusinessStatus.ACTIVE)
     session = _FakeSession(get_result=business)
 
@@ -120,11 +127,8 @@ async def test_templated_tenant_with_module_in_bundle_is_granted(monkeypatch) ->
     async def _fake_lookup(_session, _key):
         return connector_type
 
-    async def _fake_has_access(_session, *, tenant_id, connector_type_id):
-        return True
-
     monkeypatch.setattr(connector_service, "get_connector_type_by_key", _fake_lookup)
-    monkeypatch.setattr(connector_service, "_tenant_has_connector_access", _fake_has_access)
+    _patch_access_map(monkeypatch, connector_type, "granted")
 
     business = _business(business_template_id=uuid.uuid4(), status=BusinessStatus.ACTIVE)
     session = _FakeSession(get_result=business)
@@ -143,23 +147,41 @@ async def test_approved_access_request_grants_a_feature_module(monkeypatch) -> N
     async def _fake_lookup(_session, _key):
         return connector_type
 
-    async def _fake_has_access(_session, *, tenant_id, connector_type_id):
-        # Stands in for get_connector_access_map resolving an APPROVED
-        # ConnectorAccessRequest row - that resolution path is already
-        # covered by test_connectors_access_gating.py.
-        return True
-
     monkeypatch.setattr(connector_service, "get_connector_type_by_key", _fake_lookup)
-    monkeypatch.setattr(connector_service, "_tenant_has_connector_access", _fake_has_access)
+    _patch_access_map(monkeypatch, connector_type, "granted")
 
     # status is not ACTIVE, so the grandfathering compat branch (which
     # requires status == ACTIVE) never triggers here even with no
-    # business_template_id - this isolates the fallthrough to the
-    # (mocked) approved-request resolution, rather than accidentally
-    # passing via the grandfather branch instead.
+    # business_template_id - this isolates the "granted" fast path from
+    # the grandfather branch, rather than accidentally passing via it.
     business = _business(business_template_id=None, status=BusinessStatus.SUSPENDED)
     session = _FakeSession(get_result=business)
 
     dependency = require_module_access("tickets")
     result = await dependency(_context(), session)
     assert result.tenant_id == _TENANT_ID
+
+
+async def test_explicit_denial_is_not_rescued_by_grandfathering(monkeypatch) -> None:
+    """An admin's explicit ConnectorAccessOverride(granted=False) - or a
+    denied ConnectorAccessRequest - must 403 even for an otherwise-
+    grandfathered pre-template ACTIVE tenant. This is the exact bug the
+    override feature exists to fix: before it, an admin had no way to
+    revoke a module from a tenant with no business_template_id, since the
+    old code ran the grandfather check before any entitlement lookup at
+    all."""
+    connector_type = _feature_connector_type()
+
+    async def _fake_lookup(_session, _key):
+        return connector_type
+
+    monkeypatch.setattr(connector_service, "get_connector_type_by_key", _fake_lookup)
+    _patch_access_map(monkeypatch, connector_type, "denied")
+
+    business = _business(business_template_id=None, status=BusinessStatus.ACTIVE)
+    session = _FakeSession(get_result=business)
+
+    dependency = require_module_access("tickets")
+    with pytest.raises(HTTPException) as exc_info:
+        await dependency(_context(), session)
+    assert exc_info.value.status_code == 403

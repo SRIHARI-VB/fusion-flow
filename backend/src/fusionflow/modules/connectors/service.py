@@ -29,6 +29,7 @@ from fusionflow.modules.admin.models import BusinessTemplateConnectorType
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.models import (
+    ConnectorAccessOverride,
     ConnectorAccessRequest,
     ConnectorAccessRequestStatus,
     ConnectorCategory,
@@ -134,16 +135,34 @@ async def _bundled_connector_type_ids(session: AsyncSession, *, tenant_id: uuid.
     return set(rows.scalars().all())
 
 
+async def _override_by_type(
+    session: AsyncSession, *, tenant_id: uuid.UUID
+) -> dict[uuid.UUID, ConnectorAccessOverride]:
+    rows = await session.execute(
+        select(ConnectorAccessOverride).where(ConnectorAccessOverride.tenant_id == tenant_id)
+    )
+    return {o.connector_type_id: o for o in rows.scalars().all()}
+
+
 async def get_connector_access_map(
     session: AsyncSession, *, tenant_id: uuid.UUID, connector_type_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str]:
     """Per-tenant access status for each of `connector_type_ids`.
 
-    One of "granted" (bundled, or an approved request), "pending", "denied",
-    or "not_requested". Used by `GET /connectors/types` so the frontend can
-    show "Connect" vs "Request access" vs "Pending admin approval" without a
-    second round-trip per connector type.
+    One of "granted" (bundled, an approved request, or an explicit admin
+    override), "pending", "denied", or "not_requested". Used by `GET
+    /connectors/types` so the frontend can show "Connect" vs "Request
+    access" vs "Pending admin approval" without a second round-trip per
+    connector type.
+
+    `ConnectorAccessOverride` is checked FIRST and wins outright when
+    present - an admin's explicit revoke/grant for this one tenant, set
+    via `POST /admin/tenants/{id}/connectors/{key}/override`, independent
+    of (and taking priority over) template-bundle membership or any
+    `ConnectorAccessRequest`. No override row falls through to the
+    unchanged bundle/request resolution below.
     """
+    overrides = await _override_by_type(session, tenant_id=tenant_id)
     bundled_ids = await _bundled_connector_type_ids(session, tenant_id=tenant_id)
     rows = await session.execute(
         select(ConnectorAccessRequest).where(ConnectorAccessRequest.tenant_id == tenant_id)
@@ -159,6 +178,10 @@ async def get_connector_access_map(
 
     result: dict[uuid.UUID, str] = {}
     for connector_type_id in connector_type_ids:
+        override = overrides.get(connector_type_id)
+        if override is not None:
+            result[connector_type_id] = "granted" if override.granted else "denied"
+            continue
         if connector_type_id in bundled_ids:
             result[connector_type_id] = "granted"
             continue

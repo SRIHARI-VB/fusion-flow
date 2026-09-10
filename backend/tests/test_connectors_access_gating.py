@@ -95,7 +95,7 @@ class _FakeSession:
 async def test_bundled_connector_type_is_granted_with_no_access_request_needed() -> None:
     business = SimpleNamespace(business_template_id=_TEMPLATE_ID)
     session = _FakeSession(
-        execute_results=[[_CONNECTOR_TYPE_ID], []],  # bundle ids, then access requests
+        execute_results=[[], [_CONNECTOR_TYPE_ID], []],  # overrides, bundle ids, then access requests
         get_result=business,
     )
     access_map = await connector_service.get_connector_access_map(
@@ -105,8 +105,10 @@ async def test_bundled_connector_type_is_granted_with_no_access_request_needed()
 
 
 async def test_no_bundle_and_no_request_is_not_requested() -> None:
+    # business_template_id is None, so `_bundled_connector_type_ids` returns
+    # early WITHOUT executing a query - only overrides + requests execute.
     business = SimpleNamespace(business_template_id=None)
-    session = _FakeSession(execute_results=[[]], get_result=business)  # access requests
+    session = _FakeSession(execute_results=[[], []], get_result=business)  # overrides, requests
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
     )
@@ -117,7 +119,7 @@ async def test_business_missing_business_template_id_attribute_is_safe() -> None
     """Forward-compat guard: before the migration lands, a real Business
     instance has no `business_template_id` attribute at all."""
     business = SimpleNamespace()  # no business_template_id attribute
-    session = _FakeSession(execute_results=[[]], get_result=business)
+    session = _FakeSession(execute_results=[[], []], get_result=business)
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
     )
@@ -127,7 +129,7 @@ async def test_business_missing_business_template_id_attribute_is_safe() -> None
 async def test_pending_request_outside_bundle_is_pending() -> None:
     business = SimpleNamespace(business_template_id=None)
     request = _access_request(ConnectorAccessRequestStatus.PENDING)
-    session = _FakeSession(execute_results=[[request]], get_result=business)
+    session = _FakeSession(execute_results=[[], [request]], get_result=business)
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
     )
@@ -137,7 +139,7 @@ async def test_pending_request_outside_bundle_is_pending() -> None:
 async def test_approved_request_outside_bundle_is_granted() -> None:
     business = SimpleNamespace(business_template_id=None)
     request = _access_request(ConnectorAccessRequestStatus.APPROVED)
-    session = _FakeSession(execute_results=[[request]], get_result=business)
+    session = _FakeSession(execute_results=[[], [request]], get_result=business)
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
     )
@@ -147,7 +149,29 @@ async def test_approved_request_outside_bundle_is_granted() -> None:
 async def test_denied_request_outside_bundle_is_denied() -> None:
     business = SimpleNamespace(business_template_id=None)
     request = _access_request(ConnectorAccessRequestStatus.DENIED)
-    session = _FakeSession(execute_results=[[request]], get_result=business)
+    session = _FakeSession(execute_results=[[], [request]], get_result=business)
+    access_map = await connector_service.get_connector_access_map(
+        session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
+    )
+    assert access_map[_CONNECTOR_TYPE_ID] == "denied"
+
+
+async def test_override_grant_wins_even_outside_bundle_and_with_no_request() -> None:
+    business = SimpleNamespace(business_template_id=None)
+    override = SimpleNamespace(connector_type_id=_CONNECTOR_TYPE_ID, granted=True)
+    session = _FakeSession(execute_results=[[override], []], get_result=business)
+    access_map = await connector_service.get_connector_access_map(
+        session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
+    )
+    assert access_map[_CONNECTOR_TYPE_ID] == "granted"
+
+
+async def test_override_revoke_wins_even_when_bundled() -> None:
+    business = SimpleNamespace(business_template_id=_TEMPLATE_ID)
+    override = SimpleNamespace(connector_type_id=_CONNECTOR_TYPE_ID, granted=False)
+    session = _FakeSession(
+        execute_results=[[override], [_CONNECTOR_TYPE_ID], []], get_result=business
+    )
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=_TENANT_ID, connector_type_ids=[_CONNECTOR_TYPE_ID]
     )

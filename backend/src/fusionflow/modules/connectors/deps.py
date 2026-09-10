@@ -26,8 +26,9 @@ from fusionflow.modules.tenancy.models import Business, BusinessStatus
 
 def require_module_access(module_key: str):
     """Dependency factory: 403s unless the active tenant is entitled to
-    `module_key` (bundled in its business template, or an approved
-    `ConnectorAccessRequest`)."""
+    `module_key` (bundled in its business template, an approved
+    `ConnectorAccessRequest`, or an admin's explicit
+    `ConnectorAccessOverride`)."""
 
     async def _dependency(context: TenantContextDep, session: SessionDep) -> TenantContext:
         connector_type = await connector_service.get_connector_type_by_key(session, module_key)
@@ -37,12 +38,31 @@ def require_module_access(module_key: str):
                 detail=f"Module '{module_key}' is not registered in the catalog",
             )
 
+        access_map = await connector_service.get_connector_access_map(
+            session, tenant_id=context.tenant_id, connector_type_ids=[connector_type.id]
+        )
+        access_status = access_map.get(connector_type.id, "not_requested")
+        if access_status == "granted":
+            return context
+        if access_status == "denied":
+            # An explicit admin revoke (ConnectorAccessOverride) or a denied
+            # ConnectorAccessRequest - the grandfathering compat branch below
+            # must NEVER rescue an explicit denial, or an admin revoking a
+            # module from a pre-template tenant would have no effect at all.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your business does not have access to this module.",
+            )
+
         # COMPAT: pre-template-system tenants (business_template_id never
         # set) get full access to fixed modules until an admin assigns
-        # them a template - see the plan doc "Next Implementation Phase 2".
-        # Only applies to FEATURE-category modules, never to integration
-        # -kind connectors (WhatsApp/Razorpay), which already have real,
-        # working entitlement state today and don't need grandfathering.
+        # them a template, or explicitly revokes/grants one - see the plan
+        # doc "Next Implementation Phase 2"/"Phase 3". Only rescues
+        # "not_requested"/"pending" (handled above, an explicit "denied"
+        # already returned). Only applies to FEATURE-category modules,
+        # never integration-kind connectors (WhatsApp/Razorpay), which
+        # already have real, working entitlement state and don't need
+        # grandfathering.
         if connector_type.category == ConnectorCategory.FEATURE:
             business = await session.get(Business, context.tenant_id)
             if (
@@ -52,15 +72,10 @@ def require_module_access(module_key: str):
             ):
                 return context
 
-        granted = await connector_service._tenant_has_connector_access(
-            session, tenant_id=context.tenant_id, connector_type_id=connector_type.id
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your business does not have access to this module yet. "
+            "Request access from an administrator.",
         )
-        if not granted:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your business does not have access to this module yet. "
-                "Request access from an administrator.",
-            )
-        return context
 
     return _dependency
