@@ -234,7 +234,7 @@ def _check_invalid_branches(graph: WorkflowGraph, result: ValidationResult) -> N
         executor = node_executor_registry.get(node.data.node_type)
         if executor is None:
             continue
-        required = executor.output_handles or []
+        required = executor.declared_output_handles(node.data.config) or []
         optional = executor.optional_output_handles or []
         if not required and not optional:
             continue

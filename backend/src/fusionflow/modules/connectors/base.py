@@ -149,6 +149,26 @@ class ConnectorAdapter(abc.ABC):
         provider parsing and generic bookkeeping separate.
         """
 
+    async def perform_action(
+        self, *, action: str, params: dict[str, Any], instance: "ConnectorInstance", session: "AsyncSession"
+    ) -> dict[str, Any]:
+        """Dispatch one named, provider-specific capability - the hook the
+        workflow engine's generic `connector.action` node type (see
+        `modules/workflows/nodes/connector_action.py`) calls through so a
+        *new* capability on an *already-adapted* provider (e.g. "send a
+        WhatsApp template message" alongside today's "send text") is one
+        `elif action == "..."` branch added to the adapter's own override
+        of this method, not a new `NodeExecutor` subclass, a new registry
+        entry, or any workflow-engine code change at all.
+
+        Default raises `NotImplementedError` - only adapters that actually
+        expose actions to the workflow engine override this (today: only
+        WhatsApp's `send_text_message`). Not `abc.abstractmethod`: Razorpay
+        (and any future adapter with nothing meaningful to expose here)
+        should not be forced to implement a no-op.
+        """
+        raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
+
 
 class ConnectorRegistry:
     """Module-level `connector_type_key -> ConnectorAdapter` map.

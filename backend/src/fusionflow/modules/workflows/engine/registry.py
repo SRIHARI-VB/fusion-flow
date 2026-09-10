@@ -200,6 +200,18 @@ class NodeExecutor(abc.ABC):
         if self.config_model is not None:
             self.config_model.model_validate(config)
 
+    def declared_output_handles(self, config: dict[str, Any]) -> list[str] | None:
+        """Which output handles must be wired for *this specific node
+        instance*, given its own `config`. Default just returns the
+        static `output_handles` class attribute — overridden only by a
+        node type whose handle set is config-dependent (today: just
+        `condition.multi_branch`, where each configured "case" becomes
+        its own handle — see that node's override, the only current user
+        of this method). `validation.py`'s rule 4 calls this, not the raw
+        attribute, so both the static and dynamic cases go through one
+        code path."""
+        return self.output_handles
+
     @abc.abstractmethod
     async def execute(self, context: ExecutionContext) -> NodeResult: ...
 

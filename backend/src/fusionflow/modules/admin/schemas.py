@@ -391,3 +391,41 @@ class BillingUsageOut(BaseModel):
     available: bool = False
     reason: str = "Billing/usage metering is not implemented yet (Phase 2+ per the plan)"
     tenants_count: int = 0
+
+
+class WorkflowNodeTemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    label: str
+    description: str | None = None
+    category: str
+    base_node_type: str
+    icon: str | None = None
+    default_config: dict[str, Any] = Field(default_factory=dict)
+    config_schema_overrides: dict[str, Any] | None = None
+    is_active: bool
+    created_at: datetime
+
+
+class WorkflowNodeTemplateCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str = Field(default="Integrations", max_length=80)
+    base_node_type: str = Field(min_length=1, max_length=150)
+    icon: str | None = Field(default=None, max_length=80)
+    default_config: dict[str, Any] = Field(default_factory=dict)
+    config_schema_overrides: dict[str, Any] | None = None
+    is_active: bool = True
+
+
+class WorkflowNodeTemplateUpdateRequest(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=80)
+    icon: str | None = Field(default=None, max_length=80)
+    default_config: dict[str, Any] | None = None
+    config_schema_overrides: dict[str, Any] | None = None
+    is_active: bool | None = None

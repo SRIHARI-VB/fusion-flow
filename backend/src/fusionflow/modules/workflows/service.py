@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 from fusionflow.modules.workflows.engine.registry import node_executor_registry, trigger_registry
 from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run
+from fusionflow.modules.workflows.engine.template_resolution import resolve_node_templates
 from fusionflow.modules.workflows.models import (
     RunStatus,
     ValidationStatus,
@@ -151,7 +152,8 @@ async def publish_workflow(
     session: AsyncSession, workflow: Workflow, *, published_by: uuid.UUID
 ) -> tuple[Workflow, WorkflowVersion, ValidationResult]:
     version = await get_draft_version(session, workflow, created_by=published_by)
-    graph = WorkflowGraph.from_json(version.graph)
+    compiled_graph_json = await resolve_node_templates(session, version.graph)
+    graph = WorkflowGraph.from_json(compiled_graph_json)
     result = await validate_for_publish(session, tenant_id=workflow.tenant_id, graph=graph)
 
     version.validation_status = ValidationStatus.INVALID if result.has_errors else ValidationStatus.VALID
@@ -161,6 +163,7 @@ async def publish_workflow(
         await session.flush()
         return workflow, version, result
 
+    version.compiled_graph = compiled_graph_json
     version.published_at = _now()
     workflow.status = WorkflowStatus.PUBLISHED
     workflow.current_published_version_id = version.id
@@ -222,7 +225,10 @@ async def simulate_workflow(session: AsyncSession, workflow: Workflow, *, payloa
     if version is None:
         raise WorkflowServiceError(400, "workflow has no draft version yet")
 
-    graph = WorkflowGraph.from_json(version.graph)
+    # Resolved transiently, not persisted - a simulate run always reflects
+    # whichever templates are active right now, even pre-publish.
+    compiled_graph_json = await resolve_node_templates(session, version.graph)
+    graph = WorkflowGraph.from_json(compiled_graph_json)
     run = WorkflowRun(
         id=uuid.uuid4(),
         tenant_id=workflow.tenant_id,
@@ -269,3 +275,75 @@ def list_node_types() -> list:
     for executor in node_executor_registry.all():
         metas.setdefault(executor.node_type, executor.meta())
     return list(metas.values())
+
+
+async def list_node_types_with_templates(session: AsyncSession) -> list["schemas.NodeTypeOut"]:
+    """`list_node_types()`'s registry-only palette, plus one entry per
+    active `WorkflowNodeTemplate` row (modules.admin.models.
+    WorkflowNodeTemplate) — the "new integration without a deploy" layer.
+    A template whose `base_node_type` isn't currently registered is
+    skipped defensively (an admin might add a template before the
+    corresponding executor ships in a deploy, or the registry could
+    differ between environments)."""
+    from fusionflow.modules.admin import service as admin_service
+    from fusionflow.modules.workflows import schemas
+
+    entries = [
+        schemas.NodeTypeOut(
+            node_type=m.node_type,
+            kind=m.kind,
+            category=m.category,
+            label=m.label,
+            description=m.description,
+            config_schema=m.config_schema,
+            output_handles=m.output_handles,
+            optional_output_handles=m.optional_output_handles,
+            can_contain_children=m.can_contain_children,
+            child_role=m.child_role,
+        )
+        for m in list_node_types()
+    ]
+
+    templates = await admin_service.list_workflow_node_templates(session, active_only=True)
+    for template in templates:
+        base_executor = node_executor_registry.get(template.base_node_type)
+        if base_executor is None:
+            continue
+        base_meta = base_executor.meta()
+        entries.append(
+            schemas.NodeTypeOut(
+                node_type=template.key,
+                kind=base_meta.kind,
+                category=template.category,
+                label=template.label,
+                description=template.description or base_meta.description,
+                config_schema=_merge_config_schema(base_meta.config_schema, template.config_schema_overrides),
+                output_handles=base_meta.output_handles,
+                optional_output_handles=base_meta.optional_output_handles,
+                can_contain_children=base_meta.can_contain_children,
+                child_role=base_meta.child_role,
+                default_config=template.default_config or {},
+                base_node_type=template.base_node_type,
+            )
+        )
+    return entries
+
+
+def _merge_config_schema(base_schema: dict, overrides: dict | None) -> dict:
+    """Shallow-merges `overrides` onto `base_schema`: top-level keys other
+    than "properties" replace outright; "properties" merges key-by-key
+    (each overridden property replaces its base counterpart entirely,
+    rather than a deep per-field merge — enough for the "hide/relabel a
+    field, pre-fill its title" use case this exists for, without a full
+    JSON-schema merge implementation)."""
+    if not overrides:
+        return base_schema
+    merged = dict(base_schema)
+    if "properties" in overrides:
+        merged_properties = dict(base_schema.get("properties", {}))
+        merged_properties.update(overrides["properties"])
+        merged["properties"] = merged_properties
+    for key, value in overrides.items():
+        if key != "properties":
+            merged[key] = value
+    return merged

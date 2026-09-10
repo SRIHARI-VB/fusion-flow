@@ -168,7 +168,12 @@ async def _start_run_for_trigger(
     if version is None:
         return
 
-    graph = WorkflowGraph.from_json(version.graph)
+    # `compiled_graph` (every WorkflowNodeTemplate-backed node already
+    # resolved to a real registered node type - see engine.
+    # template_resolution) is what a published version always has set;
+    # `.graph` is the fallback only for defensive robustness against a
+    # version published before this column existed.
+    graph = WorkflowGraph.from_json(version.compiled_graph or version.graph)
     run = WorkflowRun(
         id=uuid.uuid4(),
         tenant_id=trigger.tenant_id,

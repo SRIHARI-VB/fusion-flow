@@ -6,11 +6,11 @@ dependency."""
 
 from __future__ import annotations
 
-import operator
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from fusionflow.modules.workflows.engine.conditions import evaluate_condition
 from fusionflow.modules.workflows.engine.registry import (
     Branch,
     ExecutionContext,
@@ -18,16 +18,6 @@ from fusionflow.modules.workflows.engine.registry import (
     NodeResult,
     node_executor_registry,
 )
-
-_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
-    "eq": operator.eq,
-    "neq": operator.ne,
-    "gt": operator.gt,
-    "gte": operator.ge,
-    "lt": operator.lt,
-    "lte": operator.le,
-    "contains": lambda haystack, needle: needle in haystack if haystack is not None else False,
-}
 
 
 class FieldCompareConfig(BaseModel):
@@ -64,13 +54,7 @@ class FieldCompareExecutor(NodeExecutor):
     async def execute(self, context: ExecutionContext) -> NodeResult:
         config = FieldCompareConfig.model_validate(context.config)
         actual = _resolve_path(context.variables, config.field_path)
-        compare = _OPERATORS[config.operator]
-        try:
-            matched = bool(compare(actual, config.value))
-        except TypeError:
-            # Mismatched types (e.g. comparing None with `gt`) - treat as
-            # "did not match" rather than crashing the node.
-            matched = False
+        matched = evaluate_condition(config.operator, actual, config.value)
         handle = "true" if matched else "false"
         return Branch(
             selected_edge_handles=[handle],

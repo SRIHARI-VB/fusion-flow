@@ -110,7 +110,18 @@ class WorkflowVersion(Base, TenantScopedMixin, TimestampMixin):
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The *authored* graph - may reference `WorkflowNodeTemplate` keys as
+    # a node's `data.nodeType`, not just raw registered node types. Never
+    # rewritten by publish, so editing a published workflow still shows
+    # the friendly template identity instead of what it compiles to.
     graph: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # The *compiled* graph - every template-backed node resolved to its
+    # real `base_node_type` + merged config (see `engine.
+    # template_resolution.resolve_node_templates`). Set only on publish;
+    # `null` for a draft version. This, not `graph`, is what the run loop
+    # actually executes (`outbox_poller.py`) - the engine never needs to
+    # know templates exist.
+    compiled_graph: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     validation_status: Mapped[ValidationStatus | None] = mapped_column(
         Enum(
             ValidationStatus,

@@ -45,6 +45,32 @@ class GraphNode(BaseModel):
     parent_id: str | None = Field(default=None, alias="parentId")
 
 
+class EdgeFilter(BaseModel):
+    """A simple per-edge guard: this edge is only followed if
+    `field_path`'s resolved value satisfies `operator`/`value` against the
+    run's variable context — the same `field op value` shape and operator
+    set `condition.field_compare`/`condition.multi_branch` already use
+    (`engine.conditions.evaluate_condition`), applied to a connection
+    instead of a dedicated condition node. Lets an author add a trivial
+    per-connection guard without inserting an extra node for it (mirrors
+    Make.com's connection filters)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    field_path: str
+    operator: str = "eq"
+    value: Any = None
+
+
+class GraphEdgeData(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    filter: EdgeFilter | None = None
+    #: Pure canvas annotation - no execution effect. React Flow already
+    #: supports labeled edges natively.
+    label: str | None = None
+
+
 class GraphEdge(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -53,6 +79,7 @@ class GraphEdge(BaseModel):
     target: str
     source_handle: str | None = Field(default=None, alias="sourceHandle")
     target_handle: str | None = Field(default=None, alias="targetHandle")
+    data: GraphEdgeData | None = None
 
 
 class WorkflowGraph(BaseModel):

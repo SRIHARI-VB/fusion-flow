@@ -58,6 +58,9 @@ from fusionflow.modules.admin.schemas import (
     TenantListItemOut,
     TenantModuleAccessOut,
     TenantResourceLimitOut,
+    WorkflowNodeTemplateCreateRequest,
+    WorkflowNodeTemplateOut,
+    WorkflowNodeTemplateUpdateRequest,
 )
 from fusionflow.modules.admin.service import AdminError
 
@@ -741,3 +744,77 @@ async def clear_tenant_resource_limit(
 @router.get("/billing-usage")
 async def get_billing_usage(_admin: PlatformAdminDep, session: SessionDep) -> dict:
     return await admin_service.get_billing_usage_stub(session)
+
+
+# --- Workflow node templates (admin-managed palette entries, Part D) --------
+
+
+@router.get("/workflow-node-templates", response_model=list[WorkflowNodeTemplateOut])
+async def list_workflow_node_templates(
+    _admin: PlatformAdminDep, session: SessionDep
+) -> list[WorkflowNodeTemplateOut]:
+    templates = await admin_service.list_workflow_node_templates(session)
+    return [WorkflowNodeTemplateOut.model_validate(t) for t in templates]
+
+
+@router.post(
+    "/workflow-node-templates",
+    response_model=WorkflowNodeTemplateOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_workflow_node_template(
+    payload: WorkflowNodeTemplateCreateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> WorkflowNodeTemplateOut:
+    try:
+        template = await admin_service.create_workflow_node_template(
+            session,
+            key=payload.key,
+            label=payload.label,
+            description=payload.description,
+            category=payload.category,
+            base_node_type=payload.base_node_type,
+            icon=payload.icon,
+            default_config=payload.default_config,
+            config_schema_overrides=payload.config_schema_overrides,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowNodeTemplateOut.model_validate(template)
+
+
+@router.patch("/workflow-node-templates/{template_id}", response_model=WorkflowNodeTemplateOut)
+async def update_workflow_node_template(
+    template_id: uuid.UUID,
+    payload: WorkflowNodeTemplateUpdateRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> WorkflowNodeTemplateOut:
+    try:
+        template = await admin_service.update_workflow_node_template(
+            session,
+            template_id,
+            label=payload.label,
+            description=payload.description,
+            category=payload.category,
+            icon=payload.icon,
+            default_config=payload.default_config,
+            config_schema_overrides=payload.config_schema_overrides,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowNodeTemplateOut.model_validate(template)
+
+
+@router.delete("/workflow-node-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow_node_template(
+    template_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> None:
+    try:
+        await admin_service.delete_workflow_node_template(session, template_id)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()

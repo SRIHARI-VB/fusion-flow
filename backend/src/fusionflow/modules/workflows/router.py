@@ -38,24 +38,11 @@ async def _get_workflow_or_404(session, tenant_id: uuid.UUID, workflow_id: uuid.
 
 
 @router.get("/node-types", response_model=list[schemas.NodeTypeOut])
-async def get_node_types(context: TenantContextDep) -> list[schemas.NodeTypeOut]:
-    """Palette metadata for the workflow builder — pure registry read, no
-    DB access needed beyond the tenant-context dependency itself."""
-    return [
-        schemas.NodeTypeOut(
-            node_type=m.node_type,
-            kind=m.kind,
-            category=m.category,
-            label=m.label,
-            description=m.description,
-            config_schema=m.config_schema,
-            output_handles=m.output_handles,
-            optional_output_handles=m.optional_output_handles,
-            can_contain_children=m.can_contain_children,
-            child_role=m.child_role,
-        )
-        for m in service.list_node_types()
-    ]
+async def get_node_types(context: TenantContextDep, session: SessionDep) -> list[schemas.NodeTypeOut]:
+    """Palette metadata for the workflow builder: every raw registered
+    node type, plus one entry per active admin-managed
+    `WorkflowNodeTemplate` row — see `service.list_node_types_with_templates`."""
+    return await service.list_node_types_with_templates(session)
 
 
 @router.get("", response_model=list[schemas.WorkflowOut])

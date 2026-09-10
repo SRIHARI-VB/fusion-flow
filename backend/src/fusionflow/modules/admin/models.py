@@ -277,3 +277,43 @@ class BusinessTemplateConnectorType(Base, TimestampMixin):
     connector_type_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
     )
+
+
+class WorkflowNodeTemplate(Base, TimestampMixin):
+    """Admin-managed palette entry over one of the workflow engine's
+    generic executors (`connector.action`, `http.request`, ...) - the
+    "new integration without a deploy" half of Part D's extensibility
+    layer (see `modules.workflows.nodes.connector_action`'s module
+    docstring for the other half, the adapter's own `perform_action`).
+
+    Mirrors `BusinessTemplate`'s shape deliberately: this is the same
+    admin-catalog-row-drives-behavior pattern already proven for
+    `ConnectorType`/`BusinessTemplate`/`PlanFeatureFlag`/
+    `PlanResourceLimit` in this codebase, applied to workflow node
+    palette entries. Global, not tenant-scoped - like `BusinessTemplate`,
+    every tenant sees the same active templates.
+    """
+
+    __tablename__ = "workflow_node_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="Integrations")
+    # The registered `NodeExecutor.node_type` this template wraps at
+    # runtime (e.g. "connector.action", "http.request") - not validated
+    # against the live registry at write time (an admin might add a
+    # template before the corresponding executor ships in a deploy, or
+    # the registry may differ between environments); `service.py`'s
+    # palette-listing code is what actually resolves it, and simply skips
+    # a template whose `base_node_type` isn't currently registered.
+    base_node_type: Mapped[str] = mapped_column(String(150), nullable=False)
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    default_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Optionally narrows/relabels fields from the base executor's JSON
+    # schema (e.g. hiding "action" behind a friendly pre-filled label) -
+    # shallow-merged over the base schema by the palette endpoint, never
+    # mutating the base executor's own schema.
+    config_schema_overrides: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

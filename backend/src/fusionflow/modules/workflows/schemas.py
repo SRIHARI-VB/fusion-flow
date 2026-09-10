@@ -107,3 +107,13 @@ class NodeTypeOut(BaseModel):
     optional_output_handles: list[str] | None = None
     can_contain_children: bool = False
     child_role: str | None = None
+    # Set only for a `WorkflowNodeTemplate`-backed palette entry (see
+    # modules.admin.models.WorkflowNodeTemplate) - the config a newly
+    # dropped node of this type should be pre-filled with. Empty for a
+    # raw registered node type, which has no per-instance defaults.
+    default_config: dict[str, Any] = Field(default_factory=dict)
+    # Present only on a template-backed entry - the underlying registered
+    # node type this one resolves to at publish time (see engine.
+    # template_resolution). `None` for a raw registered node type (where
+    # `node_type` already *is* the base type).
+    base_node_type: str | None = None

@@ -35,7 +35,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fusionflow.modules.workflows.engine.graph import GraphNode, WorkflowGraph
+from fusionflow.modules.workflows.engine.conditions import evaluate_condition
+from fusionflow.modules.workflows.engine.graph import GraphEdge, GraphNode, WorkflowGraph
 from fusionflow.modules.workflows.engine.registry import (
     Branch,
     ExecutionContext,
@@ -44,6 +45,7 @@ from fusionflow.modules.workflows.engine.registry import (
     Success,
     node_executor_registry,
 )
+from fusionflow.modules.workflows.engine.templating import resolve_path
 from fusionflow.modules.workflows.models import RunStatus, StepStatus, WorkflowRun, WorkflowRunStep
 
 logger = logging.getLogger(__name__)
@@ -196,7 +198,20 @@ async def _run_frontier(
         if allowed_ids is not None:
             next_edges = [e for e in next_edges if e.target in allowed_ids]
 
+        # An edge's own optional filter (engine.graph.EdgeFilter) applies
+        # in addition to (not instead of) handle-matching above - both
+        # must pass for the edge to be followed.
+        next_edges = [e for e in next_edges if _edge_passes_filter(e, variables)]
+
         frontier.extend(edge.target for edge in next_edges)
+
+
+def _edge_passes_filter(edge: GraphEdge, variables: dict[str, Any]) -> bool:
+    if edge.data is None or edge.data.filter is None:
+        return True
+    edge_filter = edge.data.filter
+    actual = resolve_path(variables, edge_filter.field_path)
+    return evaluate_condition(edge_filter.operator, actual, edge_filter.value)
 
 
 async def _execute_single_node(

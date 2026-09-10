@@ -264,6 +264,23 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             )
             response.raise_for_status()
 
+    async def perform_action(
+        self, *, action: str, params: dict[str, Any], instance: ConnectorInstance, session: AsyncSession
+    ) -> dict[str, Any]:
+        """Dispatch for the generic `connector.action` workflow node type
+        (see `base.ConnectorAdapter.perform_action`'s docstring). Today:
+        only `send_text_message`, wrapping the method above - a future new
+        WhatsApp capability (e.g. a template message) is one more `elif`
+        branch here, not a new workflow node type."""
+        if action == "send_text_message":
+            to = params.get("to")
+            body = params.get("body")
+            if not to or not body:
+                raise ValueError("send_text_message requires non-empty 'to' and 'body' params")
+            await self.send_text_message(instance=instance, to=to, body=body, session=session)
+            return {"to": to, "body": body}
+        raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
+
     def verify_webhook_signature(self, *, raw_payload: bytes, headers: Mapping[str, str]) -> bool:
         """Meta's `X-Hub-Signature-256` scheme: HMAC-SHA256 over the raw
         body, keyed by the **App Secret** (app-level, shared by every WABA

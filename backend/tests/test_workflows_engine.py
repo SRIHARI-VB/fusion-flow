@@ -66,10 +66,18 @@ def _node(node_id: str, node_type: str, config: dict | None = None, parent_id: s
     return node
 
 
-def _edge(edge_id: str, source: str, target: str, source_handle: str | None = None) -> dict:
+def _edge(
+    edge_id: str,
+    source: str,
+    target: str,
+    source_handle: str | None = None,
+    filter_: dict | None = None,
+) -> dict:
     edge = {"id": edge_id, "source": source, "target": target}
     if source_handle is not None:
         edge["sourceHandle"] = source_handle
+    if filter_ is not None:
+        edge["data"] = {"filter": filter_}
     return edge
 
 
@@ -846,3 +854,94 @@ async def test_try_catch_optional_handle_wired_twice_is_a_hard_error() -> None:
     )
     result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
     assert any(i.rule == "invalid_branches" and "expected at most one" in i.message for i in result.issues)
+
+
+# --------------------------------------------------------------------------
+# run_loop — configurable edges (EdgeFilter)
+# --------------------------------------------------------------------------
+
+
+async def test_edge_filter_skips_the_edge_when_it_does_not_match() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("gated", "log.noop"),
+            ],
+            "edges": [
+                _edge(
+                    "e1",
+                    "trigger",
+                    "gated",
+                    filter_={"field_path": "trigger.amount", "operator": "gt", "value": 100},
+                )
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={"amount": 5})
+
+    assert result.status == RunStatus.COMPLETED
+    assert [s.node_id for s in session.added] == ["trigger"]  # "gated" never ran
+
+
+async def test_edge_filter_follows_the_edge_when_it_matches() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("gated", "log.noop"),
+            ],
+            "edges": [
+                _edge(
+                    "e1",
+                    "trigger",
+                    "gated",
+                    filter_={"field_path": "trigger.amount", "operator": "gt", "value": 100},
+                )
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={"amount": 500})
+
+    assert result.status == RunStatus.COMPLETED
+    assert [s.node_id for s in session.added] == ["trigger", "gated"]
+
+
+async def test_edge_filter_applies_in_addition_to_branch_handle_matching() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node(
+                    "cond",
+                    "condition.field_compare",
+                    {"field_path": "trigger.keyword", "operator": "eq", "value": "refund"},
+                ),
+                _node("on_true", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "cond"),
+                # Matched handle, but the edge's own filter still fails.
+                _edge(
+                    "e2",
+                    "cond",
+                    "on_true",
+                    source_handle="true",
+                    filter_={"field_path": "trigger.amount", "operator": "gt", "value": 1000},
+                ),
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={"keyword": "refund", "amount": 5})
+
+    assert result.status == RunStatus.COMPLETED
+    assert [s.node_id for s in session.added] == ["trigger", "cond"]  # "on_true" gated out

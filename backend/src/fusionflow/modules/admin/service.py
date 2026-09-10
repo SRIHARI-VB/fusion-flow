@@ -31,6 +31,7 @@ from fusionflow.modules.admin.models import (
     PlanFeatureFlag,
     PlanResourceLimit,
     ResourceLimitOverride,
+    WorkflowNodeTemplate,
 )
 from fusionflow.modules.admin.schemas import (
     ConnectorHealthItemOut,
@@ -1398,3 +1399,101 @@ async def get_billing_usage_stub(session: AsyncSession) -> dict[str, Any]:
         "reason": "Billing/usage metering is not implemented yet (Phase 2+ per the plan)",
         "tenants_count": tenants_count,
     }
+
+
+# --- Workflow node templates (admin-managed palette entries, Part D) --------
+
+
+async def list_workflow_node_templates(session: AsyncSession, *, active_only: bool = False) -> list[WorkflowNodeTemplate]:
+    query = select(WorkflowNodeTemplate).order_by(WorkflowNodeTemplate.label)
+    if active_only:
+        query = query.where(WorkflowNodeTemplate.is_active.is_(True))
+    return list((await session.execute(query)).scalars().all())
+
+
+async def get_workflow_node_template(
+    session: AsyncSession, template_id: uuid.UUID
+) -> WorkflowNodeTemplate | None:
+    return await session.get(WorkflowNodeTemplate, template_id)
+
+
+async def create_workflow_node_template(
+    session: AsyncSession,
+    *,
+    key: str,
+    label: str,
+    description: str | None,
+    category: str,
+    base_node_type: str,
+    icon: str | None,
+    default_config: dict[str, Any],
+    config_schema_overrides: dict[str, Any] | None,
+    is_active: bool,
+) -> WorkflowNodeTemplate:
+    existing = (
+        await session.execute(select(WorkflowNodeTemplate).where(WorkflowNodeTemplate.key == key))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise AdminError(f"Workflow node template '{key}' already exists", status_code=409)
+
+    template = WorkflowNodeTemplate(
+        id=uuid.uuid4(),
+        key=key,
+        label=label,
+        description=description,
+        category=category,
+        base_node_type=base_node_type,
+        icon=icon,
+        default_config=default_config,
+        config_schema_overrides=config_schema_overrides,
+        is_active=is_active,
+    )
+    session.add(template)
+    await session.flush()
+    return template
+
+
+async def update_workflow_node_template(
+    session: AsyncSession,
+    template_id: uuid.UUID,
+    *,
+    label: str | None,
+    description: str | None,
+    category: str | None,
+    icon: str | None,
+    default_config: dict[str, Any] | None,
+    config_schema_overrides: dict[str, Any] | None,
+    is_active: bool | None,
+) -> WorkflowNodeTemplate:
+    """`base_node_type` is deliberately not editable after creation - it
+    determines which executor's config schema this template narrows,
+    and swapping it out from under an already-built workflow graph that
+    references this template's `key` would silently change what that
+    node actually does at runtime. Delete and recreate instead."""
+    template = await get_workflow_node_template(session, template_id)
+    if template is None:
+        raise AdminError("Workflow node template not found", status_code=404)
+    if label is not None:
+        template.label = label
+    if description is not None:
+        template.description = description
+    if category is not None:
+        template.category = category
+    if icon is not None:
+        template.icon = icon
+    if default_config is not None:
+        template.default_config = default_config
+    if config_schema_overrides is not None:
+        template.config_schema_overrides = config_schema_overrides
+    if is_active is not None:
+        template.is_active = is_active
+    await session.flush()
+    return template
+
+
+async def delete_workflow_node_template(session: AsyncSession, template_id: uuid.UUID) -> None:
+    template = await get_workflow_node_template(session, template_id)
+    if template is None:
+        raise AdminError("Workflow node template not found", status_code=404)
+    await session.delete(template)
+    await session.flush()
