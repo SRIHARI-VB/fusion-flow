@@ -19,6 +19,11 @@ class TenantListItemOut(BaseModel):
     status: BusinessStatus
     member_count: int
     created_at: datetime
+    denial_reason: str | None = None
+
+
+class DenyTenantRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class TenantMembershipOut(BaseModel):
@@ -42,6 +47,7 @@ class TenantDetailOut(BaseModel):
     onboarding_completed_at: datetime | None = None
     created_at: datetime
     memberships: list[TenantMembershipOut]
+    denial_reason: str | None = None
 
 
 class ConnectorHealthItemOut(BaseModel):

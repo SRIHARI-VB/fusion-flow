@@ -29,7 +29,9 @@ from fusionflow.modules.admin.models import BusinessTemplate, BusinessTemplateCo
 from fusionflow.modules.business_templates.schemas import (
     ApplyBusinessTemplateResponse,
     BusinessTemplateOut,
+    SignupCatalogOut,
 )
+from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.models import ConnectorType
 from fusionflow.modules.tenancy.models import Business
 
@@ -56,6 +58,28 @@ async def _to_out(session: AsyncSession, template: BusinessTemplate) -> Business
         plan_id=template.plan_id,
         is_active=template.is_active,
         connector_type_keys=list(keys),
+    )
+
+
+@router.get("/catalog", response_model=SignupCatalogOut)
+async def signup_catalog(session: SessionDep) -> SignupCatalogOut:
+    """Genuinely unauthenticated - no `CurrentUserDep`, no dependency at
+    all. The signup form needs to show starter-kit templates and the full
+    connector/module catalog before any user/session exists yet. Only
+    exposes catalog metadata, never tenant data."""
+    templates = (
+        (
+            await session.execute(
+                select(BusinessTemplate).where(BusinessTemplate.is_active.is_(True)).order_by(BusinessTemplate.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    connector_types = await connector_service.list_connector_types(session)
+    return SignupCatalogOut(
+        templates=[await _to_out(session, t) for t in templates],
+        connector_types=[connector_service.to_type_out(t, "not_requested") for t in connector_types],
     )
 
 

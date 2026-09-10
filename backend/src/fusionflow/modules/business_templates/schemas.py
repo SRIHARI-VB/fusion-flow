@@ -11,6 +11,8 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from fusionflow.modules.connectors.schemas import ConnectorTypeOut
+
 
 class BusinessTemplateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -28,3 +30,14 @@ class BusinessTemplateOut(BaseModel):
 class ApplyBusinessTemplateResponse(BaseModel):
     business_template_id: uuid.UUID
     vertical: str | None = None
+
+
+class SignupCatalogOut(BaseModel):
+    """`GET /business-templates/catalog` - the one genuinely unauthenticated
+    endpoint in this feature: the signup form needs to show templates and
+    the connector/module catalog before any session exists. `connector_types`
+    entries always carry `access_status="not_requested"` - that field has no
+    meaning pre-signup."""
+
+    templates: list[BusinessTemplateOut] = Field(default_factory=list)
+    connector_types: list[ConnectorTypeOut] = Field(default_factory=list)

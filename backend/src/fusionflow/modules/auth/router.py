@@ -20,6 +20,7 @@ from fusionflow.modules.auth.schemas import (
     RefreshRequest,
     SelectBusinessRequest,
     SignupRequest,
+    SignupResult,
     TokenResponse,
     UserOut,
 )
@@ -36,21 +37,23 @@ def _http(exc: AuthError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-@router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def signup(payload: SignupRequest, response: Response, session: SessionDep) -> TokenResponse:
-    """Create a user, their first business and an owner membership, then log in."""
+@router.post("/signup", response_model=SignupResult, status_code=status.HTTP_201_CREATED)
+async def signup(payload: SignupRequest, session: SessionDep) -> SignupResult:
+    """Create a user, their first business (pending admin approval), and an
+    owner membership. Issues no session - see `SignupResult`."""
     try:
-        issued = await auth_service.signup(
+        business = await auth_service.signup(
             session,
             email=payload.email,
             password=payload.password,
             business_name=payload.business_name,
             vertical=payload.vertical,
+            business_template_id=payload.business_template_id,
+            extra_connector_type_keys=tuple(payload.extra_connector_type_keys),
         )
     except AuthError as exc:
         raise _http(exc) from exc
-    set_refresh_cookie(response, issued.refresh_token_raw)
-    return to_token_response(issued)
+    return SignupResult(status="pending_approval", business_id=business.id, business_name=business.name)
 
 
 @router.post("/login", response_model=TokenResponse)

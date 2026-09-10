@@ -33,6 +33,7 @@ from fusionflow.modules.admin.schemas import (
     ConnectorAccessRequestReviewOut,
     ConnectorHealthOut,
     ConnectorTypeCatalogOut,
+    DenyTenantRequest,
     FeatureFlagCatalogItemOut,
     FeatureFlagCreateRequest,
     FeatureFlagOut,
@@ -77,6 +78,7 @@ async def list_tenants(
             status=business.status,
             member_count=count,
             created_at=business.created_at,
+            denial_reason=business.denial_reason,
         )
         for business, count in rows
     ]
@@ -99,6 +101,7 @@ async def get_tenant_detail(
         onboarding_completed_at=business.onboarding_completed_at,
         created_at=business.created_at,
         memberships=memberships,
+        denial_reason=business.denial_reason,
     )
 
 
@@ -141,6 +144,56 @@ async def reactivate_tenant(
         status=business.status,
         member_count=len(memberships),
         created_at=business.created_at,
+        denial_reason=business.denial_reason,
+    )
+
+
+@router.post("/tenants/{business_id}/approve", response_model=TenantListItemOut)
+async def approve_tenant(
+    business_id: uuid.UUID, admin: PlatformAdminDep, session: SessionDep
+) -> TenantListItemOut:
+    try:
+        business = await admin_service.approve_tenant(session, business_id, admin_id=admin.id)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    memberships = await admin_service.get_tenant_memberships(session, business_id)
+    return TenantListItemOut(
+        id=business.id,
+        name=business.name,
+        slug=business.slug,
+        vertical=business.vertical,
+        status=business.status,
+        member_count=len(memberships),
+        created_at=business.created_at,
+        denial_reason=business.denial_reason,
+    )
+
+
+@router.post("/tenants/{business_id}/deny", response_model=TenantListItemOut)
+async def deny_tenant(
+    business_id: uuid.UUID,
+    payload: DenyTenantRequest,
+    admin: PlatformAdminDep,
+    session: SessionDep,
+) -> TenantListItemOut:
+    try:
+        business = await admin_service.deny_tenant(
+            session, business_id, admin_id=admin.id, reason=payload.reason
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    memberships = await admin_service.get_tenant_memberships(session, business_id)
+    return TenantListItemOut(
+        id=business.id,
+        name=business.name,
+        slug=business.slug,
+        vertical=business.vertical,
+        status=business.status,
+        member_count=len(memberships),
+        created_at=business.created_at,
+        denial_reason=business.denial_reason,
     )
 
 

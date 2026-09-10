@@ -25,7 +25,10 @@ from fusionflow.core.security import (
     refresh_token_expiry,
     verify_password,
 )
+from fusionflow.db.session import set_tenant_context
+from fusionflow.modules.admin.models import BusinessTemplate
 from fusionflow.modules.auth.models import RefreshToken, User
+from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.tenancy import service as tenancy_service
 from fusionflow.modules.tenancy.models import Business, BusinessStatus, Membership, MembershipRole
 
@@ -161,9 +164,20 @@ async def _issue_pre_tenant(
 
 
 async def signup(
-    session: AsyncSession, *, email: str, password: str, business_name: str, vertical: str | None
-) -> IssuedSession:
-    """Create user + business + owner membership in one transaction, then log in.
+    session: AsyncSession,
+    *,
+    email: str,
+    password: str,
+    business_name: str,
+    vertical: str | None,
+    business_template_id: uuid.UUID | None = None,
+    extra_connector_type_keys: tuple[str, ...] = (),
+) -> Business:
+    """Create user + business (PENDING_APPROVAL) + owner membership, record
+    the chosen template and any extra requested modules/connectors, in one
+    transaction. Does NOT issue a session - self-serve signup now requires
+    admin approval (see `modules.admin.service.approve_tenant`) before login
+    works; see `login()` below for the pending/denied/suspended messages.
 
     A single `commit()` at the end means a failure anywhere (duplicate
     email, slug collision) leaves no half-created tenant behind.
@@ -184,21 +198,41 @@ async def signup(
     session.add(user)
     await session.flush()
 
-    business, membership = await tenancy_service.create_business_with_owner(
-        session, user_id=user.id, name=business_name, vertical=vertical
+    business, _membership = await tenancy_service.create_business_with_owner(
+        session, user_id=user.id, name=business_name, vertical=vertical, status=BusinessStatus.PENDING_APPROVAL
     )
 
-    issued = await _issue_for_business(
-        session, user=user, business_id=business.id, role=membership.role
-    )
+    # Needed before any tenant-scoped insert (ConnectorAccessRequest) below -
+    # this business didn't exist a moment ago, so no tenant context has been
+    # set on this session yet.
+    await set_tenant_context(session, business.id)
+
+    if business_template_id is not None:
+        template = await session.get(BusinessTemplate, business_template_id)
+        if template is not None:
+            business.business_template_id = template.id
+            if template.plan_id is not None:
+                business.plan_id = template.plan_id
+
+    bundled_ids = await connector_service._bundled_connector_type_ids(session, tenant_id=business.id)
+    for key in extra_connector_type_keys:
+        connector_type = await connector_service.get_connector_type_by_key(session, key)
+        if connector_type is not None and connector_type.id not in bundled_ids:
+            await connector_service.request_access(
+                session,
+                tenant_id=business.id,
+                type_key=key,
+                requested_by=user.id,
+                reason="Requested at signup",
+            )
+
     try:
         await session.commit()
     except IntegrityError as exc:  # unique email / slug lost a race
         await session.rollback()
         raise AuthError("An account with that email already exists", status_code=409) from exc
 
-    issued.memberships = [(membership, business)]
-    return issued
+    return business
 
 
 async def login(session: AsyncSession, *, email: str, password: str) -> IssuedSession:
@@ -221,6 +255,20 @@ async def login(session: AsyncSession, *, email: str, password: str) -> IssuedSe
 
     memberships = await tenancy_service.list_memberships_for_user(session, user.id)
     active = [(m, b) for m, b in memberships if b.status == BusinessStatus.ACTIVE]
+
+    if not active and memberships:
+        # Every membership this user has is non-active - give a specific,
+        # actionable message rather than the generic pre-tenant/empty-list
+        # behavior below. A user with at least one genuinely ACTIVE business
+        # never reaches this branch (see the `active` filter above).
+        _, business = memberships[0]
+        if business.status == BusinessStatus.PENDING_APPROVAL:
+            raise AuthError("Your application is awaiting admin approval.", status_code=403)
+        if business.status == BusinessStatus.DENIED:
+            reason = f" Reason: {business.denial_reason}" if business.denial_reason else ""
+            raise AuthError(f"Your application was denied.{reason}", status_code=403)
+        if business.status == BusinessStatus.SUSPENDED:
+            raise AuthError("This business account has been suspended.", status_code=403)
 
     if len(active) == 1:
         membership, business = active[0]

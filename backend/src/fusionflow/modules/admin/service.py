@@ -67,10 +67,12 @@ except ImportError:
 
 try:
     from fusionflow.modules.custom_fields.models import FieldTemplate  # type: ignore[import-not-found]
+    from fusionflow.modules.custom_fields import service as custom_fields_service  # type: ignore[import-not-found]
 
     _FIELD_TEMPLATES_AVAILABLE = True
 except ImportError:
     FieldTemplate = None  # type: ignore[assignment]
+    custom_fields_service = None  # type: ignore[assignment]
     _FIELD_TEMPLATES_AVAILABLE = False
 
 
@@ -160,6 +162,65 @@ async def reactivate_tenant(session: AsyncSession, business_id: uuid.UUID) -> Bu
     if business is None:
         raise AdminError("Tenant not found", status_code=404)
     business.status = BusinessStatus.ACTIVE
+    await session.flush()
+    return business
+
+
+async def _apply_field_templates_for_vertical(session: AsyncSession, business: Business) -> None:
+    """Server-side equivalent of the tenant-initiated
+    `listFieldTemplates({vertical}) -> applyFieldTemplate(id)` sequence
+    `OnboardingPage.tsx` used to run - moved here because the tenant has no
+    session to make those calls with until admin approval grants one.
+    Best-effort: degrades to a no-op if `modules.custom_fields` isn't
+    available in this checkout (same guard this module already uses
+    elsewhere), or if the business has no vertical set.
+    """
+    if not _FIELD_TEMPLATES_AVAILABLE or business.vertical is None:
+        return
+    await set_tenant_context(session, business.id)
+    templates = await custom_fields_service.list_templates(  # type: ignore[union-attr]
+        session, vertical=business.vertical, entity_type=None
+    )
+    for template in templates:
+        await custom_fields_service.apply_template(  # type: ignore[union-attr]
+            session, tenant_id=business.id, template=template
+        )
+
+
+async def approve_tenant(session: AsyncSession, business_id: uuid.UUID, *, admin_id: uuid.UUID) -> Business:
+    """`PENDING_APPROVAL -> ACTIVE`. Does NOT auto-approve the tenant's own
+    pending `ConnectorAccessRequest` rows from signup - those stay in the
+    normal `/admin/connector-access-requests` queue for independent review,
+    the same unified mechanism used for any post-onboarding request."""
+    business = await get_tenant(session, business_id)
+    if business is None:
+        raise AdminError("Tenant not found", status_code=404)
+    if business.status != BusinessStatus.PENDING_APPROVAL:
+        raise AdminError("Only a pending application can be approved", status_code=409)
+    business.status = BusinessStatus.ACTIVE
+    business.denial_reason = None
+    business.reviewed_by = admin_id
+    business.reviewed_at = datetime.now(timezone.utc)
+    if business.business_template_id is not None:
+        await _apply_field_templates_for_vertical(session, business)
+    await session.flush()
+    return business
+
+
+async def deny_tenant(
+    session: AsyncSession, business_id: uuid.UUID, *, admin_id: uuid.UUID, reason: str | None
+) -> Business:
+    """`PENDING_APPROVAL -> DENIED`, with an optional reason shown to the
+    applicant at their next login attempt."""
+    business = await get_tenant(session, business_id)
+    if business is None:
+        raise AdminError("Tenant not found", status_code=404)
+    if business.status != BusinessStatus.PENDING_APPROVAL:
+        raise AdminError("Only a pending application can be denied", status_code=409)
+    business.status = BusinessStatus.DENIED
+    business.denial_reason = reason
+    business.reviewed_by = admin_id
+    business.reviewed_at = datetime.now(timezone.utc)
     await session.flush()
     return business
 

@@ -13,6 +13,21 @@ class SignupRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     business_name: str = Field(min_length=1, max_length=200)
     vertical: str | None = Field(default=None, max_length=80)
+    # Starter-kit template chosen at signup, and any extra connectors/modules
+    # requested outside that template's bundle - both reviewed together by an
+    # admin as one application (see modules.auth.service.signup). Signup no
+    # longer issues a session; see SignupResult below.
+    business_template_id: uuid.UUID | None = None
+    extra_connector_type_keys: list[str] = Field(default_factory=list)
+
+
+class SignupResult(BaseModel):
+    """Returned by `POST /auth/signup` now that self-serve signup requires
+    admin approval before login works - no token is issued here."""
+
+    status: str = "pending_approval"
+    business_id: uuid.UUID
+    business_name: str
 
 
 class LoginRequest(BaseModel):
