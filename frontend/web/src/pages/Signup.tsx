@@ -5,7 +5,7 @@ import { z } from "zod";
 import { useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { ArrowLeft, ArrowRight, Check, Layers } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Layers, SkipForward } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, cn } from "@fusion-flow/ui";
 import { signup } from "../lib/endpoints";
 import { fetchSignupCatalog } from "../lib/signup-catalog-api";
@@ -80,19 +80,20 @@ export function SignupPage() {
 
   function goToExtrasStep() {
     if (!templateId) {
-      setTemplateError("Choose a starter kit to continue.");
+      setTemplateError("Choose a starter kit, or skip to pick modules yourself.");
       return;
     }
     setTemplateError(null);
     setStep("extras");
   }
 
+  function skipTemplateStep() {
+    setTemplateId(null);
+    setTemplateError(null);
+    setStep("extras");
+  }
+
   async function onSubmit(values: SignupFormValues) {
-    if (!templateId) {
-      setStep("template");
-      setTemplateError("Choose a starter kit to continue.");
-      return;
-    }
     setServerError(null);
     setSubmitting(true);
     try {
@@ -282,10 +283,14 @@ export function SignupPage() {
                 </div>
                 {templateError && <p className="text-xs text-destructive">{templateError}</p>}
 
-                <div className="mt-2 flex gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                   <Button type="button" variant="outline" onClick={() => setStep("account")}>
                     <ArrowLeft className="h-4 w-4" />
                     Back
+                  </Button>
+                  <Button type="button" variant="outline" onClick={skipTemplateStep}>
+                    <SkipForward className="h-4 w-4" />
+                    Skip, pick modules myself
                   </Button>
                   <Button type="button" onClick={goToExtrasStep}>
                     Continue
@@ -298,10 +303,13 @@ export function SignupPage() {
             {step === "extras" && (
               <div className="flex flex-col gap-4">
                 <div>
-                  <p className="text-sm font-medium">Request additional modules/connectors</p>
+                  <p className="text-sm font-medium">
+                    {selectedTemplate ? "Request additional modules/connectors" : "Request the modules/connectors you need"}
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Optional. Anything outside your starter kit needs admin approval - select any
-                    you&apos;d like reviewed alongside your application.
+                    {selectedTemplate
+                      ? "Optional. Anything outside your starter kit needs admin approval - select any you'd like reviewed alongside your application."
+                      : "You skipped picking a starter kit - select whatever you need below and an admin will review the request alongside your application."}
                   </p>
                 </div>
 
