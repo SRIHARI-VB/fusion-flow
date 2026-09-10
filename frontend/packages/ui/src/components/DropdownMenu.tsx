@@ -49,9 +49,19 @@ export function DropdownMenuTrigger({ children }: DropdownMenuTriggerProps) {
 
 export interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> {
   align?: "start" | "end";
+  /** Which side of the trigger to open on. Default "bottom" (shadcn's default too). Use "top" for
+   * a trigger pinned to the bottom of the viewport (e.g. a sidebar footer), where a menu opening
+   * downward would render past the screen edge and get clipped by an ancestor's `overflow:hidden`. */
+  side?: "top" | "bottom";
 }
 
-export function DropdownMenuContent({ className, align = "start", children, ...props }: DropdownMenuContentProps) {
+export function DropdownMenuContent({
+  className,
+  align = "start",
+  side = "bottom",
+  children,
+  ...props
+}: DropdownMenuContentProps) {
   const { open, setOpen, triggerRef } = useDropdownMenuContext();
   const contentRef = React.useRef<HTMLDivElement>(null);
 
@@ -80,7 +90,8 @@ export function DropdownMenuContent({ className, align = "start", children, ...p
       ref={contentRef}
       role="menu"
       className={cn(
-        "absolute z-50 mt-2 min-w-[10rem] rounded-md border border-border bg-card p-1 text-card-foreground shadow-card",
+        "absolute z-50 min-w-[10rem] rounded-md border border-border bg-card p-1 text-card-foreground shadow-card",
+        side === "top" ? "bottom-full mb-2" : "top-full mt-2",
         align === "end" ? "right-0" : "left-0",
         className,
       )}

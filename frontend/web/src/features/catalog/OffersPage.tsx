@@ -17,7 +17,12 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
-import { DynamicCustomFieldsFields, useFieldDefinitions } from "../custom-fields";
+import {
+  DynamicCustomFieldsCells,
+  DynamicCustomFieldsColumns,
+  DynamicCustomFieldsFields,
+  useFieldDefinitions,
+} from "../custom-fields";
 import { createOffer, deleteOffer, listOffers, updateOffer } from "./api";
 import type { Offer } from "./types";
 
@@ -221,20 +226,21 @@ export function OffersPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Active window</TableHead>
+              <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                <TableCell colSpan={3 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && offers.length === 0 && (
               <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                <TableCell colSpan={3 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No offers yet.
                 </TableCell>
               </TableRow>
@@ -246,6 +252,7 @@ export function OffersPage() {
                   {offer.active_from ? new Date(offer.active_from).toLocaleDateString() : "—"} to{" "}
                   {offer.active_to ? new Date(offer.active_to).toLocaleDateString() : "—"}
                 </TableCell>
+                <DynamicCustomFieldsCells definitions={fieldDefinitions} values={offer.custom_fields} />
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(offer)} aria-label="Edit">

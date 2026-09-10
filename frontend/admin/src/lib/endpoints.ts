@@ -18,6 +18,10 @@ export async function login(payload: LoginRequest): Promise<AuthTokens> {
   return data;
 }
 
+export async function logout(): Promise<void> {
+  await apiClient.post("/api/v1/auth/logout");
+}
+
 // --- Tenants ------------------------------------------------------------------
 
 export async function fetchTenants(): Promise<TenantListItem[]> {

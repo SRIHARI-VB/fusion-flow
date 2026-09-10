@@ -18,7 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
-import { DynamicCustomFieldsFields, useFieldDefinitions } from "../custom-fields";
+import {
+  DynamicCustomFieldsCells,
+  DynamicCustomFieldsColumns,
+  DynamicCustomFieldsFields,
+  useFieldDefinitions,
+} from "../custom-fields";
 import { createProductService, deleteProductService, listProductsServices, updateProductService } from "./api";
 import type { ProductService, ProductServiceType } from "./types";
 
@@ -237,20 +242,21 @@ export function ProductServiceCatalogPage({
               <TableHead>Name</TableHead>
               <TableHead>Price</TableHead>
               <TableHead>Status</TableHead>
+              <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No {itemNoun}s yet.
                 </TableCell>
               </TableRow>
@@ -267,6 +273,7 @@ export function ProductServiceCatalogPage({
                     {item.is_active ? "Active" : "Inactive"}
                   </Badge>
                 </TableCell>
+                <DynamicCustomFieldsCells definitions={fieldDefinitions} values={item.custom_fields} />
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(item)} aria-label="Edit">

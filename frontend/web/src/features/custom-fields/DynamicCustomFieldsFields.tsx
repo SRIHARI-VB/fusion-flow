@@ -62,23 +62,54 @@ function renderInput(definition: FieldDefinition, name: string, register: UseFor
   const options = (definition.options ?? []).map((opt) =>
     typeof opt === "object" && opt !== null ? (opt as { value?: unknown; label?: unknown }) : { value: opt, label: opt },
   );
+  // `definition.required` (set on the field's definition, not per-item) must
+  // actually be enforced here, not just shown as a "*" label - previously
+  // every input registered with no validation rule at all, so a "required"
+  // custom field could be silently left blank on every create/edit submit.
+  const requiredMessage = definition.required ? `${definition.label} is required` : false;
 
   switch (definition.field_type) {
     case "boolean":
-      return <input id={name} type="checkbox" className="h-4 w-4 rounded border-input" {...register(name)} />;
+      return (
+        <input
+          id={name}
+          type="checkbox"
+          className="h-4 w-4 rounded border-input"
+          {...register(name, { required: requiredMessage })}
+        />
+      );
 
     case "number":
-      return <Input id={name} type="number" step="any" {...register(name, { valueAsNumber: true })} />;
+      return (
+        <Input
+          id={name}
+          type="number"
+          step="any"
+          {...register(name, { valueAsNumber: true, required: requiredMessage })}
+        />
+      );
 
     case "date":
-      return <Input id={name} type="date" {...register(name)} />;
+      return <Input id={name} type="date" {...register(name, { required: requiredMessage })} />;
 
     case "richtext":
-      return <textarea id={name} rows={4} className={textareaClassName} {...register(name)} />;
+      return (
+        <textarea
+          id={name}
+          rows={4}
+          className={textareaClassName}
+          {...register(name, { required: requiredMessage })}
+        />
+      );
 
     case "select":
       return (
-        <select id={name} defaultValue="" className={selectClassName} {...register(name)}>
+        <select
+          id={name}
+          defaultValue=""
+          className={selectClassName}
+          {...register(name, { required: requiredMessage })}
+        >
           <option value="" disabled>
             Select...
           </option>
@@ -92,7 +123,12 @@ function renderInput(definition: FieldDefinition, name: string, register: UseFor
 
     case "multiselect":
       return (
-        <select id={name} multiple className={`${selectClassName} min-h-[6rem]`} {...register(name)}>
+        <select
+          id={name}
+          multiple
+          className={`${selectClassName} min-h-[6rem]`}
+          {...register(name, { required: requiredMessage })}
+        >
           {options.map((opt) => (
             <option key={String(opt.value)} value={String(opt.value)}>
               {String(opt.label ?? opt.value)}
@@ -103,6 +139,6 @@ function renderInput(definition: FieldDefinition, name: string, register: UseFor
 
     case "text":
     default:
-      return <Input id={name} {...register(name)} />;
+      return <Input id={name} {...register(name, { required: requiredMessage })} />;
   }
 }

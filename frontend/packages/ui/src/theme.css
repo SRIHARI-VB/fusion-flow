@@ -74,3 +74,38 @@
   --sidebar-foreground: #cbd5e1;
   --sidebar-active: #3a2412;
 }
+
+/*
+ * Themed scrollbar — both apps import this file globally, so this covers
+ * every scrolling region (the sidebar nav, `<main>`, tables, dropdowns) in
+ * both `frontend/web` and `frontend/admin` with no per-component CSS.
+ * Firefox reads `scrollbar-color`; Chrome/Edge/Safari use the
+ * `::-webkit-scrollbar*` pseudo-elements instead — both are declared so the
+ * themed look applies regardless of engine. Uses the same `--border`/
+ * `--muted-foreground` tokens as the rest of the UI, so it flips with
+ * `.dark` automatically instead of needing its own light/dark rules.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
+}

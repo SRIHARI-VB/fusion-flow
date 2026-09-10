@@ -18,7 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
-import { DynamicCustomFieldsFields, useFieldDefinitions } from "../custom-fields";
+import {
+  DynamicCustomFieldsCells,
+  DynamicCustomFieldsColumns,
+  DynamicCustomFieldsFields,
+  useFieldDefinitions,
+} from "../custom-fields";
 import { createCoupon, deleteCoupon, listCoupons, updateCoupon } from "./api";
 import type { Coupon, DiscountType } from "./types";
 
@@ -240,20 +245,21 @@ export function CouponsPage() {
               <TableHead>Discount</TableHead>
               <TableHead>Usage limit</TableHead>
               <TableHead>Valid window</TableHead>
+              <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && coupons.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No coupons yet.
                 </TableCell>
               </TableRow>
@@ -271,6 +277,7 @@ export function CouponsPage() {
                   {coupon.valid_from ? new Date(coupon.valid_from).toLocaleDateString() : "—"} to{" "}
                   {coupon.valid_to ? new Date(coupon.valid_to).toLocaleDateString() : "—"}
                 </TableCell>
+                <DynamicCustomFieldsCells definitions={fieldDefinitions} values={coupon.custom_fields} />
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="icon" onClick={() => openEdit(coupon)} aria-label="Edit">

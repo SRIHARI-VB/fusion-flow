@@ -1,17 +1,42 @@
-import { NavLink } from "react-router-dom";
-import { ChevronsUpDown, Sparkles } from "lucide-react";
-import { Avatar, AvatarFallback, Badge, cn } from "@fusion-flow/ui";
+import { NavLink, useNavigate } from "react-router-dom";
+import { ChevronsUpDown, LogOut, Sparkles } from "lucide-react";
+import {
+  Avatar,
+  AvatarFallback,
+  Badge,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  cn,
+} from "@fusion-flow/ui";
 import { navGroups } from "./nav-config";
 import { useAuthStore } from "../../lib/auth-store";
+import { logout } from "../../lib/endpoints";
 
 export function Sidebar() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const business = useAuthStore((s) => s.business);
+  const clear = useAuthStore((s) => s.clear);
 
   const initials = (user?.email ?? "F F")
     .split("@")[0]
     .slice(0, 2)
     .toUpperCase();
+
+  async function handleSignOut() {
+    try {
+      await logout();
+    } finally {
+      // Clear local state and redirect regardless of whether the network
+      // call succeeded - the httpOnly refresh cookie is revoked server-side
+      // when it does, but a dead/unreachable API must never trap the user
+      // in a "can't sign out" state.
+      clear();
+      navigate("/login", { replace: true });
+    }
+  }
 
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
@@ -57,20 +82,30 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="flex items-center gap-2 border-t border-sidebar-border px-4 py-3">
-        <Avatar>
-          <AvatarFallback className="bg-accent-soft text-accent">{initials}</AvatarFallback>
-        </Avatar>
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <span className="truncate text-sm font-medium text-sidebar-foreground">
-            {user?.email ?? "guest@fusion-flow"}
-          </span>
-          <Badge variant="default" className="mt-0.5 w-fit">
-            Pro Plan
-          </Badge>
-        </div>
-        <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger>
+          <button className="flex w-full items-center gap-2 border-t border-sidebar-border px-4 py-3 text-left hover:bg-muted">
+            <Avatar>
+              <AvatarFallback className="bg-accent-soft text-accent">{initials}</AvatarFallback>
+            </Avatar>
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <span className="truncate text-sm font-medium text-sidebar-foreground">
+                {user?.email ?? "guest@fusion-flow"}
+              </span>
+              <Badge variant="default" className="mt-0.5 w-fit">
+                Pro Plan
+              </Badge>
+            </div>
+            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="top" className="w-56">
+          <DropdownMenuItem onClick={() => void handleSignOut()}>
+            <LogOut className="mr-2 h-4 w-4" />
+            Sign out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </aside>
   );
 }
