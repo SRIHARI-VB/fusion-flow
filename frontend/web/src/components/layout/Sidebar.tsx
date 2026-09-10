@@ -100,9 +100,11 @@ export function Sidebar() {
               <span className="truncate text-sm font-medium text-sidebar-foreground">
                 {user?.email ?? "guest@fusion-flow"}
               </span>
-              <Badge variant="default" className="mt-0.5 w-fit">
-                {business?.plan_name ? `${business.plan_name} Plan` : "Free Plan"}
-              </Badge>
+              {business?.plan_name && (
+                <Badge variant="default" className="mt-0.5 w-fit">
+                  {business.plan_name} Plan
+                </Badge>
+              )}
             </div>
             <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
           </button>
