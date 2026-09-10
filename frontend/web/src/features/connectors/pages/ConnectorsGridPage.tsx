@@ -3,7 +3,13 @@ import { AlertTriangle } from "lucide-react";
 import { Card, CardDescription, CardHeader, CardTitle } from "@fusion-flow/ui";
 import { ConnectorCard } from "../components/ConnectorCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useConnectorInstances, useConnectorTypes, useDisconnectConnector, useTestConnector } from "../hooks";
+import {
+  useConnectorInstances,
+  useConnectorTypes,
+  useDisconnectConnector,
+  useRequestConnectorAccess,
+  useTestConnector,
+} from "../hooks";
 
 /**
  * `/connectors` - grid of every catalog type, each paired with the
@@ -15,6 +21,7 @@ export function ConnectorsGridPage() {
   const { data: instances, isLoading: instancesLoading } = useConnectorInstances();
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
+  const requestAccessMutation = useRequestConnectorAccess();
   const [pendingDisconnectId, setPendingDisconnectId] = useState<string | null>(null);
 
   const instanceByTypeId = new Map((instances ?? []).map((instance) => [instance.connector_type_id, instance]));
@@ -49,7 +56,9 @@ export function ConnectorsGridPage() {
               instance={instanceByTypeId.get(type.id)}
               onTest={(instanceId) => testMutation.mutate(instanceId)}
               onDisconnect={(instanceId) => setPendingDisconnectId(instanceId)}
+              onRequestAccess={(typeKey) => requestAccessMutation.mutate({ typeKey })}
               testBusy={testMutation.isPending}
+              requestAccessBusy={requestAccessMutation.isPending}
             />
           ))}
         </div>

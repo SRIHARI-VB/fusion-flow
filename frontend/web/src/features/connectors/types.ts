@@ -28,6 +28,15 @@ export type ConnectorHealthStatus = "healthy" | "degraded" | "down";
 
 export type ConnectorEventType = "webhook_received" | "sync" | "oauth_callback" | "error";
 
+/**
+ * Per-tenant entitlement for one connector type - "granted" (in the
+ * tenant's business-template bundle, or an approved access request),
+ * "pending" (access request awaiting admin review), "denied", or
+ * "not_requested". Computed server-side in `GET /connectors/types` -
+ * see `backend/.../connectors/service.py::get_connector_access_map`.
+ */
+export type ConnectorAccessStatus = "granted" | "pending" | "denied" | "not_requested";
+
 export interface ConnectorType {
   id: string;
   key: string;
@@ -36,6 +45,19 @@ export interface ConnectorType {
   config_schema: Record<string, unknown>;
   oauth: boolean;
   is_enabled_globally: boolean;
+  access_status: ConnectorAccessStatus;
+}
+
+export interface ConnectorAccessRequest {
+  id: string;
+  connector_type_id: string;
+  connector_type_key: string;
+  status: "pending" | "approved" | "denied";
+  reason: string | null;
+  requested_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
 }
 
 /**

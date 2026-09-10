@@ -9,6 +9,7 @@ import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Inpu
 import { useAuthStore } from "../../lib/auth-store";
 import { applyFieldTemplate, listFieldTemplates } from "../custom-fields";
 import { updateBusiness } from "./api";
+import { applyBusinessTemplate, listBusinessTemplates } from "./business-templates-api";
 
 const VERTICALS = [
   { value: "retail", label: "Retail" },
@@ -50,7 +51,7 @@ export function OnboardingPage() {
 
   const [step, setStep] = useState<Step>("business");
   const [vertical, setVertical] = useState<string>(business?.vertical ?? "");
-  const [appliedTemplateIds, setAppliedTemplateIds] = useState<string[]>([]);
+  const [appliedBusinessTemplateId, setAppliedBusinessTemplateId] = useState<string | null>(null);
 
   const {
     register,
@@ -73,15 +74,31 @@ export function OnboardingPage() {
     },
   });
 
-  const { data: templates = [], isLoading: templatesLoading } = useQuery({
-    queryKey: ["custom-fields", "templates", vertical],
-    queryFn: () => listFieldTemplates({ vertical }),
-    enabled: step === "template" && !!vertical,
+  const { data: businessTemplates = [], isLoading: templatesLoading } = useQuery({
+    queryKey: ["business-templates"],
+    queryFn: listBusinessTemplates,
+    enabled: step === "template",
   });
+  // Prefer templates matching the vertical chosen in step 1, but don't
+  // hide everything else - the catalog may not have one for every
+  // vertical yet, and "other" always falls through to the full list.
+  const matchingTemplates = businessTemplates.filter((t) => !t.vertical || t.vertical === vertical);
+  const templatesToShow = matchingTemplates.length > 0 ? matchingTemplates : businessTemplates;
 
   const applyMutation = useMutation({
-    mutationFn: (templateId: string) => applyFieldTemplate(templateId),
-    onSuccess: (_result, templateId) => setAppliedTemplateIds((ids) => [...ids, templateId]),
+    mutationFn: async (templateId: string) => {
+      const result = await applyBusinessTemplate(templateId);
+      // Apply the matching FieldTemplates for this business template's
+      // vertical too - the two concepts are separate models (see
+      // ./business-templates-api.ts's docstring) but a single onboarding
+      // click should grant both the connector bundle and the custom fields.
+      if (result.vertical) {
+        const fieldTemplates = await listFieldTemplates({ vertical: result.vertical });
+        await Promise.all(fieldTemplates.map((t) => applyFieldTemplate(t.id)));
+      }
+      return result;
+    },
+    onSuccess: (result) => setAppliedBusinessTemplateId(result.business_template_id),
   });
 
   const finishMutation = useMutation({
@@ -170,19 +187,21 @@ export function OnboardingPage() {
       {step === "template" && (
         <Card>
           <CardHeader>
-            <CardTitle>Apply a starter custom-fields template</CardTitle>
+            <CardTitle>Pick a starter kit</CardTitle>
             <CardDescription>
-              Templates add ready-made fields (e.g. SKU, stock quantity) to your products/services/coupons/
-              offers. You can add more later from your catalog pages.
+              A template bundles the connectors and custom fields (e.g. SKU, stock quantity) a business
+              like yours typically needs - applying one grants those connectors immediately and adds the
+              matching fields to your products/services/coupons/offers. You can request other connectors
+              and add more fields later.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {templatesLoading && <p className="text-sm text-muted-foreground">Loading templates...</p>}
-            {!templatesLoading && templates.length === 0 && (
-              <p className="text-sm text-muted-foreground">No templates available for this vertical yet.</p>
+            {!templatesLoading && templatesToShow.length === 0 && (
+              <p className="text-sm text-muted-foreground">No starter kits available yet.</p>
             )}
-            {templates.map((template) => {
-              const applied = appliedTemplateIds.includes(template.id);
+            {templatesToShow.map((template) => {
+              const applied = appliedBusinessTemplateId === template.id;
               return (
                 <div
                   key={template.id}
@@ -190,9 +209,14 @@ export function OnboardingPage() {
                 >
                   <div>
                     <p className="text-sm font-medium text-foreground">{template.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {template.entity_type} - {template.fields.length} field(s)
-                    </p>
+                    {template.description && (
+                      <p className="text-xs text-muted-foreground">{template.description}</p>
+                    )}
+                    {template.connector_type_keys.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Includes: {template.connector_type_keys.join(", ")}
+                      </p>
+                    )}
                   </div>
                   <Button
                     size="sm"

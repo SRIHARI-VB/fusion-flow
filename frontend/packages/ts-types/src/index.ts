@@ -31,6 +31,15 @@ export interface Business {
   onboarding_completed_at: string | null;
   created_at?: string;
   role?: MembershipRole;
+  /**
+   * The tenant's plan name (e.g. "Pro"), if one is assigned - see
+   * `Plan`/`Business.plan_id` in `modules.admin.models`/`modules.tenancy.models`.
+   * Optional and nullable: not every response that returns a `Business`
+   * populates it yet (see the "business templates / plans" task's report
+   * for the exact `BusinessMembershipOut` change still needed to wire this
+   * up end-to-end), and a tenant may simply have no plan assigned.
+   */
+  plan_name?: string | null;
 }
 
 export interface Membership {

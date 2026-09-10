@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Activity, RefreshCw, Unplug, Webhook } from "lucide-react";
+import { Activity, Clock, Lock, RefreshCw, Unplug, Webhook } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@fusion-flow/ui";
 import type { ConnectorInstance, ConnectorType } from "../types";
 import {
@@ -18,22 +18,39 @@ import {
  * backend already returns - both are adapter-populated safe allowlists,
  * never raw credentials (`connector_credentials` is never even sent to
  * the client - see `types.ts`'s module docstring).
+ *
+ * `connectorType.access_status` gates Connect/Reconnect entirely: outside
+ * the tenant's business-template bundle (and with no approved access
+ * request), the backend's `connect()` 403s anyway - this card shows
+ * "Request access" / "Pending admin approval" instead of a CTA that would
+ * just fail.
  */
 interface ConnectorCardProps {
   connectorType: ConnectorType;
   instance?: ConnectorInstance;
   onTest?: (instanceId: string) => void;
   onDisconnect?: (instanceId: string) => void;
+  onRequestAccess?: (typeKey: string) => void;
   testBusy?: boolean;
+  requestAccessBusy?: boolean;
 }
 
-export function ConnectorCard({ connectorType, instance, onTest, onDisconnect, testBusy }: ConnectorCardProps) {
+export function ConnectorCard({
+  connectorType,
+  instance,
+  onTest,
+  onDisconnect,
+  onRequestAccess,
+  testBusy,
+  requestAccessBusy,
+}: ConnectorCardProps) {
   const navigate = useNavigate();
   const Icon = CONNECTOR_CATEGORY_ICON[connectorType.category];
   const state = instance?.state;
   const stateDisplay = CONNECTOR_STATE_DISPLAY[state ?? "not_connected"];
   const healthDisplay = instance?.health_status ? CONNECTOR_HEALTH_DISPLAY[instance.health_status] : null;
-  const canConnect = isReconnectable(state);
+  const isGranted = connectorType.access_status === "granted";
+  const canConnect = isReconnectable(state) && isGranted;
 
   return (
     <Card className="flex flex-col">
@@ -68,7 +85,7 @@ export function ConnectorCard({ connectorType, instance, onTest, onDisconnect, t
       </CardContent>
 
       <CardFooter className="justify-end gap-2">
-        {instance && !canConnect && (
+        {instance && !isReconnectable(state) && (
           <>
             <Button
               variant="outline"
@@ -92,6 +109,23 @@ export function ConnectorCard({ connectorType, instance, onTest, onDisconnect, t
         {canConnect && (
           <Button size="sm" onClick={() => navigate(`/connectors/${connectorType.key}/connect`)}>
             {state ? "Reconnect" : "Connect"}
+          </Button>
+        )}
+        {isReconnectable(state) && !isGranted && connectorType.access_status === "pending" && (
+          <Badge variant="secondary">
+            <Clock className="h-3.5 w-3.5" />
+            Pending admin approval
+          </Badge>
+        )}
+        {isReconnectable(state) && !isGranted && connectorType.access_status !== "pending" && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onRequestAccess?.(connectorType.key)}
+            disabled={requestAccessBusy}
+          >
+            <Lock className="h-3.5 w-3.5" />
+            {connectorType.access_status === "denied" ? "Request access again" : "Request access"}
           </Button>
         )}
         {instance && (

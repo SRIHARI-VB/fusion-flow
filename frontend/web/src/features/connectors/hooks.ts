@@ -60,3 +60,15 @@ export function useDisconnectConnector() {
     },
   });
 }
+
+export function useRequestConnectorAccess() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ typeKey, reason }: { typeKey: string; reason?: string }) =>
+      connectorsApi.requestConnectorAccess(typeKey, reason),
+    onSuccess: () => {
+      // Re-fetch /connectors/types so the card flips to "Pending admin approval".
+      void queryClient.invalidateQueries({ queryKey: connectorKeys.types });
+    },
+  });
+}

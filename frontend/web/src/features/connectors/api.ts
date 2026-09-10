@@ -1,5 +1,12 @@
 import { apiClient } from "../../lib/api-client";
-import type { ConnectorType, ConnectorInstance, ConnectorEvent, ConnectRequest, ConnectResponse } from "./types";
+import type {
+  ConnectorAccessRequest,
+  ConnectorType,
+  ConnectorInstance,
+  ConnectorEvent,
+  ConnectRequest,
+  ConnectResponse,
+} from "./types";
 
 /**
  * Talks to the generic connector lifecycle routes
@@ -35,5 +42,20 @@ export async function disconnectConnector(instanceId: string): Promise<Connector
 
 export async function fetchConnectorEvents(instanceId: string): Promise<ConnectorEvent[]> {
   const { data } = await apiClient.get<ConnectorEvent[]>(`/api/v1/connectors/${instanceId}/events`);
+  return data;
+}
+
+/**
+ * `POST /api/v1/connectors/{typeKey}/request-access` — asks an admin to
+ * grant a connector outside the tenant's business-template bundle.
+ */
+export async function requestConnectorAccess(
+  typeKey: string,
+  reason?: string,
+): Promise<ConnectorAccessRequest> {
+  const { data } = await apiClient.post<ConnectorAccessRequest>(
+    `/api/v1/connectors/${typeKey}/request-access`,
+    { reason },
+  );
   return data;
 }
