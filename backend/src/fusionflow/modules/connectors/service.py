@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from fusionflow.core.encryption import CURRENT_KEY_VERSION, decrypt_secret, encrypt_secret, redact_preview
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.models import (
@@ -249,7 +250,7 @@ async def connect(
         await _record_event(
             session, instance=instance, event_type=ConnectorEventType.ERROR, payload={"message": str(exc)}
         )
-        await session.commit()
+        await commit_and_keep_tenant_context(session)
         raise
 
     instance.state = result.state
@@ -261,7 +262,7 @@ async def connect(
         instance.health_status = result.health_status
     instance.last_error_message = result.error_message
     await session.flush()
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(instance, attribute_names=["connector_type"])
     return instance, result
 
@@ -340,7 +341,7 @@ async def complete_oauth_callback(
         await _record_event(
             session, instance=instance, event_type=ConnectorEventType.ERROR, payload={"message": str(exc)}
         )
-        await session.commit()
+        await commit_and_keep_tenant_context(session)
         raise
 
     instance.state = result.state
@@ -357,7 +358,7 @@ async def complete_oauth_callback(
         event_type=ConnectorEventType.OAUTH_CALLBACK,
         payload={"state": result.state.value},
     )
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(instance, attribute_names=["connector_type"])
     return instance, result
 
@@ -385,7 +386,7 @@ async def test_connection(
         event_type=ConnectorEventType.SYNC,
         payload={"health_status": result.health_status.value, "detail": result.detail},
     )
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(instance, attribute_names=["connector_type"])
     return instance
 
@@ -419,7 +420,7 @@ async def disconnect(
     instance.state = ConnectorState.DISCONNECTED
     instance.disconnected_at = datetime.now(timezone.utc)
     instance.health_status = None
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(instance, attribute_names=["connector_type"])
     return instance
 

@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.tickets import service as tickets_service
 from fusionflow.modules.tickets.schemas import (
     TicketCreate,
@@ -33,7 +34,7 @@ async def create_ticket(
     payload: TicketCreate, session: SessionDep, context: TenantContextDep
 ) -> TicketOut:
     ticket = await tickets_service.create_ticket(session, context.tenant_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(ticket)
     out = await tickets_service.get_ticket_out(session, context.tenant_id, ticket.id)
     assert out is not None
@@ -59,7 +60,7 @@ async def update_ticket(
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     await tickets_service.update_ticket(session, ticket, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     out = await tickets_service.get_ticket_out(session, context.tenant_id, ticket_id)
     assert out is not None
     return out
@@ -89,6 +90,6 @@ async def add_ticket_message(
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     message = await tickets_service.add_message(session, context.tenant_id, ticket_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(message)
     return TicketMessageOut.model_validate(message)

@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.orders import service as orders_service
 from fusionflow.modules.orders.schemas import OrderCreate, OrderOut, OrderUpdate
@@ -31,7 +32,7 @@ async def create_order(
     if customer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
     order = await orders_service.create_order(session, context.tenant_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(order)
     return orders_service.to_order_out(order, customer.name)
 
@@ -55,7 +56,7 @@ async def update_order(
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     order = await orders_service.update_order(session, order, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(order)
     customer = await customers_service.get_customer(session, context.tenant_id, order.customer_id)
     return orders_service.to_order_out(order, customer.name if customer else None)

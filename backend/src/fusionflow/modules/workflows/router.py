@@ -17,6 +17,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.workflows import schemas, service
 from fusionflow.modules.workflows.models import Workflow
 
@@ -65,7 +66,7 @@ async def create_workflow(
         graph=payload.graph,
         created_by=context.user.id,
     )
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(workflow)
     return schemas.WorkflowOut.model_validate(workflow)
 
@@ -89,7 +90,7 @@ async def update_workflow(
     _, version = await service.update_workflow(
         session, workflow, name=payload.name, graph=payload.graph, updated_by=context.user.id
     )
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(version)
     return schemas.WorkflowVersionOut.model_validate(version)
 
@@ -102,7 +103,7 @@ async def publish_workflow(
     workflow, version, result = await service.publish_workflow(
         session, workflow, published_by=context.user.id
     )
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(workflow)
     await session.refresh(version)
     return schemas.PublishResponse(
@@ -134,7 +135,7 @@ async def simulate_workflow(
         run = await service.simulate_workflow(session, workflow, payload=payload.payload)
     except service.WorkflowServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(run, attribute_names=["steps"])
     return schemas.RunDetailOut.model_validate(run)
 

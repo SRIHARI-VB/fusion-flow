@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.customers.schemas import CustomerCreate, CustomerOut, CustomerUpdate
 
@@ -28,7 +29,7 @@ async def create_customer(
     payload: CustomerCreate, session: SessionDep, context: TenantContextDep
 ) -> CustomerOut:
     customer = await customers_service.create_customer(session, context.tenant_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(customer)
     return CustomerOut.model_validate(customer)
 
@@ -54,7 +55,7 @@ async def update_customer(
     if customer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
     customer = await customers_service.update_customer(session, customer, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(customer)
     return CustomerOut.model_validate(customer)
 
@@ -67,4 +68,4 @@ async def delete_customer(
     if customer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
     await customers_service.delete_customer(session, customer)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)

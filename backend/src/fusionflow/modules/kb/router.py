@@ -11,6 +11,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.kb import service as kb_service
 from fusionflow.modules.kb.schemas import KbArticleCreate, KbArticleOut, KbArticleUpdate
 
@@ -28,7 +29,7 @@ async def create_kb_article(
     payload: KbArticleCreate, session: SessionDep, context: TenantContextDep
 ) -> KbArticleOut:
     article = await kb_service.create_article(session, context.tenant_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(article)
     return KbArticleOut.model_validate(article)
 
@@ -54,7 +55,7 @@ async def update_kb_article(
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
     article = await kb_service.update_article(session, article, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(article)
     return KbArticleOut.model_validate(article)
 
@@ -67,4 +68,4 @@ async def delete_kb_article(
     if article is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
     await kb_service.delete_article(session, article)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)

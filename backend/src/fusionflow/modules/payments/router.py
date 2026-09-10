@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.payments import service as payments_service
 from fusionflow.modules.payments.schemas import PaymentCreate, PaymentOut
 
@@ -30,7 +31,7 @@ async def create_payment(
     payload: PaymentCreate, session: SessionDep, context: TenantContextDep
 ) -> PaymentOut:
     payment = await payments_service.create_payment(session, context.tenant_id, payload)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
     await session.refresh(payment)
     return PaymentOut.model_validate(payment)
 
