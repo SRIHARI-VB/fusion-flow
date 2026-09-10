@@ -351,6 +351,39 @@ async def list_audit_log(
 
 # --- Feature flags ---------------------------------------------------------
 
+# The catalog an admin actually needs when creating a flag: a `key` only
+# matters if some code path calls `is_feature_enabled(session, key, ...)`
+# with that exact string - before this catalog existed, an admin had to
+# already know (or go find in the codebase) the precise key a developer
+# picked, typed freely into a text box with no validation against typos.
+# `gates_real_behavior` is honest about which of these actually flip
+# something today (`support_agent_enabled` gates the /support-agent nav
+# item + route - see modules.tenancy.router::my_feature_flags and
+# frontend/web/src/App.tsx) versus ones reserved for a Phase 2+ feature
+# that doesn't exist yet (toggling them is a no-op until that code lands,
+# same "resolves False for an unknown flag" safety the resolver already
+# has - these three just also happen to be *known* unknowns).
+KNOWN_FEATURE_FLAGS: list[dict[str, str | bool]] = [
+    {
+        "key": "support_agent_enabled",
+        "label": "Support Agent (BYOM AI)",
+        "description": "Shows the Support Agent nav item and unlocks /support-agent for this tenant.",
+        "gates_real_behavior": True,
+    },
+    {
+        "key": "advanced_workflows",
+        "label": "Advanced workflow features",
+        "description": "Reserved for a Phase 2+ workflow node/condition library expansion - not wired to any behavior yet.",
+        "gates_real_behavior": False,
+    },
+    {
+        "key": "dashboard_customization",
+        "label": "Dashboard customization",
+        "description": "Reserved for the Phase 2+ dashboard widget framework - not wired to any behavior yet.",
+        "gates_real_behavior": False,
+    },
+]
+
 
 async def list_feature_flags(session: AsyncSession) -> list[FeatureFlag]:
     return list((await session.execute(select(FeatureFlag).order_by(FeatureFlag.key))).scalars().all())
@@ -466,10 +499,10 @@ async def is_feature_enabled(
         if tenant_override is not None:
             return tenant_override.enabled
 
-        # Plan tier: `Business.plan_id` doesn't exist on the ORM model in
-        # this checkout yet (see this task's report) - `getattr(...,
-        # None)` means this step is a no-op ("no plan") today and starts
-        # resolving the moment that column lands, no code change needed.
+        # Plan tier: `getattr(..., None)` rather than `business.plan_id`
+        # directly is defensive, not because the column is missing (it
+        # landed in migration 0006) - a tenant simply may not have a plan
+        # assigned, which is exactly "no plan" too.
         business = await session.get(Business, tenant_id)
         plan_id = getattr(business, "plan_id", None) if business is not None else None
         if plan_id is not None:
@@ -496,6 +529,25 @@ async def is_feature_enabled(
         return global_override.enabled
 
     return flag.is_global_default
+
+
+async def resolve_known_flags_for_tenant(
+    session: AsyncSession, tenant_id: uuid.UUID
+) -> dict[str, bool]:
+    """`{flag_key: enabled}` for every entry in `KNOWN_FEATURE_FLAGS`, for one tenant.
+
+    Backs the tenant-facing `GET /businesses/mine/feature-flags` (see
+    `modules.tenancy.router`) - the web app calls this once to decide
+    what to show (e.g. the Support Agent nav item), rather than each
+    frontend feature needing its own bespoke gating logic. A flag that
+    doesn't exist yet in the `feature_flags` table (nobody has created it
+    in the admin panel yet) resolves to `False` via the same
+    unknown-key-is-safe behavior `is_feature_enabled` already has.
+    """
+    return {
+        str(entry["key"]): await is_feature_enabled(session, str(entry["key"]), tenant_id)
+        for entry in KNOWN_FEATURE_FLAGS
+    }
 
 
 # --- Global field templates --------------------------------------------------

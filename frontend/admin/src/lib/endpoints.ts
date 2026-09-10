@@ -9,6 +9,7 @@ import type {
   ConnectorHealth,
   ConnectorTypeCatalogItem,
   FeatureFlag,
+  FeatureFlagCatalogItem,
   FeatureFlagOverride,
   ImpersonateResponse,
   Plan,
@@ -76,6 +77,11 @@ export async function fetchAuditLog(filters: AuditLogFilters): Promise<AuditLogP
 
 export async function fetchFeatureFlags(): Promise<FeatureFlag[]> {
   const { data } = await apiClient.get<FeatureFlag[]>("/api/admin/feature-flags");
+  return data;
+}
+
+export async function fetchFeatureFlagCatalog(): Promise<FeatureFlagCatalogItem[]> {
+  const { data } = await apiClient.get<FeatureFlagCatalogItem[]>("/api/admin/feature-flags/catalog");
   return data;
 }
 

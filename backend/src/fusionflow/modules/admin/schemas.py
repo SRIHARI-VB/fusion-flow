@@ -129,6 +129,16 @@ class FeatureFlagUpdateRequest(BaseModel):
     is_global_default: bool | None = None
 
 
+class FeatureFlagCatalogItemOut(BaseModel):
+    """One entry of `service.KNOWN_FEATURE_FLAGS` - what the admin "New
+    flag" dropdown offers instead of a free-text key field."""
+
+    key: str
+    label: str
+    description: str
+    gates_real_behavior: bool
+
+
 class FeatureFlagOverrideOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

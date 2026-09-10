@@ -6,7 +6,8 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContext, require_role
+from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContext, TenantContextDep, require_role
+from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.auth.http import set_refresh_cookie, to_token_response
 from fusionflow.modules.auth.schemas import TokenResponse
 from fusionflow.modules.auth.service import AuthError
@@ -34,6 +35,16 @@ async def list_my_businesses(
     business picker.
     """
     return await tenancy_service.list_business_memberships(session, user.id)
+
+
+@router.get("/mine/feature-flags", response_model=dict[str, bool])
+async def my_feature_flags(context: TenantContextDep, session: SessionDep) -> dict[str, bool]:
+    """`{flag_key: enabled}` for every known flag, resolved for the active
+    tenant - lets the web app decide what to show (e.g. the Support Agent
+    nav item) without duplicating the resolution logic client-side. See
+    `modules.admin.service.KNOWN_FEATURE_FLAGS`/`resolve_known_flags_for_tenant`.
+    """
+    return await admin_service.resolve_known_flags_for_tenant(session, context.tenant_id)
 
 
 @router.post("/{business_id}/switch", response_model=TokenResponse)

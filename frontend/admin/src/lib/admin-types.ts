@@ -97,6 +97,14 @@ export interface FeatureFlag {
   created_at: string;
 }
 
+/** One entry of the "known flags" catalog - what the New Flag dropdown offers. */
+export interface FeatureFlagCatalogItem {
+  key: string;
+  label: string;
+  description: string;
+  gates_real_behavior: boolean;
+}
+
 export interface FeatureFlagOverride {
   id: string;
   feature_flag_id: string;

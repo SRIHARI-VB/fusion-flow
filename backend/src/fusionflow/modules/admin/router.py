@@ -33,6 +33,7 @@ from fusionflow.modules.admin.schemas import (
     ConnectorAccessRequestReviewOut,
     ConnectorHealthOut,
     ConnectorTypeCatalogOut,
+    FeatureFlagCatalogItemOut,
     FeatureFlagCreateRequest,
     FeatureFlagOut,
     FeatureFlagOverrideOut,
@@ -212,6 +213,13 @@ async def get_audit_log(
 
 
 # --- Feature flags -------------------------------------------------------------
+
+
+@router.get("/feature-flags/catalog", response_model=list[FeatureFlagCatalogItemOut])
+async def list_feature_flag_catalog(_admin: PlatformAdminDep) -> list[FeatureFlagCatalogItemOut]:
+    """The "known" flag keys - what the New Flag dropdown offers instead
+    of a free-text key field. No DB access: this is static metadata."""
+    return [FeatureFlagCatalogItemOut.model_validate(entry) for entry in admin_service.KNOWN_FEATURE_FLAGS]
 
 
 @router.get("/feature-flags", response_model=list[FeatureFlagOut])

@@ -20,6 +20,7 @@ import {
 import { Modal } from "../../components/Modal";
 import {
   createFeatureFlag,
+  fetchFeatureFlagCatalog,
   fetchFeatureFlagOverrides,
   fetchFeatureFlags,
   fetchTenants,
@@ -27,10 +28,17 @@ import {
   upsertFeatureFlagOverride,
 } from "../../lib/endpoints";
 
+/** Sentinel option value for "not one of the known keys - let me type my own". */
+const CUSTOM_KEY_OPTION = "__custom__";
+
 export function FeatureFlagsPage() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ key: "", description: "", is_global_default: false });
+  // Tracks which <select> option is chosen, separately from `createForm.key`
+  // (the actual value submitted) - lets "Other (custom key)" swap in a free
+  // text Input without losing track of which mode we're in.
+  const [keySelection, setKeySelection] = useState<string>(CUSTOM_KEY_OPTION);
   const [createError, setCreateError] = useState<string | null>(null);
   const [selectedFlagId, setSelectedFlagId] = useState<string | null>(null);
   const [overrideTenantId, setOverrideTenantId] = useState("");
@@ -40,6 +48,17 @@ export function FeatureFlagsPage() {
     queryKey: ["admin", "feature-flags"],
     queryFn: fetchFeatureFlags,
   });
+
+  const { data: catalog } = useQuery({
+    queryKey: ["admin", "feature-flags", "catalog"],
+    queryFn: fetchFeatureFlagCatalog,
+  });
+
+  // Known keys that don't already have a flag row yet - no point offering
+  // one that would just 409 on create.
+  const existingKeys = new Set((flags ?? []).map((f) => f.key));
+  const availableCatalogEntries = (catalog ?? []).filter((entry) => !existingKeys.has(entry.key));
+  const selectedCatalogEntry = availableCatalogEntries.find((entry) => entry.key === keySelection);
 
   const { data: tenants } = useQuery({ queryKey: ["admin", "tenants"], queryFn: fetchTenants });
 
@@ -60,6 +79,7 @@ export function FeatureFlagsPage() {
       queryClient.invalidateQueries({ queryKey: ["admin", "feature-flags"] });
       setCreateOpen(false);
       setCreateForm({ key: "", description: "", is_global_default: false });
+      setKeySelection(CUSTOM_KEY_OPTION);
       setCreateError(null);
     },
     onError: (err) => {
@@ -263,16 +283,51 @@ export function FeatureFlagsPage() {
           }}
         >
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium" htmlFor="flag-key">
+            <label className="text-sm font-medium" htmlFor="flag-key-select">
               Key
             </label>
-            <Input
-              id="flag-key"
-              placeholder="e.g. support_agent_enabled"
-              value={createForm.key}
-              onChange={(e) => setCreateForm((f) => ({ ...f, key: e.target.value }))}
-              required
-            />
+            <select
+              id="flag-key-select"
+              className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
+              value={keySelection}
+              onChange={(e) => {
+                const value = e.target.value;
+                setKeySelection(value);
+                if (value === CUSTOM_KEY_OPTION) {
+                  setCreateForm((f) => ({ ...f, key: "" }));
+                  return;
+                }
+                const entry = availableCatalogEntries.find((c) => c.key === value);
+                setCreateForm((f) => ({
+                  ...f,
+                  key: value,
+                  description: entry?.description ?? f.description,
+                }));
+              }}
+            >
+              {availableCatalogEntries.map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.label} ({entry.key})
+                </option>
+              ))}
+              <option value={CUSTOM_KEY_OPTION}>Other (custom key)…</option>
+            </select>
+            {selectedCatalogEntry && (
+              <p className="text-xs text-muted-foreground">
+                {selectedCatalogEntry.gates_real_behavior
+                  ? "Already wired to real behavior in the app."
+                  : "Reserved for future use - not wired to any behavior yet."}
+              </p>
+            )}
+            {keySelection === CUSTOM_KEY_OPTION && (
+              <Input
+                id="flag-key"
+                placeholder="e.g. support_agent_enabled"
+                value={createForm.key}
+                onChange={(e) => setCreateForm((f) => ({ ...f, key: e.target.value }))}
+                required
+              />
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium" htmlFor="flag-description">
