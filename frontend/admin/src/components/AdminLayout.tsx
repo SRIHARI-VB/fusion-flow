@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Building2, FileText, Flag, LayoutTemplate, LogOut, Sparkles, Wallet } from "lucide-react";
+import { Building2, CreditCard, FileText, Flag, LayoutTemplate, LogOut, Plug, Sparkles, Wallet } from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -18,6 +18,8 @@ const navItems = [
   { label: "Audit log", path: "/audit-log", icon: FileText },
   { label: "Feature flags", path: "/feature-flags", icon: Flag },
   { label: "Templates", path: "/templates", icon: LayoutTemplate },
+  { label: "Plans", path: "/plans", icon: CreditCard },
+  { label: "Connector requests", path: "/connector-requests", icon: Plug },
   { label: "Billing", path: "/billing", icon: Wallet },
 ];
 

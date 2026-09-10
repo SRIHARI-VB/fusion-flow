@@ -7,6 +7,8 @@ import { TenantDetailPage } from "./features/tenants/TenantDetailPage";
 import { AuditLogPage } from "./features/audit-log/AuditLogPage";
 import { FeatureFlagsPage } from "./features/feature-flags/FeatureFlagsPage";
 import { TemplatesPage } from "./features/templates/TemplatesPage";
+import { PlansPage } from "./features/plans/PlansPage";
+import { ConnectorRequestsPage } from "./features/connector-requests/ConnectorRequestsPage";
 import { BillingPage } from "./features/billing/BillingPage";
 
 export default function App() {
@@ -26,6 +28,8 @@ export default function App() {
         <Route path="/audit-log" element={<AuditLogPage />} />
         <Route path="/feature-flags" element={<FeatureFlagsPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
+        <Route path="/plans" element={<PlansPage />} />
+        <Route path="/connector-requests" element={<ConnectorRequestsPage />} />
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/" element={<Navigate to="/tenants" replace />} />
       </Route>

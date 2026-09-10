@@ -130,3 +130,60 @@ export interface BillingUsage {
   reason: string;
   tenants_count: number;
 }
+
+// --- Plans / business templates / connector access requests ------------------
+//
+// Mirrors backend/src/fusionflow/modules/admin/schemas.py's Plan*/BusinessTemplate*/
+// ConnectorAccessRequest* DTOs, added for the "business templates, connector access
+// requests, and plan entitlements" feature.
+
+export interface Plan {
+  id: string;
+  key: string;
+  name: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface PlanFeatureFlag {
+  id: string;
+  plan_id: string;
+  feature_flag_id: string;
+  enabled: boolean;
+}
+
+export interface BusinessTemplate {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  vertical: string | null;
+  plan_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  connector_type_ids: string[];
+}
+
+export interface ConnectorTypeCatalogItem {
+  id: string;
+  key: string;
+  display_name: string;
+  category: string;
+}
+
+export type ConnectorAccessRequestStatus = "pending" | "approved" | "denied";
+
+export interface ConnectorAccessRequestAdmin {
+  id: string;
+  tenant_id: string;
+  business_name: string;
+  connector_type_id: string;
+  connector_type_key: string;
+  status: ConnectorAccessRequestStatus;
+  reason: string | null;
+  requested_by: string;
+  requested_by_email: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}

@@ -4,10 +4,15 @@ import type {
   AuditLogFilters,
   AuditLogPage,
   BillingUsage,
+  BusinessTemplate,
+  ConnectorAccessRequestAdmin,
   ConnectorHealth,
+  ConnectorTypeCatalogItem,
   FeatureFlag,
   FeatureFlagOverride,
   ImpersonateResponse,
+  Plan,
+  PlanFeatureFlag,
   TemplatesResponse,
   TenantDetail,
   TenantListItem,
@@ -114,6 +119,109 @@ export async function upsertFeatureFlagOverride(
 export async function fetchTemplates(): Promise<TemplatesResponse> {
   const { data } = await apiClient.get<TemplatesResponse>("/api/admin/templates");
   return data;
+}
+
+// --- Plans -------------------------------------------------------------------
+
+export async function fetchPlans(): Promise<Plan[]> {
+  const { data } = await apiClient.get<Plan[]>("/api/admin/plans");
+  return data;
+}
+
+export async function createPlan(payload: { key: string; name: string; is_default: boolean }): Promise<Plan> {
+  const { data } = await apiClient.post<Plan>("/api/admin/plans", payload);
+  return data;
+}
+
+export async function updatePlan(
+  planId: string,
+  payload: { name?: string; is_default?: boolean },
+): Promise<Plan> {
+  const { data } = await apiClient.patch<Plan>(`/api/admin/plans/${planId}`, payload);
+  return data;
+}
+
+export async function fetchPlanFeatureFlags(planId: string): Promise<PlanFeatureFlag[]> {
+  const { data } = await apiClient.get<PlanFeatureFlag[]>(`/api/admin/plans/${planId}/feature-flags`);
+  return data;
+}
+
+export async function setPlanFeatureFlags(
+  planId: string,
+  flags: { feature_flag_id: string; enabled: boolean }[],
+): Promise<PlanFeatureFlag[]> {
+  const { data } = await apiClient.put<PlanFeatureFlag[]>(`/api/admin/plans/${planId}/feature-flags`, {
+    flags,
+  });
+  return data;
+}
+
+export async function assignTenantPlan(tenantId: string, planId: string | null): Promise<TenantListItem> {
+  const { data } = await apiClient.post<TenantListItem>(`/api/admin/tenants/${tenantId}/plan`, {
+    plan_id: planId,
+  });
+  return data;
+}
+
+// --- Business templates (starter kits) ----------------------------------------
+
+export async function fetchBusinessTemplates(): Promise<BusinessTemplate[]> {
+  const { data } = await apiClient.get<BusinessTemplate[]>("/api/admin/business-templates");
+  return data;
+}
+
+export async function fetchBusinessTemplate(templateId: string): Promise<BusinessTemplate> {
+  const { data } = await apiClient.get<BusinessTemplate>(`/api/admin/business-templates/${templateId}`);
+  return data;
+}
+
+export interface BusinessTemplateInput {
+  key: string;
+  name: string;
+  description?: string | null;
+  vertical?: string | null;
+  plan_id?: string | null;
+  is_active: boolean;
+  connector_type_ids: string[];
+}
+
+export async function createBusinessTemplate(payload: BusinessTemplateInput): Promise<BusinessTemplate> {
+  const { data } = await apiClient.post<BusinessTemplate>("/api/admin/business-templates", payload);
+  return data;
+}
+
+export async function updateBusinessTemplate(
+  templateId: string,
+  payload: Partial<BusinessTemplateInput>,
+): Promise<BusinessTemplate> {
+  const { data } = await apiClient.patch<BusinessTemplate>(
+    `/api/admin/business-templates/${templateId}`,
+    payload,
+  );
+  return data;
+}
+
+export async function fetchConnectorTypeCatalog(): Promise<ConnectorTypeCatalogItem[]> {
+  const { data } = await apiClient.get<ConnectorTypeCatalogItem[]>("/api/admin/connector-types");
+  return data;
+}
+
+// --- Connector access requests -------------------------------------------------
+
+export async function fetchConnectorAccessRequests(status?: string): Promise<ConnectorAccessRequestAdmin[]> {
+  const { data } = await apiClient.get<ConnectorAccessRequestAdmin[]>(
+    "/api/admin/connector-access-requests",
+    { params: status ? { status } : undefined },
+  );
+  return data;
+}
+
+export async function approveConnectorAccessRequest(requestId: string): Promise<void> {
+  await apiClient.post(`/api/admin/connector-access-requests/${requestId}/approve`);
+}
+
+export async function denyConnectorAccessRequest(requestId: string): Promise<void> {
+  await apiClient.post(`/api/admin/connector-access-requests/${requestId}/deny`);
 }
 
 // --- Billing (stub) ----------------------------------------------------------------

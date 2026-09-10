@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { ArrowLeft, Plug, ShieldQuestion, Users } from "lucide-react";
+import { ArrowLeft, CreditCard, Plug, ShieldQuestion, Users } from "lucide-react";
 import {
   Badge,
   type BadgeVariant,
@@ -22,6 +22,8 @@ import {
 import type { BusinessStatus } from "@fusion-flow/ts-types";
 import { Modal } from "../../components/Modal";
 import {
+  assignTenantPlan,
+  fetchPlans,
   fetchTenantConnectors,
   fetchTenantDetail,
   impersonateTenantUser,
@@ -45,6 +47,7 @@ export function TenantDetailPage() {
   const [impersonateReason, setImpersonateReason] = useState("");
   const [impersonateResult, setImpersonateResult] = useState<string | null>(null);
   const [impersonateError, setImpersonateError] = useState<string | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("");
 
   const { data: tenant, isLoading, isError } = useQuery({
     queryKey: ["admin", "tenants", tenantId],
@@ -56,6 +59,12 @@ export function TenantDetailPage() {
     queryKey: ["admin", "tenants", tenantId, "connectors"],
     queryFn: () => fetchTenantConnectors(tenantId),
     enabled: !!tenantId,
+  });
+
+  const { data: plans } = useQuery({ queryKey: ["admin", "plans"], queryFn: fetchPlans });
+
+  const assignPlanMutation = useMutation({
+    mutationFn: () => assignTenantPlan(tenantId, selectedPlanId || null),
   });
 
   const suspendMutation = useMutation({
@@ -169,6 +178,44 @@ export function TenantDetailPage() {
               )}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center gap-2">
+          <CreditCard className="h-4 w-4 text-muted-foreground" />
+          <CardTitle>Plan</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-end gap-3">
+          {/* TenantDetailOut doesn't expose the tenant's *current* plan_id
+              yet (Business.plan_id doesn't exist on the ORM model in this
+              checkout - see this task's report), so this is assign-only for
+              now; showing the current selection needs that column plus a
+              small TenantDetailOut addition once it lands. */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="tenant-plan">
+              Assign plan
+            </label>
+            <select
+              id="tenant-plan"
+              className="h-10 w-56 rounded-md border border-input bg-card px-3 text-sm text-foreground"
+              value={selectedPlanId}
+              onChange={(e) => setSelectedPlanId(e.target.value)}
+            >
+              <option value="">No plan</option>
+              {(plans ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button onClick={() => assignPlanMutation.mutate()} disabled={assignPlanMutation.isPending}>
+            Assign
+          </Button>
+          {assignPlanMutation.isSuccess && (
+            <span className="text-sm text-success">Plan assigned.</span>
+          )}
         </CardContent>
       </Card>
 
