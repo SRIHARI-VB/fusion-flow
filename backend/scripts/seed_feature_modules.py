@@ -35,9 +35,24 @@ FEATURE_MODULES = [
     {"key": "payments", "display_name": "Payments"},
     {"key": "tickets", "display_name": "Tickets"},
     {"key": "kb", "display_name": "Knowledge Base"},
+    # Gates the whole Custom Fields module/page (require_module_access) -
+    # "can this tenant use custom fields at all", a single on/off. The
+    # per-entity-type ROW COUNT limit is a separate concern (a tenant can
+    # be entitled to the module but still capped differently per entity
+    # type), handled by the 4 limit-only keys below instead of this one -
+    # see custom_fields/router.py::create_definition.
     {"key": "custom_fields", "display_name": "Custom Fields"},
     {"key": "workflows", "display_name": "Workflows"},
     {"key": "support_agent", "display_name": "Support Agent"},
+    # Limit-only catalog keys: never checked by require_module_access,
+    # only by get_resource_limit - one per custom-fields entity_type, so
+    # an admin can cap Products fields differently from Services fields
+    # instead of one shared number across all four (the count enforced by
+    # each is independent - see custom_fields_service.count_field_definitions).
+    {"key": "custom_fields_product", "display_name": "Custom Fields (Products)"},
+    {"key": "custom_fields_service", "display_name": "Custom Fields (Services)"},
+    {"key": "custom_fields_coupon", "display_name": "Custom Fields (Coupons)"},
+    {"key": "custom_fields_offer", "display_name": "Custom Fields (Offers)"},
 ]
 
 

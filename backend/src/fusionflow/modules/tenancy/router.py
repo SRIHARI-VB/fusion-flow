@@ -106,8 +106,14 @@ async def my_resource_usage(
         usage[resource_key] = {"limit": limit, "current": current}
 
     if custom_fields_entity_type is not None:
+        # Per-entity-type catalog key (see custom_fields/router.py's
+        # matching resolution), not the plain "custom_fields" module-gate
+        # key - the response key stays "custom_fields" regardless of
+        # entity_type so the frontend's lookup doesn't need to change.
         limit = await admin_service.get_resource_limit(
-            session, tenant_id=context.tenant_id, resource_key="custom_fields"
+            session,
+            tenant_id=context.tenant_id,
+            resource_key=f"custom_fields_{custom_fields_entity_type.value}",
         )
         current = await custom_fields_service.count_field_definitions(
             session, context.tenant_id, entity_type=custom_fields_entity_type

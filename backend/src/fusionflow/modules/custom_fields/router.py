@@ -63,9 +63,13 @@ async def create_definition(
     # applies per `payload.entity_type`, not per tenant overall - see
     # `custom_fields_service.count_field_definitions`'s docstring. A
     # dependency resolved before the body is parsed has no clean way to
-    # know which entity_type this particular create is for.
+    # know which entity_type this particular create is for. Resolved
+    # against a per-entity-type catalog key (`custom_fields_product`, ...
+    # not the plain `custom_fields` module-gate key) so an admin can set
+    # Products/Services/Coupons/Offers limits independently instead of
+    # being forced to use one shared number for all four.
     limit = await admin_service.get_resource_limit(
-        session, tenant_id=context.tenant_id, resource_key="custom_fields"
+        session, tenant_id=context.tenant_id, resource_key=f"custom_fields_{payload.entity_type.value}"
     )
     if limit is not None:
         current = await custom_fields_service.count_field_definitions(
