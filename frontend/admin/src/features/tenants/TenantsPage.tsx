@@ -23,16 +23,26 @@ import {
   TableRow,
 } from "@fusion-flow/ui";
 import type { BusinessStatus } from "@fusion-flow/ts-types";
-import { fetchTenants, reactivateTenant, suspendTenant } from "../../lib/endpoints";
+import { approveTenant, denyTenant, fetchTenants, reactivateTenant, suspendTenant } from "../../lib/endpoints";
 
 const statusVariant: Record<BusinessStatus, BadgeVariant> = {
+  pending_approval: "secondary",
   active: "success",
-  pending: "secondary",
   suspended: "destructive",
+  denied: "outline",
 };
+
+const STATUS_FILTERS: { value: BusinessStatus | "all"; label: string }[] = [
+  { value: "all", label: "All statuses" },
+  { value: "pending_approval", label: "Pending approval" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "denied", label: "Denied" },
+];
 
 export function TenantsPage() {
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<BusinessStatus | "all">("all");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -49,8 +59,17 @@ export function TenantsPage() {
     mutationFn: reactivateTenant,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants"] }),
   });
+  const approveMutation = useMutation({
+    mutationFn: approveTenant,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants"] }),
+  });
+  const denyMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => denyTenant(id, reason),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants"] }),
+  });
 
   const filtered = (tenants ?? []).filter((t) => {
+    if (statusFilter !== "all" && t.status !== statusFilter) return false;
     const q = search.trim().toLowerCase();
     if (!q) return true;
     return t.name.toLowerCase().includes(q) || t.slug.toLowerCase().includes(q);
@@ -69,14 +88,27 @@ export function TenantsPage() {
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4">
           <CardTitle>All tenants</CardTitle>
-          <div className="relative hidden sm:block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search tenants"
-              className="h-9 w-56 pl-8 text-sm"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-md border border-input bg-card px-2 text-sm text-foreground"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as BusinessStatus | "all")}
+            >
+              {STATUS_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <div className="relative hidden sm:block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search tenants"
+                className="h-9 w-56 pl-8 text-sm"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -127,14 +159,34 @@ export function TenantsPage() {
                           <DropdownMenuItem onClick={() => navigate(`/tenants/${tenant.id}`)}>
                             View details
                           </DropdownMenuItem>
-                          {tenant.status === "active" ? (
+                          {tenant.status === "pending_approval" && (
+                            <>
+                              <DropdownMenuItem
+                                onClick={() => approveMutation.mutate(tenant.id)}
+                                disabled={approveMutation.isPending}
+                              >
+                                Approve
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  const reason = window.prompt("Reason for denial (optional)") ?? undefined;
+                                  denyMutation.mutate({ id: tenant.id, reason });
+                                }}
+                                disabled={denyMutation.isPending}
+                              >
+                                Deny
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                          {tenant.status === "active" && (
                             <DropdownMenuItem
                               onClick={() => suspendMutation.mutate(tenant.id)}
                               disabled={suspendMutation.isPending}
                             >
                               Suspend
                             </DropdownMenuItem>
-                          ) : (
+                          )}
+                          {tenant.status === "suspended" && (
                             <DropdownMenuItem
                               onClick={() => reactivateMutation.mutate(tenant.id)}
                               disabled={reactivateMutation.isPending}

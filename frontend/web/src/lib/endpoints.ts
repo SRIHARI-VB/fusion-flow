@@ -1,8 +1,15 @@
-import type { AuthTokens, Business, LoginRequest, SignupRequest, User } from "@fusion-flow/ts-types";
+import type {
+  AuthTokens,
+  Business,
+  LoginRequest,
+  SignupRequest,
+  SignupResult,
+  User,
+} from "@fusion-flow/ts-types";
 import { apiClient } from "./api-client";
 
-export async function signup(payload: SignupRequest): Promise<AuthTokens> {
-  const { data } = await apiClient.post<AuthTokens>("/api/v1/auth/signup", payload);
+export async function signup(payload: SignupRequest): Promise<SignupResult> {
+  const { data } = await apiClient.post<SignupResult>("/api/v1/auth/signup", payload);
   return data;
 }
 

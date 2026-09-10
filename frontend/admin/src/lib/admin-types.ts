@@ -15,6 +15,7 @@ export interface TenantListItem {
   status: BusinessStatus;
   member_count: number;
   created_at: string;
+  denial_reason?: string | null;
 }
 
 export interface TenantMembership {
@@ -34,6 +35,7 @@ export interface TenantDetail {
   onboarding_completed_at: string | null;
   created_at: string;
   memberships: TenantMembership[];
+  denial_reason?: string | null;
 }
 
 export interface ConnectorHealthItem {

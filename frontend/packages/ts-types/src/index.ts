@@ -5,7 +5,7 @@
 
 export type MembershipRole = "owner" | "admin" | "member" | "viewer";
 
-export type BusinessStatus = "active" | "suspended" | "pending";
+export type BusinessStatus = "pending_approval" | "active" | "suspended" | "denied";
 
 export interface User {
   id: string;
@@ -93,5 +93,19 @@ export interface LoginRequest {
 export interface SignupRequest {
   email: string;
   password: string;
+  business_name: string;
+  vertical?: string | null;
+  business_template_id?: string | null;
+  extra_connector_type_keys?: string[];
+}
+
+/**
+ * Shape returned by POST /auth/signup now that self-serve signup requires
+ * admin approval before any session is issued - no `access_token`/cookie,
+ * just a confirmation that the application was recorded.
+ */
+export interface SignupResult {
+  status: "pending_approval";
+  business_id: string;
   business_name: string;
 }

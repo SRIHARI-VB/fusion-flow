@@ -22,7 +22,9 @@ import {
 import type { BusinessStatus } from "@fusion-flow/ts-types";
 import { Modal } from "../../components/Modal";
 import {
+  approveTenant,
   assignTenantPlan,
+  denyTenant,
   fetchPlans,
   fetchTenantConnectors,
   fetchTenantDetail,
@@ -32,9 +34,10 @@ import {
 } from "../../lib/endpoints";
 
 const statusVariant: Record<BusinessStatus, BadgeVariant> = {
+  pending_approval: "secondary",
   active: "success",
-  pending: "secondary",
   suspended: "destructive",
+  denied: "outline",
 };
 
 export function TenantDetailPage() {
@@ -73,6 +76,14 @@ export function TenantDetailPage() {
   });
   const reactivateMutation = useMutation({
     mutationFn: () => reactivateTenant(tenantId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId] }),
+  });
+  const approveMutation = useMutation({
+    mutationFn: () => approveTenant(tenantId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId] }),
+  });
+  const denyMutation = useMutation({
+    mutationFn: (reason?: string) => denyTenant(tenantId, reason),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId] }),
   });
 
@@ -123,13 +134,34 @@ export function TenantDetailPage() {
           <p className="text-sm text-muted-foreground">
             {tenant.slug} · {tenant.vertical ?? "no vertical set"}
           </p>
+          {tenant.status === "denied" && tenant.denial_reason && (
+            <p className="mt-1 text-sm text-destructive">Denial reason: {tenant.denial_reason}</p>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {tenant.status === "active" ? (
+          {tenant.status === "pending_approval" && (
+            <>
+              <Button variant="success" onClick={() => approveMutation.mutate()} disabled={approveMutation.isPending}>
+                Approve
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  const reason = window.prompt("Reason for denial (optional)") ?? undefined;
+                  denyMutation.mutate(reason);
+                }}
+                disabled={denyMutation.isPending}
+              >
+                Deny
+              </Button>
+            </>
+          )}
+          {tenant.status === "active" && (
             <Button variant="destructive" onClick={() => suspendMutation.mutate()} disabled={suspendMutation.isPending}>
               Suspend tenant
             </Button>
-          ) : (
+          )}
+          {tenant.status === "suspended" && (
             <Button variant="success" onClick={() => reactivateMutation.mutate()} disabled={reactivateMutation.isPending}>
               Reactivate tenant
             </Button>

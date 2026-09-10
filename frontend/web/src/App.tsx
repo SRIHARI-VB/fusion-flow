@@ -4,6 +4,7 @@ import { RequireAuth } from "./components/auth/RequireAuth";
 import { PlaceholderPage } from "./pages/Placeholder";
 import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
+import { ApplicationSubmittedPage } from "./pages/ApplicationSubmitted";
 import { SelectBusinessPage } from "./pages/SelectBusiness";
 import { DashboardPage } from "./pages/Dashboard";
 import { OnboardingPage } from "./features/onboarding";
@@ -28,6 +29,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/application-submitted" element={<ApplicationSubmittedPage />} />
       <Route path="/select-business" element={<SelectBusinessPage />} />
 
       <Route

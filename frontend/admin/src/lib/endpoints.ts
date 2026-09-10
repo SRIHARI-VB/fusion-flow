@@ -50,6 +50,18 @@ export async function reactivateTenant(tenantId: string): Promise<TenantListItem
   return data;
 }
 
+export async function approveTenant(tenantId: string): Promise<TenantListItem> {
+  const { data } = await apiClient.post<TenantListItem>(`/api/admin/tenants/${tenantId}/approve`);
+  return data;
+}
+
+export async function denyTenant(tenantId: string, reason?: string): Promise<TenantListItem> {
+  const { data } = await apiClient.post<TenantListItem>(`/api/admin/tenants/${tenantId}/deny`, {
+    reason: reason || null,
+  });
+  return data;
+}
+
 export async function fetchTenantConnectors(tenantId: string): Promise<ConnectorHealth> {
   const { data } = await apiClient.get<ConnectorHealth>(`/api/admin/tenants/${tenantId}/connectors`);
   return data;
