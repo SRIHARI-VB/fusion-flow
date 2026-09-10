@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContext, TenantContextDep, require_role
 from fusionflow.modules.admin import service as admin_service
@@ -15,6 +15,7 @@ from fusionflow.modules.auth.service import select_business as select_business_s
 from fusionflow.modules.catalog import service as catalog_service
 from fusionflow.modules.catalog.models import ProductServiceType
 from fusionflow.modules.custom_fields import service as custom_fields_service
+from fusionflow.modules.custom_fields.models import EntityType
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.kb import service as kb_service
 from fusionflow.modules.tenancy import service as tenancy_service
@@ -28,6 +29,10 @@ from fusionflow.modules.tenancy.schemas import (
 from fusionflow.modules.workflows import service as workflows_service
 
 # resource_key -> tenant-scoped row-count function, for GET /businesses/mine/resource-usage.
+# "custom_fields" is deliberately NOT here - its limit applies per
+# entity_type (see custom_fields_service.count_field_definitions's
+# docstring), not once per tenant, so it's resolved separately below only
+# when the caller tells us which entity_type it's asking about.
 _RESOURCE_COUNT_FNS = {
     "products": lambda session, tenant_id: catalog_service.count_products_services(
         session, tenant_id, entity_type=ProductServiceType.PRODUCT
@@ -40,7 +45,6 @@ _RESOURCE_COUNT_FNS = {
     "customers": customers_service.count_customers,
     "kb": kb_service.count_articles,
     "workflows": workflows_service.count_workflows,
-    "custom_fields": custom_fields_service.count_field_definitions,
 }
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
@@ -75,13 +79,23 @@ async def my_feature_flags(context: TenantContextDep, session: SessionDep) -> di
 
 
 @router.get("/mine/resource-usage", response_model=dict[str, dict[str, int | None]])
-async def my_resource_usage(context: TenantContextDep, session: SessionDep) -> dict[str, dict[str, int | None]]:
+async def my_resource_usage(
+    context: TenantContextDep,
+    session: SessionDep,
+    custom_fields_entity_type: EntityType | None = Query(default=None),
+) -> dict[str, dict[str, int | None]]:
     """`{resource_key: {"limit": int|null, "current": int}}` for every
     limitable resource - lets the web app show "42/50 products" and
     disable "New product" at the limit without duplicating the
     tenant-override/plan/unlimited resolution client-side. The backend
-    403 on the create route (`enforce_resource_limit`) is the actual
-    boundary; this is a UX nicety on top of it.
+    403 on the create route is the actual boundary; this is a UX nicety
+    on top of it.
+
+    `custom_fields` is resolved separately from the rest, only when
+    `custom_fields_entity_type` is passed, since its limit applies per
+    entity_type rather than once per tenant (see
+    `custom_fields_service.count_field_definitions`'s docstring) - the
+    Custom Fields settings page passes whichever tab is currently open.
     """
     usage: dict[str, dict[str, int | None]] = {}
     for resource_key, count_fn in _RESOURCE_COUNT_FNS.items():
@@ -90,6 +104,16 @@ async def my_resource_usage(context: TenantContextDep, session: SessionDep) -> d
         )
         current = await count_fn(session, context.tenant_id)
         usage[resource_key] = {"limit": limit, "current": current}
+
+    if custom_fields_entity_type is not None:
+        limit = await admin_service.get_resource_limit(
+            session, tenant_id=context.tenant_id, resource_key="custom_fields"
+        )
+        current = await custom_fields_service.count_field_definitions(
+            session, context.tenant_id, entity_type=custom_fields_entity_type
+        )
+        usage["custom_fields"] = {"limit": limit, "current": current}
+
     return usage
 
 

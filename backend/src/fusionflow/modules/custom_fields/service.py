@@ -32,11 +32,17 @@ async def list_field_definitions(
     return (await session.execute(stmt)).scalars().all()
 
 
-async def count_field_definitions(session: AsyncSession, tenant_id: uuid.UUID) -> int:
-    """Total field definitions across every entity_type - "limit custom
-    fields" is interpreted as one ceiling on the whole per-tenant set, not
-    per entity_type."""
-    stmt = select(func.count()).select_from(FieldDefinition).where(FieldDefinition.tenant_id == tenant_id)
+async def count_field_definitions(
+    session: AsyncSession, tenant_id: uuid.UUID, *, entity_type: EntityType
+) -> int:
+    """Field definitions for one entity_type only - the configured
+    `custom_fields` limit applies independently per entity_type (a limit
+    of 10 means up to 10 Product fields AND up to 10 Service fields AND so
+    on, not 10 shared across all of them), since each entity_type's custom
+    fields are otherwise unrelated to each other."""
+    stmt = select(func.count()).select_from(FieldDefinition).where(
+        FieldDefinition.tenant_id == tenant_id, FieldDefinition.entity_type == entity_type
+    )
     return (await session.execute(stmt)).scalar_one()
 
 

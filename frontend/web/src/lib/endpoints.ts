@@ -40,10 +40,17 @@ export interface ResourceUsageEntry {
 /** `{resource_key: {limit, current}}` for every limitable resource - backs
  * `useResourceLimits()`. The backend 403 on the actual create route is the
  * real enforcement boundary; this only drives the UI's usage badge/disabled
- * state. */
-export async function fetchResourceUsage(): Promise<Record<string, ResourceUsageEntry>> {
+ * state.
+ *
+ * `customFieldsEntityType` is required to get a `custom_fields` entry back
+ * at all - that limit applies per entity_type (product/service/coupon/
+ * offer), not once per tenant, so the caller must say which tab it means. */
+export async function fetchResourceUsage(
+  customFieldsEntityType?: string,
+): Promise<Record<string, ResourceUsageEntry>> {
   const { data } = await apiClient.get<Record<string, ResourceUsageEntry>>(
     "/api/v1/businesses/mine/resource-usage",
+    { params: customFieldsEntityType ? { custom_fields_entity_type: customFieldsEntityType } : undefined },
   );
   return data;
 }

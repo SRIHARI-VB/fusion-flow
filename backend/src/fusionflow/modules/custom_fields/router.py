@@ -15,7 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
-from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
+from fusionflow.modules.admin import service as admin_service
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.custom_fields import service as custom_fields_service
 from fusionflow.modules.custom_fields.models import EntityType
 from fusionflow.modules.custom_fields.schemas import (
@@ -35,9 +36,6 @@ _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Field 
 # business is fully set up) and must stay reachable, which a router-level
 # `dependencies=[]` cannot selectively exclude one route from.
 _require_custom_fields = Depends(require_module_access("custom_fields"))
-_custom_fields_resource_gate = Depends(
-    enforce_resource_limit("custom_fields", custom_fields_service.count_field_definitions)
-)
 
 
 @router.get("/definitions", response_model=list[FieldDefinitionOut])
@@ -59,8 +57,26 @@ async def create_definition(
     context: TenantContextDep,
     session: SessionDep,
     _gate=_require_custom_fields,
-    _limit_gate=_custom_fields_resource_gate,
 ) -> FieldDefinitionOut:
+    # Enforced inline (not via the generic `enforce_resource_limit`
+    # dependency the other 7 limitable resources use) because the limit
+    # applies per `payload.entity_type`, not per tenant overall - see
+    # `custom_fields_service.count_field_definitions`'s docstring. A
+    # dependency resolved before the body is parsed has no clean way to
+    # know which entity_type this particular create is for.
+    limit = await admin_service.get_resource_limit(
+        session, tenant_id=context.tenant_id, resource_key="custom_fields"
+    )
+    if limit is not None:
+        current = await custom_fields_service.count_field_definitions(
+            session, context.tenant_id, entity_type=payload.entity_type
+        )
+        if current >= limit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You've reached your plan's limit of {limit} custom fields for {payload.entity_type.value}.",
+            )
+
     definition = await custom_fields_service.create_field_definition(
         session, tenant_id=context.tenant_id, payload=payload
     )

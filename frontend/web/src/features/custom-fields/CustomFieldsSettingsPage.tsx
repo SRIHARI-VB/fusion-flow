@@ -18,7 +18,6 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
-import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createFieldDefinition, deleteFieldDefinition, updateFieldDefinition } from "./api";
 import { useFieldDefinitions } from "./useFieldDefinitions";
@@ -76,13 +75,15 @@ const selectClassName =
  */
 export function CustomFieldsSettingsPage() {
   const queryClient = useQueryClient();
-  const { usage } = useResourceLimits();
-  // count_field_definitions counts across every entity_type, not just the
-  // currently-selected tab - one ceiling for the tenant's whole set.
-  const { atLimit } = usage("custom_fields");
   const [entityType, setEntityType] = useState<CustomFieldEntityType>("product");
   const [editing, setEditing] = useState<FieldDefinition | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  // The custom_fields limit applies per entity_type (a limit of 10 means
+  // up to 10 Product fields AND up to 10 Service fields independently,
+  // not 10 shared across every tab) - so usage must be resolved for
+  // whichever tab is currently open, not once for the whole tenant.
+  const { usage } = useResourceLimits(entityType);
+  const { limit, current, atLimit } = usage("custom_fields");
 
   const queryKey = ["custom-fields", "definitions", entityType];
   const { data: definitions = [], isLoading } = useFieldDefinitions(entityType);
@@ -211,7 +212,11 @@ export function CustomFieldsSettingsPage() {
             <CardDescription>Required fields must be filled in on every create/edit form.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <ResourceUsageBadge resourceKey="custom_fields" />
+            {limit !== null && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {current} / {limit}
+              </span>
+            )}
             <Button onClick={openCreateForm} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
               <Plus className="mr-2 h-4 w-4" /> Add field
             </Button>
