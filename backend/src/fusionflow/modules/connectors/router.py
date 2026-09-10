@@ -26,6 +26,8 @@ from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.schemas import (
+    ConnectorAccessRequestCreate,
+    ConnectorAccessRequestOut,
     ConnectorEventOut,
     ConnectorInstanceOut,
     ConnectorTypeOut,
@@ -48,10 +50,14 @@ def _http(exc: ConnectorError) -> HTTPException:
 
 @router.get("/types", response_model=list[ConnectorTypeOut])
 async def list_connector_types(context: TenantContextDep, session: SessionDep) -> list[ConnectorTypeOut]:
-    """The full provider catalog. Not tenant-scoped data - `context` is only
-    required so this endpoint is consistently behind auth like its siblings."""
+    """The full provider catalog, plus this tenant's per-type `access_status`
+    ("granted"/"pending"/"denied"/"not_requested") so the frontend can render
+    Connect vs Request-access vs Pending-approval without a second call."""
     types = await connector_service.list_connector_types(session)
-    return [ConnectorTypeOut.model_validate(t) for t in types]
+    access_map = await connector_service.get_connector_access_map(
+        session, tenant_id=context.tenant_id, connector_type_ids=[t.id for t in types]
+    )
+    return [connector_service.to_type_out(t, access_map.get(t.id, "not_requested")) for t in types]
 
 
 @router.get("", response_model=list[ConnectorInstanceOut])
@@ -84,6 +90,29 @@ async def connect_connector(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return ConnectResponse(instance=connector_service.to_instance_out(instance), redirect_url=result.redirect_url)
+
+
+@router.post("/{type_key}/request-access", response_model=ConnectorAccessRequestOut, status_code=201)
+async def request_connector_access(
+    type_key: str,
+    payload: ConnectorAccessRequestCreate,
+    context: TenantContextDep,
+    session: SessionDep,
+) -> ConnectorAccessRequestOut:
+    """A tenant asking an admin to grant a connector outside its
+    business-template bundle. Feeds the admin's cross-tenant
+    `/api/admin/connector-access-requests` queue."""
+    try:
+        request = await connector_service.request_access(
+            session,
+            tenant_id=context.tenant_id,
+            type_key=type_key,
+            requested_by=context.user.id,
+            reason=payload.reason,
+        )
+    except ConnectorError as exc:
+        raise _http(exc) from exc
+    return connector_service.to_access_request_out(request)
 
 
 @router.get("/oauth/callback/{type_key}")

@@ -25,9 +25,12 @@ from sqlalchemy.orm import selectinload
 
 from fusionflow.core.encryption import CURRENT_KEY_VERSION, decrypt_secret, encrypt_secret, redact_preview
 from fusionflow.db.session import commit_and_keep_tenant_context, set_tenant_context, unscoped_session_factory
+from fusionflow.modules.admin.models import BusinessTemplateConnectorType
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.models import (
+    ConnectorAccessRequest,
+    ConnectorAccessRequestStatus,
     ConnectorCredential,
     ConnectorEvent,
     ConnectorEventType,
@@ -37,7 +40,8 @@ from fusionflow.modules.connectors.models import (
     ConnectorType,
     HealthStatus,
 )
-from fusionflow.modules.connectors.schemas import ConnectorInstanceOut
+from fusionflow.modules.connectors.schemas import ConnectorAccessRequestOut, ConnectorInstanceOut, ConnectorTypeOut
+from fusionflow.modules.tenancy.models import Business
 
 settings = get_connector_settings()
 
@@ -91,6 +95,156 @@ def to_instance_out(instance: ConnectorInstance) -> ConnectorInstanceOut:
 async def list_connector_types(session: AsyncSession) -> list[ConnectorType]:
     rows = await session.execute(select(ConnectorType).order_by(ConnectorType.display_name))
     return list(rows.scalars().all())
+
+
+def to_type_out(connector_type: ConnectorType, access_status: str) -> ConnectorTypeOut:
+    """`ConnectorTypeOut.model_validate` can't be used here since
+    `access_status` isn't a column on `ConnectorType` - it's computed
+    per-tenant by `get_connector_access_map`."""
+    return ConnectorTypeOut(
+        id=connector_type.id,
+        key=connector_type.key,
+        category=connector_type.category,
+        display_name=connector_type.display_name,
+        config_schema=connector_type.config_schema,
+        oauth=connector_type.oauth,
+        is_enabled_globally=connector_type.is_enabled_globally,
+        access_status=access_status,
+    )
+
+
+async def _bundled_connector_type_ids(session: AsyncSession, *, tenant_id: uuid.UUID) -> set[uuid.UUID]:
+    """Connector types inside the tenant's `business_template`'s bundle.
+
+    `Business.business_template_id` does not exist on the ORM model in
+    this checkout yet (see this task's report) - `getattr(..., None)`
+    means this resolves to "no bundle" today and starts working the
+    moment that column lands, with no code change required here.
+    """
+    business = await session.get(Business, tenant_id)
+    template_id = getattr(business, "business_template_id", None) if business is not None else None
+    if template_id is None:
+        return set()
+    rows = await session.execute(
+        select(BusinessTemplateConnectorType.connector_type_id).where(
+            BusinessTemplateConnectorType.business_template_id == template_id
+        )
+    )
+    return set(rows.scalars().all())
+
+
+async def get_connector_access_map(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connector_type_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Per-tenant access status for each of `connector_type_ids`.
+
+    One of "granted" (bundled, or an approved request), "pending", "denied",
+    or "not_requested". Used by `GET /connectors/types` so the frontend can
+    show "Connect" vs "Request access" vs "Pending admin approval" without a
+    second round-trip per connector type.
+    """
+    bundled_ids = await _bundled_connector_type_ids(session, tenant_id=tenant_id)
+    rows = await session.execute(
+        select(ConnectorAccessRequest).where(ConnectorAccessRequest.tenant_id == tenant_id)
+    )
+    # Latest row wins per connector_type_id if there's ever more than one
+    # (there shouldn't be, in phase 1 - request_access() reuses a pending
+    # row - but a prior denial followed by a fresh request is legitimate).
+    request_by_type: dict[uuid.UUID, ConnectorAccessRequest] = {}
+    for request in rows.scalars().all():
+        existing = request_by_type.get(request.connector_type_id)
+        if existing is None or request.created_at >= existing.created_at:
+            request_by_type[request.connector_type_id] = request
+
+    result: dict[uuid.UUID, str] = {}
+    for connector_type_id in connector_type_ids:
+        if connector_type_id in bundled_ids:
+            result[connector_type_id] = "granted"
+            continue
+        request = request_by_type.get(connector_type_id)
+        if request is None:
+            result[connector_type_id] = "not_requested"
+        elif request.status == ConnectorAccessRequestStatus.APPROVED:
+            result[connector_type_id] = "granted"
+        elif request.status == ConnectorAccessRequestStatus.PENDING:
+            result[connector_type_id] = "pending"
+        else:
+            result[connector_type_id] = "denied"
+    return result
+
+
+async def _tenant_has_connector_access(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connector_type_id: uuid.UUID
+) -> bool:
+    """The gate `connect()` enforces: bundled in the tenant's business
+    template, or an approved access request - see this module's report on
+    why this is a deliberate, hard policy change (no grandfather exception
+    for tenants with no `business_template_id` assigned yet)."""
+    access_map = await get_connector_access_map(
+        session, tenant_id=tenant_id, connector_type_ids=[connector_type_id]
+    )
+    return access_map.get(connector_type_id) == "granted"
+
+
+def to_access_request_out(request: ConnectorAccessRequest) -> ConnectorAccessRequestOut:
+    """Requires `request.connector_type` to already be loaded/set (either via
+    `selectinload` or, for a freshly-created row, by passing `connector_type=`
+    to the constructor) - same convention as `to_instance_out`."""
+    return ConnectorAccessRequestOut(
+        id=request.id,
+        connector_type_id=request.connector_type_id,
+        connector_type_key=request.connector_type.key,
+        status=request.status,
+        reason=request.reason,
+        requested_by=request.requested_by,
+        reviewed_by=request.reviewed_by,
+        reviewed_at=request.reviewed_at,
+        created_at=request.created_at,
+    )
+
+
+async def request_access(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    type_key: str,
+    requested_by: uuid.UUID,
+    reason: str | None,
+) -> ConnectorAccessRequest:
+    """`POST /connectors/{type_key}/request-access`. Idempotent on an
+    already-pending request for the same (tenant, connector_type) rather
+    than creating a duplicate."""
+    connector_type = await get_connector_type_by_key(session, type_key)
+    if connector_type is None:
+        raise ConnectorError(f"Unknown connector type: {type_key!r}", status_code=404)
+
+    existing = (
+        await session.execute(
+            select(ConnectorAccessRequest)
+            .options(selectinload(ConnectorAccessRequest.connector_type))
+            .where(
+                ConnectorAccessRequest.tenant_id == tenant_id,
+                ConnectorAccessRequest.connector_type_id == connector_type.id,
+                ConnectorAccessRequest.status == ConnectorAccessRequestStatus.PENDING,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    request = ConnectorAccessRequest(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        connector_type_id=connector_type.id,
+        connector_type=connector_type,
+        status=ConnectorAccessRequestStatus.PENDING,
+        requested_by=requested_by,
+        reason=reason,
+    )
+    session.add(request)
+    await session.flush()
+    await commit_and_keep_tenant_context(session)
+    return request
 
 
 async def get_connector_type_by_key(session: AsyncSession, type_key: str) -> ConnectorType | None:
@@ -214,6 +368,12 @@ async def connect(
     connector_type = await get_connector_type_by_key(session, type_key)
     if connector_type is None or not connector_type.is_enabled_globally:
         raise ConnectorError(f"Unknown or disabled connector type: {type_key!r}", status_code=404)
+
+    has_access = await _tenant_has_connector_access(
+        session, tenant_id=tenant_id, connector_type_id=connector_type.id
+    )
+    if not has_access:
+        raise ConnectorError("Request access to this connector first", status_code=403)
 
     adapter = base.registry.get_or_none(type_key)
     if adapter is None:
