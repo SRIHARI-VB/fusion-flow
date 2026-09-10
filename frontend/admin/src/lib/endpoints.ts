@@ -5,6 +5,7 @@ import type {
   AuditLogPage,
   BillingUsage,
   BusinessTemplate,
+  ConnectorAccessOverride,
   ConnectorAccessRequestAdmin,
   ConnectorHealth,
   ConnectorTypeCatalogItem,
@@ -17,6 +18,7 @@ import type {
   TemplatesResponse,
   TenantDetail,
   TenantListItem,
+  TenantModuleAccess,
 } from "./admin-types";
 
 export async function login(payload: LoginRequest): Promise<AuthTokens> {
@@ -65,6 +67,27 @@ export async function denyTenant(tenantId: string, reason?: string): Promise<Ten
 export async function fetchTenantConnectors(tenantId: string): Promise<ConnectorHealth> {
   const { data } = await apiClient.get<ConnectorHealth>(`/api/admin/tenants/${tenantId}/connectors`);
   return data;
+}
+
+export async function fetchTenantModuleAccess(tenantId: string): Promise<TenantModuleAccess[]> {
+  const { data } = await apiClient.get<TenantModuleAccess[]>(`/api/admin/tenants/${tenantId}/module-access`);
+  return data;
+}
+
+export async function setConnectorAccessOverride(
+  tenantId: string,
+  typeKey: string,
+  payload: { granted: boolean; reason?: string | null },
+): Promise<ConnectorAccessOverride> {
+  const { data } = await apiClient.put<ConnectorAccessOverride>(
+    `/api/admin/tenants/${tenantId}/connectors/${typeKey}/override`,
+    payload,
+  );
+  return data;
+}
+
+export async function clearConnectorAccessOverride(tenantId: string, typeKey: string): Promise<void> {
+  await apiClient.delete(`/api/admin/tenants/${tenantId}/connectors/${typeKey}/override`);
 }
 
 export async function impersonateTenantUser(

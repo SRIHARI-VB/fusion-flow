@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { ArrowLeft, CreditCard, Plug, ShieldQuestion, Users } from "lucide-react";
+import { ArrowLeft, Blocks, CreditCard, Plug, ShieldQuestion, Users } from "lucide-react";
 import {
   Badge,
   type BadgeVariant,
@@ -24,12 +24,15 @@ import { Modal } from "../../components/Modal";
 import {
   approveTenant,
   assignTenantPlan,
+  clearConnectorAccessOverride,
   denyTenant,
   fetchPlans,
   fetchTenantConnectors,
   fetchTenantDetail,
+  fetchTenantModuleAccess,
   impersonateTenantUser,
   reactivateTenant,
+  setConnectorAccessOverride,
   suspendTenant,
 } from "../../lib/endpoints";
 
@@ -38,6 +41,13 @@ const statusVariant: Record<BusinessStatus, BadgeVariant> = {
   active: "success",
   suspended: "destructive",
   denied: "outline",
+};
+
+const accessStatusVariant: Record<string, BadgeVariant> = {
+  granted: "success",
+  pending: "secondary",
+  denied: "destructive",
+  not_requested: "outline",
 };
 
 export function TenantDetailPage() {
@@ -64,6 +74,12 @@ export function TenantDetailPage() {
     enabled: !!tenantId,
   });
 
+  const { data: moduleAccess } = useQuery({
+    queryKey: ["admin", "tenants", tenantId, "module-access"],
+    queryFn: () => fetchTenantModuleAccess(tenantId),
+    enabled: !!tenantId,
+  });
+
   const { data: plans } = useQuery({ queryKey: ["admin", "plans"], queryFn: fetchPlans });
 
   const assignPlanMutation = useMutation({
@@ -86,6 +102,25 @@ export function TenantDetailPage() {
     mutationFn: (reason?: string) => denyTenant(tenantId, reason),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId] }),
   });
+
+  function invalidateModuleAccess() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId, "module-access"] });
+  }
+  const revokeMutation = useMutation({
+    mutationFn: (typeKey: string) =>
+      setConnectorAccessOverride(tenantId, typeKey, { granted: false, reason: "Revoked by admin" }),
+    onSuccess: invalidateModuleAccess,
+  });
+  const grantMutation = useMutation({
+    mutationFn: (typeKey: string) =>
+      setConnectorAccessOverride(tenantId, typeKey, { granted: true, reason: "Granted by admin" }),
+    onSuccess: invalidateModuleAccess,
+  });
+  const resetOverrideMutation = useMutation({
+    mutationFn: (typeKey: string) => clearConnectorAccessOverride(tenantId, typeKey),
+    onSuccess: invalidateModuleAccess,
+  });
+  const moduleActionBusy = revokeMutation.isPending || grantMutation.isPending || resetOverrideMutation.isPending;
 
   const impersonateMutation = useMutation({
     mutationFn: () =>
@@ -295,6 +330,92 @@ export function TenantDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader className="flex-row items-center gap-2">
+          <Blocks className="h-4 w-4 text-muted-foreground" />
+          <CardTitle>Modules &amp; connectors</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Revoke or grant a single module/connector for this tenant, independent of its business
+            template or any request - an override always wins until reset.
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Item</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Access</TableHead>
+                <TableHead className="w-64" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(moduleAccess ?? []).map((item) => (
+                <TableRow key={item.connector_type_id}>
+                  <TableCell className="font-medium text-foreground">
+                    {item.display_name}
+                    <span className="ml-1 font-mono text-xs text-muted-foreground">({item.connector_type_key})</span>
+                  </TableCell>
+                  <TableCell className="capitalize text-muted-foreground">
+                    {item.category === "feature" ? "Module" : "Integration"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={accessStatusVariant[item.access_status] ?? "outline"}>
+                        {item.access_status.replace(/_/g, " ")}
+                      </Badge>
+                      {item.has_override && (
+                        <Badge variant="outline" className="text-[10px]">
+                          override: {item.override_granted ? "granted" : "revoked"}
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="flex flex-wrap gap-2">
+                    {item.access_status === "granted" ? (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={moduleActionBusy}
+                        onClick={() => revokeMutation.mutate(item.connector_type_key)}
+                      >
+                        Revoke
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="success"
+                        disabled={moduleActionBusy}
+                        onClick={() => grantMutation.mutate(item.connector_type_key)}
+                      >
+                        Grant
+                      </Button>
+                    )}
+                    {item.has_override && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={moduleActionBusy}
+                        onClick={() => resetOverrideMutation.mutate(item.connector_type_key)}
+                      >
+                        Reset to default
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {(moduleAccess ?? []).length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">
+                    No catalog items found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       <Modal
         open={impersonateOpen}

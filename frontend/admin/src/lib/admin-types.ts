@@ -52,6 +52,29 @@ export interface ConnectorHealth {
   connectors: ConnectorHealthItem[];
 }
 
+/** One catalog row's resolved access for one tenant - drives the admin's
+ * per-tenant "Modules & connectors" revoke/grant panel. */
+export interface TenantModuleAccess {
+  connector_type_id: string;
+  connector_type_key: string;
+  display_name: string;
+  category: string;
+  access_status: "granted" | "pending" | "denied" | "not_requested";
+  has_override: boolean;
+  override_granted: boolean | null;
+}
+
+export interface ConnectorAccessOverride {
+  id: string;
+  tenant_id: string;
+  connector_type_id: string;
+  granted: boolean;
+  set_by: string | null;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ImpersonateResponse {
   access_token: string;
   token_type: string;
