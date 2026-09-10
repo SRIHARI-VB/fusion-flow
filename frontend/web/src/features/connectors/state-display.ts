@@ -1,5 +1,6 @@
 import type { BadgeVariant } from "@fusion-flow/ui";
 import {
+  Blocks,
   Bot,
   Calendar,
   CreditCard,
@@ -33,6 +34,7 @@ export const CONNECTOR_CATEGORY_ICON: Record<ConnectorCategory, LucideIcon> = {
   mail: Mail,
   support_agent: Bot,
   dashboard: LayoutDashboard,
+  feature: Blocks,
 };
 
 /** Whether the "Connect"/"Reconnect" CTA should be offered for this state. */

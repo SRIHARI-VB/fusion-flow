@@ -278,18 +278,47 @@ export function TemplatesPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Connector bundle</span>
-            <div className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-md border border-border p-2">
-              {(connectorTypes ?? []).map((ct) => (
-                <label key={ct.id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={form.connector_type_ids.includes(ct.id)}
-                    onChange={() => toggleConnectorType(ct.id)}
-                  />
-                  {ct.display_name}
-                  <span className="text-xs text-muted-foreground">({ct.key})</span>
-                </label>
-              ))}
+            <div className="flex flex-col gap-2 rounded-md border border-border p-2">
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Integrations
+                </p>
+                <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
+                  {(connectorTypes ?? [])
+                    .filter((ct) => ct.category !== "feature")
+                    .map((ct) => (
+                      <label key={ct.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={form.connector_type_ids.includes(ct.id)}
+                          onChange={() => toggleConnectorType(ct.id)}
+                        />
+                        {ct.display_name}
+                        <span className="text-xs text-muted-foreground">({ct.key})</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Modules
+                </p>
+                <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
+                  {(connectorTypes ?? [])
+                    .filter((ct) => ct.category === "feature")
+                    .map((ct) => (
+                      <label key={ct.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={form.connector_type_ids.includes(ct.id)}
+                          onChange={() => toggleConnectorType(ct.id)}
+                        />
+                        {ct.display_name}
+                        <span className="text-xs text-muted-foreground">({ct.key})</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
               {(connectorTypes ?? []).length === 0 && (
                 <p className="py-2 text-center text-xs text-muted-foreground">No connector types in the catalog yet.</p>
               )}

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { RequireAuth } from "./components/auth/RequireAuth";
+import { RequireModule } from "./components/auth/RequireModule";
 import { PlaceholderPage } from "./pages/Placeholder";
 import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
@@ -43,31 +44,47 @@ export default function App() {
 
         <Route path="/onboarding" element={<OnboardingPage />} />
 
-        <Route path="/products" element={<ProductsPage />} />
-        <Route path="/services" element={<ServicesPage />} />
-        <Route path="/coupons" element={<CouponsPage />} />
-        <Route path="/offers" element={<OffersPage />} />
+        <Route path="/products" element={<RequireModule moduleKey="products"><ProductsPage /></RequireModule>} />
+        <Route path="/services" element={<RequireModule moduleKey="services"><ServicesPage /></RequireModule>} />
+        <Route path="/coupons" element={<RequireModule moduleKey="coupons"><CouponsPage /></RequireModule>} />
+        <Route path="/offers" element={<RequireModule moduleKey="offers"><OffersPage /></RequireModule>} />
 
-        <Route path="/customers" element={<CustomersPage />} />
-        <Route path="/orders" element={<OrdersListPage />} />
-        <Route path="/orders/:id" element={<OrderDetailPage />} />
-        <Route path="/payments" element={<PaymentsPage />} />
-        <Route path="/tickets" element={<TicketsListPage />} />
-        <Route path="/tickets/:id" element={<TicketDetailPage />} />
-        <Route path="/kb" element={<KbPage />} />
+        <Route path="/customers" element={<RequireModule moduleKey="customers"><CustomersPage /></RequireModule>} />
+        <Route path="/orders" element={<RequireModule moduleKey="orders"><OrdersListPage /></RequireModule>} />
+        <Route path="/orders/:id" element={<RequireModule moduleKey="orders"><OrderDetailPage /></RequireModule>} />
+        <Route path="/payments" element={<RequireModule moduleKey="payments"><PaymentsPage /></RequireModule>} />
+        <Route path="/tickets" element={<RequireModule moduleKey="tickets"><TicketsListPage /></RequireModule>} />
+        <Route path="/tickets/:id" element={<RequireModule moduleKey="tickets"><TicketDetailPage /></RequireModule>} />
+        <Route path="/kb" element={<RequireModule moduleKey="kb"><KbPage /></RequireModule>} />
 
         <Route path="/connectors" element={<ConnectorsGridPage />} />
         <Route path="/connectors/whatsapp/connect" element={<WhatsAppConnectPage />} />
         <Route path="/connectors/razorpay/connect" element={<RazorpayConnectPage />} />
         <Route path="/connectors/:instanceId" element={<ConnectorDetailPage />} />
 
-        <Route path="/workflows" element={<WorkflowsListPage />} />
-        <Route path="/workflows/:id/edit" element={<WorkflowEditorPage />} />
-        <Route path="/workflows/:id/runs" element={<WorkflowRunsPage />} />
+        <Route path="/workflows" element={<RequireModule moduleKey="workflows"><WorkflowsListPage /></RequireModule>} />
+        <Route
+          path="/workflows/:id/edit"
+          element={<RequireModule moduleKey="workflows"><WorkflowEditorPage /></RequireModule>}
+        />
+        <Route
+          path="/workflows/:id/runs"
+          element={<RequireModule moduleKey="workflows"><WorkflowRunsPage /></RequireModule>}
+        />
 
-        <Route path="/support-agent" element={<PlaceholderPage title="Support Agent" description="Hidden behind the support_agent_enabled feature flag until phase 2." />} />
+        <Route
+          path="/support-agent"
+          element={
+            <RequireModule moduleKey="support_agent">
+              <PlaceholderPage title="Support Agent" description="Coming in a later phase." />
+            </RequireModule>
+          }
+        />
 
-        <Route path="/settings/custom-fields" element={<CustomFieldsSettingsPage />} />
+        <Route
+          path="/settings/custom-fields"
+          element={<RequireModule moduleKey="custom_fields"><CustomFieldsSettingsPage /></RequireModule>}
+        />
         <Route path="/settings" element={<SettingsPage />} />
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

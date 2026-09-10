@@ -13,7 +13,8 @@ export type ConnectorCategory =
   | "calendar"
   | "mail"
   | "support_agent"
-  | "dashboard";
+  | "dashboard"
+  | "feature";
 
 /** Fixed lifecycle state machine - see the plan's "Connector Lifecycle Framework". */
 export type ConnectorState =

@@ -17,7 +17,12 @@ import {
  * as "Not connected" with a Connect CTA, per the plan's frontend routes.
  */
 export function ConnectorsGridPage() {
-  const { data: types, isLoading: typesLoading } = useConnectorTypes();
+  const { data: allTypes, isLoading: typesLoading } = useConnectorTypes();
+  // External integrations only - fixed feature modules (category "feature")
+  // are surfaced through nav + a "request access" page instead (see
+  // useModuleAccess/RequireModule), not through this Connect/Request-access
+  // grid, since "connecting" a feature module has no meaning.
+  const types = (allTypes ?? []).filter((t) => t.category !== "feature");
   const { data: instances, isLoading: instancesLoading } = useConnectorInstances();
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
@@ -39,7 +44,7 @@ export function ConnectorsGridPage() {
 
       {typesLoading || instancesLoading ? (
         <p className="text-sm text-muted-foreground">Loading connectors…</p>
-      ) : (types?.length ?? 0) === 0 ? (
+      ) : types.length === 0 ? (
         <Card>
           <CardHeader className="items-center text-center">
             <AlertTriangle className="mb-2 h-6 w-6 text-muted-foreground" />
@@ -49,7 +54,7 @@ export function ConnectorsGridPage() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {types!.map((type) => (
+          {types.map((type) => (
             <ConnectorCard
               key={type.id}
               connectorType={type}

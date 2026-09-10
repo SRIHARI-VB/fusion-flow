@@ -13,12 +13,14 @@ import {
 import { navGroups } from "./nav-config";
 import { useAuthStore } from "../../lib/auth-store";
 import { logout } from "../../lib/endpoints";
+import { useModuleAccess } from "../../lib/useModuleAccess";
 
 export function Sidebar() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const business = useAuthStore((s) => s.business);
   const clear = useAuthStore((s) => s.clear);
+  const { map: moduleAccess } = useModuleAccess();
 
   const initials = (user?.email ?? "F F")
     .split("@")[0]
@@ -54,13 +56,18 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
-        {navGroups.map((group) => (
+        {navGroups.map((group) => {
+          const visibleItems = group.items.filter(
+            (item) => !item.moduleKey || moduleAccess[item.moduleKey] === "granted",
+          );
+          if (visibleItems.length === 0) return null;
+          return (
           <div key={group.label} className="mb-5">
             <div className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {group.label}
             </div>
             <div className="flex flex-col gap-0.5">
-              {group.items.map((item) => (
+              {visibleItems.map((item) => (
                 <NavLink
                   key={item.path}
                   to={item.path}
@@ -79,7 +86,8 @@ export function Sidebar() {
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       <DropdownMenu>
