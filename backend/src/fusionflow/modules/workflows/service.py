@@ -293,6 +293,7 @@ async def list_node_types_with_templates(session: AsyncSession) -> list["schemas
             node_type=m.node_type,
             kind=m.kind,
             category=m.category,
+            subcategory=m.subcategory,
             label=m.label,
             description=m.description,
             config_schema=m.config_schema,

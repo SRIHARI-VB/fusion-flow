@@ -47,6 +47,7 @@ class NodeTypeMeta:
     node_type: str
     kind: NodeKind
     category: str
+    subcategory: str | None
     label: str
     description: str
     config_schema: dict[str, Any]
@@ -142,6 +143,11 @@ class NodeExecutor(abc.ABC):
     node_type: str
     kind: NodeKind = "action"
     category: str = "Generic"
+    # Optional second grouping level under `category` for the palette
+    # (e.g. category="Messages", subcategory="Media"/"Location"/...) -
+    # None means "no subgrouping," which is every pre-Phase-5 node type;
+    # the frontend falls back to flat rendering for those, unchanged.
+    subcategory: str | None = None
     label: str = ""
     description: str = ""
     config_model: type[BaseModel] | None = None
@@ -184,6 +190,7 @@ class NodeExecutor(abc.ABC):
             node_type=cls.node_type,
             kind=cls.kind,
             category=cls.category,
+            subcategory=cls.subcategory,
             label=cls.label or cls.node_type,
             description=cls.description,
             config_schema=schema,
@@ -243,6 +250,7 @@ class TriggerDefinition:
     label: str
     description: str
     config_model: type[BaseModel] | None = None
+    subcategory: str | None = None
 
     def meta(self) -> NodeTypeMeta:
         schema = self.config_model.model_json_schema() if self.config_model else {}
@@ -250,6 +258,7 @@ class TriggerDefinition:
             node_type=self.trigger_type,
             kind="trigger",
             category=self.category,
+            subcategory=self.subcategory,
             label=self.label,
             description=self.description,
             config_schema=schema,

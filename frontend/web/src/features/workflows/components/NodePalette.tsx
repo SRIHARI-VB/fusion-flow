@@ -6,11 +6,14 @@ import type { NodeKind, NodeType } from "../types";
 /**
  * Right-hand collapsible palette, grouped into labeled categories — per
  * `docs/design/README.md`'s reference (there: Messages/Choices/Inputs/
- * Payments/Ecommerce). Grouped by `NodeType.category` (Messaging,
- * Conditions, Integrations, Flow Control, ...) as the primary grouping,
- * with `kind` (trigger/action/condition) shown as a secondary icon badge
- * per item instead of the old flat 3-group-by-kind scheme — this finally
- * matches the reference screenshot's own taxonomy. Sourced live from
+ * Payments/Ecommerce, itself a two-level Messages > Text/Image/Video/...
+ * taxonomy). Grouped by `NodeType.category` as the primary grouping, with
+ * an optional second level by `NodeType.subcategory` (e.g.
+ * "Messages" > "Media"/"Location"/"Contact"/"Template" for the WhatsApp
+ * send nodes) - a category with no subcategorized items renders exactly
+ * as before (flat), so this is purely additive for existing categories
+ * like "Flow Control"/"Data". `kind` (trigger/action/condition) still
+ * shows as a secondary icon badge per item. Sourced live from
  * `GET /workflows/node-types` (raw registered types + active
  * `WorkflowNodeTemplate` rows merged - see `service.
  * list_node_types_with_templates`), so a new node type or template shows
@@ -25,28 +28,84 @@ interface NodePaletteProps {
   onDragStartNodeType: (nodeType: NodeType, event: React.DragEvent) => void;
 }
 
+interface CategoryGroup {
+  category: string;
+  directItems: NodeType[];
+  subgroups: Array<{ subcategory: string; items: NodeType[] }>;
+}
+
 function categoryOrder(category: string): number {
   // "Triggers" always leads (an author reaches for a trigger first when
   // building from scratch); everything else sorts alphabetically after it.
   return category === "Triggers" ? -1 : 0;
 }
 
+function buildGroups(nodeTypes: NodeType[]): CategoryGroup[] {
+  const byCategory = new Map<string, NodeType[]>();
+  for (const nodeType of nodeTypes) {
+    const list = byCategory.get(nodeType.category) ?? [];
+    list.push(nodeType);
+    byCategory.set(nodeType.category, list);
+  }
+
+  const categories = [...byCategory.keys()].sort(
+    (a, b) => categoryOrder(a) - categoryOrder(b) || a.localeCompare(b),
+  );
+
+  return categories.map((category) => {
+    const items = byCategory.get(category) ?? [];
+    const directItems: NodeType[] = [];
+    const subgroupOrder: string[] = [];
+    const subgroupMap = new Map<string, NodeType[]>();
+
+    for (const item of items) {
+      if (!item.subcategory) {
+        directItems.push(item);
+        continue;
+      }
+      if (!subgroupMap.has(item.subcategory)) {
+        subgroupOrder.push(item.subcategory);
+        subgroupMap.set(item.subcategory, []);
+      }
+      subgroupMap.get(item.subcategory)!.push(item);
+    }
+
+    return {
+      category,
+      directItems,
+      subgroups: subgroupOrder.map((subcategory) => ({ subcategory, items: subgroupMap.get(subcategory)! })),
+    };
+  });
+}
+
+function PaletteItem({ nodeType, onDragStartNodeType }: { nodeType: NodeType; onDragStartNodeType: NodePaletteProps["onDragStartNodeType"] }) {
+  const KindIcon = KIND_ICON[nodeType.kind];
+  return (
+    <div
+      draggable
+      onDragStart={(event) => onDragStartNodeType(nodeType, event)}
+      title={nodeType.description}
+      className={cn(
+        "flex cursor-grab items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5",
+        "text-xs text-foreground hover:border-accent hover:bg-accent-soft active:cursor-grabbing",
+      )}
+    >
+      <span className="truncate">{nodeType.label}</span>
+      <span
+        className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+        title={KIND_LABEL[nodeType.kind]}
+      >
+        <KindIcon className="h-2.5 w-2.5" />
+      </span>
+    </div>
+  );
+}
+
 export function NodePalette({ nodeTypes, onDragStartNodeType }: NodePaletteProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
-  const { categories, grouped } = useMemo(() => {
-    const groups = new Map<string, NodeType[]>();
-    for (const nodeType of nodeTypes) {
-      const list = groups.get(nodeType.category) ?? [];
-      list.push(nodeType);
-      groups.set(nodeType.category, list);
-    }
-    const cats = [...groups.keys()].sort(
-      (a, b) => categoryOrder(a) - categoryOrder(b) || a.localeCompare(b),
-    );
-    return { categories: cats, grouped: groups };
-  }, [nodeTypes]);
+  const groups = useMemo(() => buildGroups(nodeTypes), [nodeTypes]);
 
   // Every category starts open the first time its node types load, so
   // the whole palette is usable without an extra click; after that, the
@@ -54,11 +113,11 @@ export function NodePalette({ nodeTypes, onDragStartNodeType }: NodePaletteProps
   // left alone (this effect only ever adds categories, never removes).
   useEffect(() => {
     setOpenGroups((prev) => {
-      const unseen = categories.filter((c) => !prev.has(c));
+      const unseen = groups.map((g) => g.category).filter((c) => !prev.has(c));
       if (unseen.length === 0) return prev;
       return new Set([...prev, ...unseen]);
     });
-  }, [categories]);
+  }, [groups]);
 
   function toggleGroup(category: string) {
     setOpenGroups((prev) => {
@@ -102,8 +161,7 @@ export function NodePalette({ nodeTypes, onDragStartNodeType }: NodePaletteProps
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {categories.map((category) => {
-          const items = grouped.get(category) ?? [];
+        {groups.map(({ category, directItems, subgroups }) => {
           const open = openGroups.has(category);
 
           return (
@@ -124,30 +182,25 @@ export function NodePalette({ nodeTypes, onDragStartNodeType }: NodePaletteProps
               </button>
 
               {open && (
-                <div className="flex flex-col gap-1 px-1 pb-1">
-                  {items.map((nodeType) => {
-                    const KindIcon = KIND_ICON[nodeType.kind];
-                    return (
-                      <div
-                        key={nodeType.node_type}
-                        draggable
-                        onDragStart={(event) => onDragStartNodeType(nodeType, event)}
-                        title={nodeType.description}
-                        className={cn(
-                          "flex cursor-grab items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5",
-                          "text-xs text-foreground hover:border-accent hover:bg-accent-soft active:cursor-grabbing",
-                        )}
-                      >
-                        <span className="truncate">{nodeType.label}</span>
-                        <span
-                          className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                          title={KIND_LABEL[nodeType.kind]}
-                        >
-                          <KindIcon className="h-2.5 w-2.5" />
-                        </span>
-                      </div>
-                    );
-                  })}
+                <div className="flex flex-col gap-2 px-1 pb-1">
+                  {directItems.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      {directItems.map((nodeType) => (
+                        <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                      ))}
+                    </div>
+                  )}
+
+                  {subgroups.map(({ subcategory, items }) => (
+                    <div key={subcategory} className="flex flex-col gap-1">
+                      <span className="pl-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                        {subcategory}
+                      </span>
+                      {items.map((nodeType) => (
+                        <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                      ))}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

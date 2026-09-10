@@ -100,6 +100,7 @@ class NodeTypeOut(BaseModel):
     node_type: str
     kind: str
     category: str
+    subcategory: str | None = None
     label: str
     description: str
     config_schema: dict[str, Any]

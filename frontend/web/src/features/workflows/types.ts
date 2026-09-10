@@ -64,6 +64,10 @@ export interface NodeType {
   node_type: string;
   kind: NodeKind;
   category: string;
+  /** Optional second grouping level under `category` for the palette
+   * (e.g. category="Messages", subcategory="Media"/"Location"/...) -
+   * `null`/absent means no subgrouping, rendered flat under `category`. */
+  subcategory?: string | null;
   label: string;
   description: string;
   config_schema: JsonSchema;
