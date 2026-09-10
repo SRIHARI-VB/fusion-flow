@@ -16,7 +16,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,13 @@ class Business(Base, TimestampMixin):
     )
     onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Tenant-wide messaging kill switch: when true, workflow action nodes
+    # that send outbound messages (e.g. send_whatsapp_message) must no-op
+    # instead of sending. Checked by the node executor / connector send
+    # path, not enforced here.
+    messaging_paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
 
     memberships: Mapped[list[Membership]] = relationship(

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fusionflow.modules.auth.models import User
 from fusionflow.modules.tenancy.models import Business, Membership, MembershipRole
 from fusionflow.modules.tenancy.schemas import BusinessMembershipOut, BusinessUpdateRequest
 
@@ -113,6 +114,7 @@ def to_business_membership_out(
         vertical=business.vertical,
         status=business.status,
         role=membership.role,
+        messaging_paused=business.messaging_paused,
         onboarding_completed_at=business.onboarding_completed_at,
     )
 
@@ -145,8 +147,28 @@ async def update_business(
         business.vertical = payload.vertical
     if payload.mark_onboarding_complete and business.onboarding_completed_at is None:
         business.onboarding_completed_at = datetime.now(timezone.utc)
+    if payload.messaging_paused is not None:
+        business.messaging_paused = payload.messaging_paused
     await session.flush()
     return business
+
+
+async def list_members_of_business(
+    session: AsyncSession, business_id: uuid.UUID
+) -> list[tuple[Membership, User]]:
+    """Every (membership, user) pair for a business, oldest invite first.
+
+    Distinct from `list_memberships_for_user`, which is keyed by user_id and
+    used for the login/business-picker path; this one is keyed by
+    business_id and used for the settings page's team-members list.
+    """
+    rows = await session.execute(
+        select(Membership, User)
+        .join(User, User.id == Membership.user_id)
+        .where(Membership.business_id == business_id)
+        .order_by(Membership.invited_at)
+    )
+    return [(m, u) for m, u in rows.all()]
 
 
 async def count_memberships(session: AsyncSession, user_id: uuid.UUID) -> int:

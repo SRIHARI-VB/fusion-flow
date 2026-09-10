@@ -17,6 +17,7 @@ from fusionflow.modules.tenancy.schemas import (
     BusinessMembershipOut,
     BusinessOut,
     BusinessUpdateRequest,
+    MemberOut,
 )
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
@@ -83,3 +84,32 @@ async def update_business(
     await session.commit()
     await session.refresh(business)
     return BusinessOut.model_validate(business)
+
+
+@router.get("/{business_id}/members", response_model=list[MemberOut])
+async def list_business_members(
+    business_id: uuid.UUID,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+) -> list[MemberOut]:
+    """Team members of the *active* business. Owner/admin only.
+
+    Same cross-tenant guard as `PATCH /{business_id}`: this is not a
+    generic "look up any business's members" endpoint, only the caller's
+    currently-active one.
+    """
+    if business_id != context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Switch to that business before viewing its members",
+        )
+
+    return [
+        MemberOut(
+            email=user.email,
+            role=membership.role,
+            invited_at=membership.invited_at,
+            accepted_at=membership.accepted_at,
+        )
+        for membership, user in await tenancy_service.list_members_of_business(session, business_id)
+    ]
