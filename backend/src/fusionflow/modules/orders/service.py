@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fusionflow.modules.customers.models import Customer
 from fusionflow.modules.orders.models import Order
 from fusionflow.modules.orders.schemas import OrderCreate, OrderOut, OrderUpdate
+from fusionflow.modules.workflows.engine import event_bus
 
 
 def to_order_out(order: Order, customer_name: str | None = None) -> OrderOut:
@@ -74,6 +75,21 @@ async def create_order(session: AsyncSession, tenant_id: uuid.UUID, payload: Ord
     )
     session.add(order)
     await session.flush()
+
+    # Same transaction as the insert above - transactional outbox, see
+    # event_bus.py's module docstring. The router owns the commit.
+    await event_bus.publish_trigger_event(
+        session,
+        tenant_id=tenant_id,
+        event_type="order.created",
+        payload={
+            "order_id": str(order.id),
+            "customer_id": str(order.customer_id),
+            "total_amount": str(order.total_amount),
+            "currency": order.currency,
+            "status": order.status.value,
+        },
+    )
     return order
 
 
