@@ -29,6 +29,8 @@ from fusionflow.modules.admin.schemas import (
     BusinessTemplateCreateRequest,
     BusinessTemplateOut,
     BusinessTemplateUpdateRequest,
+    ConnectorAccessOverrideOut,
+    ConnectorAccessOverrideRequest,
     ConnectorAccessRequestAdminOut,
     ConnectorAccessRequestReviewOut,
     ConnectorHealthOut,
@@ -51,6 +53,7 @@ from fusionflow.modules.admin.schemas import (
     PlanUpdateRequest,
     TenantDetailOut,
     TenantListItemOut,
+    TenantModuleAccessOut,
 )
 from fusionflow.modules.admin.service import AdminError
 
@@ -607,6 +610,53 @@ async def deny_connector_access_request(
         reviewed_by=request.reviewed_by,
         reviewed_at=request.reviewed_at,
     )
+
+
+# --- Per-tenant module/connector access overrides (revoke/grant) -------------
+
+
+@router.get("/tenants/{business_id}/module-access", response_model=list[TenantModuleAccessOut])
+async def get_tenant_module_access(
+    business_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> list[TenantModuleAccessOut]:
+    rows = await admin_service.get_tenant_module_access(session, business_id)
+    return [TenantModuleAccessOut(**row) for row in rows]
+
+
+@router.put(
+    "/tenants/{business_id}/connectors/{type_key}/override", response_model=ConnectorAccessOverrideOut
+)
+async def set_connector_access_override(
+    business_id: uuid.UUID,
+    type_key: str,
+    payload: ConnectorAccessOverrideRequest,
+    admin: PlatformAdminDep,
+    session: SessionDep,
+) -> ConnectorAccessOverrideOut:
+    try:
+        override = await admin_service.set_connector_access_override(
+            session,
+            business_id,
+            type_key,
+            granted=payload.granted,
+            admin_id=admin.id,
+            reason=payload.reason,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return ConnectorAccessOverrideOut.model_validate(override)
+
+
+@router.delete("/tenants/{business_id}/connectors/{type_key}/override", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_connector_access_override(
+    business_id: uuid.UUID, type_key: str, _admin: PlatformAdminDep, session: SessionDep
+) -> None:
+    try:
+        await admin_service.clear_connector_access_override(session, business_id, type_key)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
 
 
 # --- Billing usage (stub) -------------------------------------------------------

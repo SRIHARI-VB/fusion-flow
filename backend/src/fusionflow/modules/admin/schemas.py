@@ -316,6 +316,37 @@ class ConnectorAccessRequestReviewOut(BaseModel):
     reviewed_at: datetime | None = None
 
 
+class TenantModuleAccessOut(BaseModel):
+    """One catalog row's resolved access for one tenant - built by hand in
+    `service.get_tenant_module_access`, not `from_attributes`'d."""
+
+    connector_type_id: uuid.UUID
+    connector_type_key: str
+    display_name: str
+    category: str
+    access_status: str
+    has_override: bool
+    override_granted: bool | None = None
+
+
+class ConnectorAccessOverrideRequest(BaseModel):
+    granted: bool
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class ConnectorAccessOverrideOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    connector_type_id: uuid.UUID
+    granted: bool
+    set_by: uuid.UUID | None = None
+    reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class BillingUsageOut(BaseModel):
     """Placeholder payload - phase 1 has no metering/billing model yet.
 

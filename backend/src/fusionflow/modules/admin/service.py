@@ -50,7 +50,9 @@ settings = get_settings()
 # them - regardless of which lands first. See the two functions below that
 # check these flags.
 try:
+    from fusionflow.modules.connectors import service as connector_service  # type: ignore[import-not-found]
     from fusionflow.modules.connectors.models import (  # type: ignore[import-not-found]
+        ConnectorAccessOverride,
         ConnectorAccessRequest,
         ConnectorAccessRequestStatus,
         ConnectorInstance,
@@ -59,6 +61,8 @@ try:
 
     _CONNECTORS_AVAILABLE = True
 except ImportError:
+    connector_service = None  # type: ignore[assignment]
+    ConnectorAccessOverride = None  # type: ignore[assignment]
     ConnectorAccessRequest = None  # type: ignore[assignment]
     ConnectorAccessRequestStatus = None  # type: ignore[assignment]
     ConnectorInstance = None  # type: ignore[assignment]
@@ -274,6 +278,110 @@ async def get_tenant_connector_health(
             for row in rows
         ],
     )
+
+
+# --- Per-tenant module/connector access overrides (revoke/grant) -------------
+#
+# Closes a real gap: there was no way to revoke a single connector/module
+# from one tenant without either reassigning its whole business_template
+# (changing every other grant it gives) or unassigning it entirely - which,
+# for FEATURE-category modules, actually *over*-grants via the
+# grandfathering compat branch in `modules.connectors.deps`. See
+# `modules.connectors.models.ConnectorAccessOverride`'s docstring.
+
+
+async def get_tenant_module_access(session: AsyncSession, business_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Full connector/module catalog + this tenant's resolved `access_status`
+    + whether an admin override exists, for the admin's per-tenant "Modules
+    & connectors" panel. Same `set_tenant_context`-on-the-request-session
+    pattern as `get_tenant_connector_health` above - no `app.current_tenant_id`
+    is set by default under `/api/admin/*`."""
+    if not _CONNECTORS_AVAILABLE:
+        return []
+
+    await set_tenant_context(session, business_id)
+    types = await connector_service.list_connector_types(session)
+    access_map = await connector_service.get_connector_access_map(
+        session, tenant_id=business_id, connector_type_ids=[t.id for t in types]
+    )
+    overrides = await connector_service.get_connector_access_overrides(session, tenant_id=business_id)
+    return [
+        {
+            "connector_type_id": t.id,
+            "connector_type_key": t.key,
+            "display_name": t.display_name,
+            "category": t.category.value,
+            "access_status": access_map.get(t.id, "not_requested"),
+            "has_override": t.id in overrides,
+            "override_granted": overrides[t.id].granted if t.id in overrides else None,
+        }
+        for t in types
+    ]
+
+
+async def set_connector_access_override(
+    session: AsyncSession,
+    business_id: uuid.UUID,
+    type_key: str,
+    *,
+    granted: bool,
+    admin_id: uuid.UUID,
+    reason: str | None,
+) -> "ConnectorAccessOverride":
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    await set_tenant_context(session, business_id)
+    connector_type = await connector_service.get_connector_type_by_key(session, type_key)
+    if connector_type is None:
+        raise AdminError(f"Unknown connector type: {type_key!r}", status_code=404)
+
+    existing = (
+        await session.execute(
+            select(ConnectorAccessOverride).where(  # type: ignore[arg-type]
+                ConnectorAccessOverride.tenant_id == business_id,  # type: ignore[union-attr]
+                ConnectorAccessOverride.connector_type_id == connector_type.id,  # type: ignore[union-attr]
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.granted = granted
+        existing.set_by = admin_id
+        existing.reason = reason
+        await session.flush()
+        return existing
+
+    override = ConnectorAccessOverride(
+        id=uuid.uuid4(),
+        tenant_id=business_id,
+        connector_type_id=connector_type.id,
+        granted=granted,
+        set_by=admin_id,
+        reason=reason,
+    )
+    session.add(override)
+    await session.flush()
+    return override
+
+
+async def clear_connector_access_override(session: AsyncSession, business_id: uuid.UUID, type_key: str) -> None:
+    """Deletes the override, reverting resolution to the normal
+    bundle/request/grandfather chain in `get_connector_access_map`."""
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    await set_tenant_context(session, business_id)
+    connector_type = await connector_service.get_connector_type_by_key(session, type_key)
+    if connector_type is None:
+        raise AdminError(f"Unknown connector type: {type_key!r}", status_code=404)
+
+    await session.execute(
+        delete(ConnectorAccessOverride).where(  # type: ignore[arg-type]
+            ConnectorAccessOverride.tenant_id == business_id,  # type: ignore[union-attr]
+            ConnectorAccessOverride.connector_type_id == connector_type.id,  # type: ignore[union-attr]
+        )
+    )
+    await session.flush()
 
 
 # --- Impersonation ------------------------------------------------------------

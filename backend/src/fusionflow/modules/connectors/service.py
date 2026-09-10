@@ -135,7 +135,7 @@ async def _bundled_connector_type_ids(session: AsyncSession, *, tenant_id: uuid.
     return set(rows.scalars().all())
 
 
-async def _override_by_type(
+async def get_connector_access_overrides(
     session: AsyncSession, *, tenant_id: uuid.UUID
 ) -> dict[uuid.UUID, ConnectorAccessOverride]:
     rows = await session.execute(
@@ -162,7 +162,7 @@ async def get_connector_access_map(
     `ConnectorAccessRequest`. No override row falls through to the
     unchanged bundle/request resolution below.
     """
-    overrides = await _override_by_type(session, tenant_id=tenant_id)
+    overrides = await get_connector_access_overrides(session, tenant_id=tenant_id)
     bundled_ids = await _bundled_connector_type_ids(session, tenant_id=tenant_id)
     rows = await session.execute(
         select(ConnectorAccessRequest).where(ConnectorAccessRequest.tenant_id == tenant_id)
