@@ -27,10 +27,13 @@ from __future__ import annotations
 import abc
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a circular import
+    from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 
 NodeKind = Literal["trigger", "action", "condition"]
 
@@ -48,7 +51,16 @@ class NodeTypeMeta:
     description: str
     config_schema: dict[str, Any]
     output_handles: list[str] | None = None
+    optional_output_handles: list[str] | None = None
     loop_safety_field: str | None = None
+    can_contain_children: bool = False
+    child_role: str | None = None
+
+
+#: Signature of `ExecutionContext.run_children` - see its docstring below.
+#: Kept as a module-level alias (not inlined) so container node modules can
+#: import and type-hint against it without repeating the shape.
+RunChildrenFn = Callable[[list[str], dict[str, Any], set[str]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -67,6 +79,23 @@ class ExecutionContext:
     node_id: str
     config: dict[str, Any]
     variables: dict[str, Any]
+    # The two fields below are only populated for a node whose executor
+    # has `can_contain_children = True` (run_loop.py sets them; every
+    # other node type gets `None`, and never needs them). Not folded into
+    # every node's contract because embedding is opt-in, same as
+    # `output_handles`/`loop_safety_field` - see NodeExecutor's docstring.
+    graph: "WorkflowGraph | None" = None
+    # Runs the child sub-graph rooted at the given node ids, restricted to
+    # `allowed_node_ids`, against a *caller-owned* scoped `variables` dict
+    # (mutated in place - each executed child's output lands under
+    # `variables[child.id]`, exactly like the top-level run loop does for
+    # top-level nodes, but scoped to this copy so it never leaks into the
+    # container's own outer variables). Raises `ChildExecutionError` (see
+    # run_loop.py) if any child fails or exhausts its retries - the
+    # container decides whether to catch that (Try/Catch) or let it
+    # propagate (Loop, Parallel, and Try/Catch itself when no "error"
+    # handle is wired).
+    run_children: RunChildrenFn | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +148,16 @@ class NodeExecutor(abc.ABC):
     # Condition nodes only: the full set of output handle ids they can
     # branch to (e.g. ["true", "false"]). None/empty means "not a branching
     # node" — the run loop follows every outgoing edge for such nodes.
+    # validation.py's rule 4 requires each of these to be wired exactly
+    # once.
     output_handles: list[str] | None = None
+    # Named handles that MAY be wired at most once each, but don't have to
+    # be wired at all - distinct from `output_handles` (required, exactly
+    # once). Try/Catch is the only user today: an author can leave "error"
+    # unwired (falls back to today's fail-fast propagation) and/or leave
+    # "success" unwired (falls back to a plain Success instead of a
+    # Branch) - see nodes/flow_try_catch.py.
+    optional_output_handles: list[str] | None = None
     # Config key whose presence (truthy value) marks this node type
     # loop-safe when used inside a cycle (validation.py rule 5). None means
     # this node type can never make a cycle safe.
@@ -131,6 +169,13 @@ class NodeExecutor(abc.ABC):
     # in-process nodes, where a retry can never change the outcome.
     retryable: bool = False
     max_retries: int = 0
+    # Opt-in embedding (run_loop.py / graph.py): only Loop/TryCatch/Parallel
+    # set `can_contain_children = True`. `child_role` is a free-text label
+    # ("loop_body" | "try_body" | "parallel_branch") the frontend/validation
+    # can use to describe what a child of this container represents; the
+    # engine itself does not branch on its value.
+    can_contain_children: bool = False
+    child_role: str | None = None
 
     @classmethod
     def meta(cls) -> NodeTypeMeta:
@@ -143,7 +188,10 @@ class NodeExecutor(abc.ABC):
             description=cls.description,
             config_schema=schema,
             output_handles=cls.output_handles,
+            optional_output_handles=cls.optional_output_handles,
             loop_safety_field=cls.loop_safety_field,
+            can_contain_children=cls.can_contain_children,
+            child_role=cls.child_role,
         )
 
     def validate_config(self, config: dict[str, Any]) -> None:

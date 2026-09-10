@@ -7,9 +7,15 @@ other module, so the engine is fully testable in isolation. The next four
 `create_ticket`) are the connector/fixed-connector-backed node types that
 make the plan's M5 sample scenario ("new WhatsApp message → keyword branch
 → create ticket or auto-reply") buildable — they depend on
-`modules/connectors/whatsapp` and `modules/tickets` respectively.
+`modules/connectors/whatsapp` and `modules/tickets` respectively. The last
+three (`flow_loop`, `flow_try_catch`, `flow_parallel`) are the container
+node types (`can_contain_children = True`) added for the advanced-workflow-
+engine phase — genuinely new execution semantics, so unlike most later
+node/integration additions (see `run_loop.py`'s and the generic-executor
+nodes' docstrings for the "catalog/config, not code" extensibility
+principle) these three are real new Python classes, deliberately.
 
-Importing this package registers all seven with the process-wide
+Importing this package registers all ten with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
 `engine/registry.py` as a side effect — matching `fusionflow.db.models`'s
 "import for side effect" pattern for ORM classes.
@@ -18,6 +24,9 @@ Importing this package registers all seven with the process-wide
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     condition_field_compare,
     create_ticket,
+    flow_loop,
+    flow_parallel,
+    flow_try_catch,
     log_noop,
     manual_test_trigger,
     order_created,
@@ -28,6 +37,9 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 __all__ = [
     "condition_field_compare",
     "create_ticket",
+    "flow_loop",
+    "flow_parallel",
+    "flow_try_catch",
     "log_noop",
     "manual_test_trigger",
     "order_created",

@@ -50,6 +50,9 @@ async def get_node_types(context: TenantContextDep) -> list[schemas.NodeTypeOut]
             description=m.description,
             config_schema=m.config_schema,
             output_handles=m.output_handles,
+            optional_output_handles=m.optional_output_handles,
+            can_contain_children=m.can_contain_children,
+            child_role=m.child_role,
         )
         for m in service.list_node_types()
     ]

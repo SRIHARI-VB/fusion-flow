@@ -59,8 +59,11 @@ def _run(workflow_id: uuid.UUID | None = None) -> WorkflowRun:
     )
 
 
-def _node(node_id: str, node_type: str, config: dict | None = None) -> dict:
-    return {"id": node_id, "type": node_type, "data": {"nodeType": node_type, "config": config or {}}}
+def _node(node_id: str, node_type: str, config: dict | None = None, parent_id: str | None = None) -> dict:
+    node = {"id": node_id, "type": node_type, "data": {"nodeType": node_type, "config": config or {}}}
+    if parent_id is not None:
+        node["parentId"] = parent_id
+    return node
 
 
 def _edge(edge_id: str, source: str, target: str, source_handle: str | None = None) -> dict:
@@ -307,6 +310,230 @@ async def test_loop_guard_force_fails_runaway_cycles(monkeypatch: pytest.MonkeyP
 
 
 # --------------------------------------------------------------------------
+# Containers: flow.loop / flow.try_catch / flow.parallel
+# --------------------------------------------------------------------------
+
+
+async def test_loop_container_iterates_once_per_item_with_isolated_scope() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                _node("body", "log.noop", parent_id="loop"),
+            ],
+            "edges": [_edge("e1", "trigger", "loop")],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={"items": ["a", "b", "c"]})
+
+    assert result.status == RunStatus.COMPLETED
+    loop_step = next(s for s in session.added if s.node_id == "loop")
+    assert loop_step.output["count"] == 3
+    assert loop_step.output["truncated"] is False
+    # Each iteration's body step recorded its own loop-scoped context, and
+    # they never leak into each other (isolated copy per iteration).
+    body_steps = [s for s in session.added if s.node_id == "body"]
+    assert len(body_steps) == 3
+    assert [s.output["context"]["loop"]["item"] for s in body_steps] == ["a", "b", "c"]
+    assert [s.output["context"]["loop"]["index"] for s in body_steps] == [0, 1, 2]
+    # The container is a black box from outside: its own recorded output
+    # is the only trace of the loop body visible to the rest of the graph.
+    assert loop_step.output["results"] == [
+        {"body": body_steps[0].output},
+        {"body": body_steps[1].output},
+        {"body": body_steps[2].output},
+    ]
+
+
+async def test_loop_container_max_iterations_caps_and_marks_truncated() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}", "max_iterations": 2}),
+                _node("body", "log.noop", parent_id="loop"),
+            ],
+            "edges": [_edge("e1", "trigger", "loop")],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={"items": ["a", "b", "c", "d"]})
+
+    assert result.status == RunStatus.COMPLETED
+    loop_step = next(s for s in session.added if s.node_id == "loop")
+    assert loop_step.output["count"] == 2
+    assert loop_step.output["truncated"] is True
+    assert len([s for s in session.added if s.node_id == "body"]) == 2
+
+
+async def test_loop_container_child_failure_fails_the_loop_node() -> None:
+    from fusionflow.modules.workflows.engine.registry import (
+        ExecutionContext,
+        Failure,
+        NodeExecutor,
+        Success,
+    )
+
+    class _FailsOnSecondItem(NodeExecutor):
+        node_type = "test.fails_on_second_item"
+        kind = "action"
+
+        async def execute(self, context: ExecutionContext) -> NodeResult:
+            if context.variables["loop"]["index"] == 1:
+                return Failure("boom on item 2")
+            return Success()
+
+    node_executor_registry.register(_FailsOnSecondItem())
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [
+                    _node("trigger", "manual.test_trigger"),
+                    _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                    _node("body", "test.fails_on_second_item", parent_id="loop"),
+                ],
+                "edges": [_edge("e1", "trigger", "loop")],
+            }
+        )
+        run = _run()
+        session = FakeSession()
+
+        result = await execute_run(session, run, graph, trigger_payload={"items": ["a", "b"]})
+
+        assert result.status == RunStatus.FAILED
+        loop_step = next(s for s in session.added if s.node_id == "loop")
+        assert loop_step.status == StepStatus.FAILED
+        assert "iteration 1 failed" in loop_step.error
+    finally:
+        del node_executor_registry._executors["test.fails_on_second_item"]
+
+
+async def test_try_catch_routes_to_error_handle_when_wired() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "does.not_exist", parent_id="guard"),
+                _node("on_error", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "guard"),
+                _edge("e2", "guard", "on_error", source_handle="error"),
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    guard_step = next(s for s in session.added if s.node_id == "guard")
+    assert guard_step.status == StepStatus.SUCCEEDED
+    assert "error" in guard_step.output
+    assert [s.node_id for s in session.added] == ["trigger", "guard", "on_error"]
+
+
+async def test_try_catch_without_error_handle_propagates_failure() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "does.not_exist", parent_id="guard"),
+            ],
+            "edges": [_edge("e1", "trigger", "guard")],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.FAILED
+    guard_step = next(s for s in session.added if s.node_id == "guard")
+    assert guard_step.status == StepStatus.FAILED
+
+
+async def test_try_catch_success_handle_when_wired() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "log.noop", parent_id="guard"),
+                _node("after", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "guard"),
+                _edge("e2", "guard", "after", source_handle="success"),
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    assert [s.node_id for s in session.added] == ["trigger", "guard", "body", "after"]
+
+
+async def test_parallel_runs_each_branch_and_merges_outputs() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("par", "flow.parallel"),
+                _node("branch_a", "log.noop", {"message": "a"}, parent_id="par"),
+                _node("branch_b", "log.noop", {"message": "b"}, parent_id="par"),
+            ],
+            "edges": [_edge("e1", "trigger", "par")],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    par_step = next(s for s in session.added if s.node_id == "par")
+    assert set(par_step.output["branches"].keys()) == {"branch_a", "branch_b"}
+    assert par_step.output["branches"]["branch_a"]["status"] == "succeeded"
+    assert par_step.output["branches"]["branch_b"]["status"] == "succeeded"
+
+
+async def test_parallel_branch_failure_is_isolated_from_the_other_branch() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("par", "flow.parallel"),
+                _node("branch_a", "does.not_exist", parent_id="par"),
+                _node("branch_b", "log.noop", parent_id="par"),
+            ],
+            "edges": [_edge("e1", "trigger", "par")],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    par_step = next(s for s in session.added if s.node_id == "par")
+    assert par_step.output["branches"]["branch_a"]["status"] == "failed"
+    assert par_step.output["branches"]["branch_b"]["status"] == "succeeded"
+
+
+# --------------------------------------------------------------------------
 # validation.validate_for_publish
 # --------------------------------------------------------------------------
 
@@ -455,3 +682,167 @@ async def test_connector_reference_with_malformed_uuid_is_a_hard_error() -> None
     )
     result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
     assert any(i.rule == "disconnected_connector_reference" and i.severity == "error" for i in result.issues)
+
+
+# --------------------------------------------------------------------------
+# validation.validate_for_publish — containers (rules 6 & 7, reachability)
+# --------------------------------------------------------------------------
+
+
+async def test_valid_container_graph_has_no_errors() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                _node("body", "log.noop", parent_id="loop"),
+            ],
+            "edges": [_edge("e1", "trigger", "loop")],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert not result.has_errors, result.to_json()
+
+
+async def test_child_reachable_via_container_child_roots_is_not_flagged_unreachable() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                _node("body", "log.noop", parent_id="loop"),
+            ],
+            "edges": [_edge("e1", "trigger", "loop")],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert not any(i.rule == "unreachable_nodes" and i.node_id == "body" for i in result.issues)
+
+
+async def test_containment_parent_must_be_a_container_node_type() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("not_a_container", "log.noop"),
+                _node("body", "log.noop", parent_id="not_a_container"),
+            ],
+            "edges": [_edge("e1", "trigger", "not_a_container")],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert any(
+        i.rule == "containment_validity" and i.node_id == "body" and "cannot contain" in i.message
+        for i in result.issues
+    )
+
+
+async def test_containment_missing_parent_is_a_hard_error() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("body", "log.noop", parent_id="ghost"),
+            ],
+            "edges": [_edge("e1", "trigger", "body")],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert any(
+        i.rule == "containment_validity" and i.node_id == "body" and "does not exist" in i.message
+        for i in result.issues
+    )
+
+
+async def test_edge_crossing_a_container_boundary_is_a_hard_error() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                _node("body", "log.noop", parent_id="loop"),
+                _node("outsider", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "loop"),
+                _edge("e2", "body", "outsider"),  # child -> top-level sibling: not allowed
+            ],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert any(i.rule == "containment_validity" and "crosses a container boundary" in i.message for i in result.issues)
+
+
+async def test_cycle_fully_inside_a_loop_container_is_auto_safe() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                _node("a", "log.noop", parent_id="loop"),
+                _node("b", "log.noop", parent_id="loop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "loop"),
+                _edge("e2", "a", "b"),
+                _edge("e3", "b", "a"),  # cycle a <-> b, both children of the same Loop
+            ],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert not any(i.rule == "unsafe_loops" for i in result.issues)
+
+
+async def test_cycle_spanning_outside_a_loop_container_still_needs_a_loop_safe_node() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("a", "log.noop"),
+                _node("b", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "a"),
+                _edge("e2", "a", "b"),
+                _edge("e3", "b", "a"),  # top-level cycle, no container involved at all
+            ],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert any(i.rule == "unsafe_loops" for i in result.issues)
+
+
+async def test_try_catch_optional_handles_may_be_left_entirely_unwired() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "log.noop", parent_id="guard"),
+            ],
+            "edges": [_edge("e1", "trigger", "guard")],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert not any(i.rule == "invalid_branches" for i in result.issues)
+
+
+async def test_try_catch_optional_handle_wired_twice_is_a_hard_error() -> None:
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "log.noop", parent_id="guard"),
+                _node("err1", "log.noop"),
+                _node("err2", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "guard"),
+                _edge("e2", "guard", "err1", source_handle="error"),
+                _edge("e3", "guard", "err2", source_handle="error"),
+            ],
+        }
+    )
+    result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+    assert any(i.rule == "invalid_branches" and "expected at most one" in i.message for i in result.issues)

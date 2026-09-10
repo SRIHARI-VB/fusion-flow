@@ -69,6 +69,7 @@ async def validate_for_publish(
     _check_unreachable_nodes(graph, result)
     _check_invalid_branches(graph, result)
     _check_unsafe_loops(graph, result)
+    _check_containment_validity(graph, result)
     return result
 
 
@@ -192,6 +193,15 @@ def _check_unreachable_nodes(graph: WorkflowGraph, result: ValidationResult) -> 
         )
         return
 
+    # A container's own root children (`child_roots`) have no top-level
+    # edge pointing at them by design - their reachability comes from
+    # being embedded inside a reachable container, not from a graph edge
+    # (see engine/graph.py's `children_of`/`child_roots`). Once a
+    # container is reached via the normal edge-adjacency walk, its root
+    # children are added to the frontier the same way an edge target
+    # would be; from there, their own outgoing edges (which the plain
+    # `adjacency()` map already includes, since intra-container edges are
+    # ordinary graph edges) continue the walk as usual.
     adjacency = graph.adjacency()
     reachable: set[str] = set()
     frontier = list(trigger_ids)
@@ -201,6 +211,8 @@ def _check_unreachable_nodes(graph: WorkflowGraph, result: ValidationResult) -> 
             continue
         reachable.add(current)
         frontier.extend(adjacency.get(current, []))
+        if graph.is_container(current):
+            frontier.extend(child.id for child in graph.child_roots(current))
 
     for node in graph.nodes:
         if node.id not in reachable:
@@ -220,15 +232,20 @@ def _check_unreachable_nodes(graph: WorkflowGraph, result: ValidationResult) -> 
 def _check_invalid_branches(graph: WorkflowGraph, result: ValidationResult) -> None:
     for node in graph.nodes:
         executor = node_executor_registry.get(node.data.node_type)
-        if executor is None or not executor.output_handles:
+        if executor is None:
             continue
+        required = executor.output_handles or []
+        optional = executor.optional_output_handles or []
+        if not required and not optional:
+            continue
+        declared = set(required) | set(optional)
 
         outgoing = graph.outgoing_edges(node.id)
         wired_counts: dict[str, int] = {}
         for edge in outgoing:
             handle = edge.source_handle or "default"
             wired_counts[handle] = wired_counts.get(handle, 0) + 1
-            if handle not in executor.output_handles:
+            if handle not in declared:
                 result.issues.append(
                     ValidationIssue(
                         rule="invalid_branches",
@@ -238,7 +255,7 @@ def _check_invalid_branches(graph: WorkflowGraph, result: ValidationResult) -> N
                     )
                 )
 
-        for handle in executor.output_handles:
+        for handle in required:
             count = wired_counts.get(handle, 0)
             if count == 0:
                 result.issues.append(
@@ -261,14 +278,34 @@ def _check_invalid_branches(graph: WorkflowGraph, result: ValidationResult) -> N
                     )
                 )
 
+        # Optional handles (Try/Catch's "success"/"error") may be left
+        # completely unwired, but if wired at all, still at most once.
+        for handle in optional:
+            count = wired_counts.get(handle, 0)
+            if count > 1:
+                result.issues.append(
+                    ValidationIssue(
+                        rule="invalid_branches",
+                        severity="error",
+                        node_id=node.id,
+                        message=(
+                            f"optional output handle {handle!r} is wired to {count} edges, "
+                            "expected at most one"
+                        ),
+                    )
+                )
+
 
 # --- Rule 5: unsafe loops ----------------------------------------------------
 
 
 def _check_unsafe_loops(graph: WorkflowGraph, result: ValidationResult) -> None:
     adjacency = graph.adjacency()
+    child_to_parent = {n.id: n.parent_id for n in graph.nodes if n.parent_id is not None}
     for cycle in _find_cycles(adjacency):
         if _cycle_is_loop_safe(graph, cycle):
+            continue
+        if _cycle_is_inside_a_loop_container(graph, cycle, child_to_parent):
             continue
         result.issues.append(
             ValidationIssue(
@@ -281,6 +318,28 @@ def _check_unsafe_loops(graph: WorkflowGraph, result: ValidationResult) -> None:
                 ),
             )
         )
+
+
+def _cycle_is_inside_a_loop_container(
+    graph: WorkflowGraph, cycle: list[str], child_to_parent: dict[str, str | None]
+) -> bool:
+    """A cycle entirely contained within one Loop container's own body is
+    auto-safe: it's already bounded by that container's `max_iterations`
+    local cap plus the run's global `loop_guard_count` ceiling, so it
+    doesn't need a manually-set `loop_safety_field` node too. A cycle that
+    spans multiple containers, or touches any top-level node, still needs
+    one — this only recognizes a cycle 100% inside a single loop body."""
+    parents = {child_to_parent.get(node_id) for node_id in cycle}
+    if len(parents) != 1:
+        return False
+    (parent_id,) = parents
+    if parent_id is None:
+        return False
+    parent_node = graph.node_by_id(parent_id)
+    if parent_node is None:
+        return False
+    executor = node_executor_registry.get(parent_node.data.node_type)
+    return executor is not None and executor.child_role == "loop_body"
 
 
 def _cycle_is_loop_safe(graph: WorkflowGraph, cycle: list[str]) -> bool:
@@ -320,3 +379,63 @@ def _find_cycles(adjacency: dict[str, list[str]]) -> list[list[str]]:
         if color.get(node_id, 0) == 0:
             dfs(node_id)
     return cycles
+
+
+# --- Rule 6: containment validity --------------------------------------------
+
+
+def _check_containment_validity(graph: WorkflowGraph, result: ValidationResult) -> None:
+    """Two checks, both closing off a malformed-graph bug class before a
+    run ever starts: (1) a node's `parentId`, if set, must reference a
+    node whose executor actually opts into embedding
+    (`can_contain_children = True`) — a plain leaf node type can never be
+    a parent; (2) an edge may not cross a container boundary — a child's
+    edges must stay within the same immediate parent as the child itself
+    (this also covers the container's own boundary-crossing edges being
+    *allowed*, since the container itself has no `parentId` set unless
+    it's nested, and a nested container's own edges are scoped by its own
+    parent, exactly like any other child of that parent — see the parent
+    lookup below)."""
+    for node in graph.nodes:
+        if node.parent_id is None:
+            continue
+        parent = graph.node_by_id(node.parent_id)
+        if parent is None:
+            result.issues.append(
+                ValidationIssue(
+                    rule="containment_validity",
+                    severity="error",
+                    node_id=node.id,
+                    message=f"parent node {node.parent_id!r} does not exist",
+                )
+            )
+            continue
+        if not graph.is_container(node.parent_id):
+            result.issues.append(
+                ValidationIssue(
+                    rule="containment_validity",
+                    severity="error",
+                    node_id=node.id,
+                    message=(
+                        f"parent node {node.parent_id!r} (type {parent.data.node_type!r}) "
+                        "cannot contain child nodes"
+                    ),
+                )
+            )
+
+    child_to_parent = {n.id: n.parent_id for n in graph.nodes if n.parent_id is not None}
+    for edge in graph.edges:
+        source_parent = child_to_parent.get(edge.source)
+        target_parent = child_to_parent.get(edge.target)
+        if source_parent != target_parent:
+            result.issues.append(
+                ValidationIssue(
+                    rule="containment_validity",
+                    severity="error",
+                    node_id=edge.source,
+                    message=(
+                        f"edge {edge.id} crosses a container boundary — a child node's edges must "
+                        "stay within the same container as the child itself"
+                    ),
+                )
+            )

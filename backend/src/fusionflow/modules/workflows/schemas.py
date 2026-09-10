@@ -104,3 +104,6 @@ class NodeTypeOut(BaseModel):
     description: str
     config_schema: dict[str, Any]
     output_handles: list[str] | None = None
+    optional_output_handles: list[str] | None = None
+    can_contain_children: bool = False
+    child_role: str | None = None

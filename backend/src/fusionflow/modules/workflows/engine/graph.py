@@ -38,6 +38,11 @@ class GraphNode(BaseModel):
     type: str | None = None  # react-flow visual node type; engine ignores it
     data: GraphNodeData
     position: dict[str, float] = Field(default_factory=dict)
+    # Maps 1:1 onto React Flow v12's own `parentId`/`extent: "parent"` node
+    # nesting - the persisted graph JSON *is* the React Flow node shape, no
+    # translation layer. Set only for a node embedded inside a container
+    # (Loop/TryCatch/Parallel); `None` for every top-level node.
+    parent_id: str | None = Field(default=None, alias="parentId")
 
 
 class GraphEdge(BaseModel):
@@ -76,6 +81,35 @@ class WorkflowGraph(BaseModel):
         for e in self.edges:
             adj.setdefault(e.source, []).append(e.target)
         return adj
+
+    def children_of(self, node_id: str) -> list[GraphNode]:
+        """Nodes embedded directly inside the container `node_id` (their
+        `parentId == node_id`) — not recursive, since a grandchild's own
+        `parentId` points at its immediate parent container, not this one."""
+        return [n for n in self.nodes if n.parent_id == node_id]
+
+    def is_container(self, node_id: str) -> bool:
+        """Whether `node_id`'s registered executor opts into embedding
+        (`can_contain_children = True`) — Loop/TryCatch/Parallel today."""
+        # Local import: same module-load-cycle reason as `trigger_nodes`.
+        from fusionflow.modules.workflows.engine.registry import node_executor_registry
+
+        node = self.node_by_id(node_id)
+        if node is None:
+            return False
+        executor = node_executor_registry.get(node.data.node_type)
+        return executor is not None and executor.can_contain_children
+
+    def child_roots(self, container_id: str) -> list[GraphNode]:
+        """The children of `container_id` that have no incoming edge from
+        another child of the same container — i.e. where a mini traversal
+        of the container's body should start. For Loop/TryCatch this is
+        normally exactly one node (the head of a linear body chain); for
+        Parallel, each root is the start of one concurrent branch."""
+        children = self.children_of(container_id)
+        child_ids = {c.id for c in children}
+        targets_within = {e.target for e in self.edges if e.source in child_ids and e.target in child_ids}
+        return [c for c in children if c.id not in targets_within]
 
     @classmethod
     def from_json(cls, raw: dict[str, Any] | None) -> "WorkflowGraph":
