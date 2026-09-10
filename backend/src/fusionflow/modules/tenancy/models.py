@@ -16,7 +16,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,8 +33,10 @@ class MembershipRole(str, enum.Enum):
 
 
 class BusinessStatus(str, enum.Enum):
+    PENDING_APPROVAL = "pending_approval"
     ACTIVE = "active"
     SUSPENDED = "suspended"
+    DENIED = "denied"
 
 
 class Business(Base, TimestampMixin):
@@ -78,6 +80,13 @@ class Business(Base, TimestampMixin):
     plan_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), nullable=True
     )
+    # Set when status transitions to DENIED (admin-provided reason, shown to
+    # the applicant at login) - cleared on any later approval.
+    denial_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="business", cascade="all, delete-orphan"

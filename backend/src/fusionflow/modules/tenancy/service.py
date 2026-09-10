@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.admin.models import Plan
 from fusionflow.modules.auth.models import User
-from fusionflow.modules.tenancy.models import Business, Membership, MembershipRole
+from fusionflow.modules.tenancy.models import Business, BusinessStatus, Membership, MembershipRole
 from fusionflow.modules.tenancy.schemas import BusinessMembershipOut, BusinessUpdateRequest
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
@@ -56,14 +56,23 @@ async def create_business_with_owner(
     user_id: uuid.UUID,
     name: str,
     vertical: str | None = None,
+    status: BusinessStatus = BusinessStatus.ACTIVE,
 ) -> tuple[Business, Membership]:
-    """Create a business and make `user_id` its owner. Does not commit."""
+    """Create a business and make `user_id` its owner. Does not commit.
+
+    `status` defaults to `ACTIVE` (unchanged existing behavior, so this stays
+    a no-op for every caller/test that doesn't pass it explicitly).
+    `modules.auth.service.signup` passes `BusinessStatus.PENDING_APPROVAL`
+    explicitly now that self-serve signup requires admin approval before
+    login works.
+    """
     now = datetime.now(timezone.utc)
     business = Business(
         id=uuid.uuid4(),
         name=name,
         slug=await generate_unique_slug(session, name),
         vertical=vertical,
+        status=status,
     )
     membership = Membership(
         id=uuid.uuid4(),

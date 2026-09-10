@@ -49,6 +49,11 @@ class ConnectorCategory(str, enum.Enum):
     MAIL = "mail"
     SUPPORT_AGENT = "support_agent"
     DASHBOARD = "dashboard"
+    # Internal fixed feature module (products, orders, tickets, ...) - no
+    # adapter, no OAuth, no ConnectorInstance state machine. Entitlement
+    # alone (get_connector_access_map == "granted") gates its routes; see
+    # modules.connectors.deps.require_module_access.
+    FEATURE = "feature"
 
 
 class ConnectorState(str, enum.Enum):
