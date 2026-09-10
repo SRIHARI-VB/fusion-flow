@@ -17,6 +17,9 @@ from fusionflow.modules.admin.models import (
     ImpersonationSession,
     Plan,
     PlanFeatureFlag,
+    PlanResourceLimit,
+    ResourceLimitOverride,
+    WorkflowNodeTemplate,
 )
 from fusionflow.modules.auth.models import RefreshToken, User
 from fusionflow.modules.catalog.models import (
@@ -27,6 +30,7 @@ from fusionflow.modules.catalog.models import (
     ProductServiceType,
 )
 from fusionflow.modules.connectors.models import (
+    ConnectorAccessOverride,
     ConnectorAccessRequest,
     ConnectorAccessRequestStatus,
     ConnectorCategory,
@@ -38,6 +42,11 @@ from fusionflow.modules.connectors.models import (
     ConnectorState,
     ConnectorType,
     HealthStatus,
+)
+from fusionflow.modules.connectors.whatsapp.models import (
+    WhatsAppTemplate,
+    WhatsAppTemplateCategory,
+    WhatsAppTemplateStatus,
 )
 from fusionflow.modules.custom_fields.models import (
     EntityType,
@@ -81,6 +90,7 @@ __all__ = [
     "BusinessStatus",
     "BusinessTemplate",
     "BusinessTemplateConnectorType",
+    "ConnectorAccessOverride",
     "ConnectorAccessRequest",
     "ConnectorAccessRequestStatus",
     "ConnectorCategory",
@@ -113,9 +123,11 @@ __all__ = [
     "PaymentStatus",
     "Plan",
     "PlanFeatureFlag",
+    "PlanResourceLimit",
     "ProductService",
     "ProductServiceType",
     "RefreshToken",
+    "ResourceLimitOverride",
     "RunStatus",
     "StepStatus",
     "Ticket",
@@ -124,7 +136,11 @@ __all__ = [
     "TicketStatus",
     "User",
     "ValidationStatus",
+    "WhatsAppTemplate",
+    "WhatsAppTemplateCategory",
+    "WhatsAppTemplateStatus",
     "Workflow",
+    "WorkflowNodeTemplate",
     "WorkflowRun",
     "WorkflowRunStep",
     "WorkflowStatus",

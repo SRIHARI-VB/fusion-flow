@@ -20,6 +20,17 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+# Registers every ORM class with SQLAlchemy's mapper registry before any
+# test runs - without this, running a single test file in isolation
+# (rather than the full suite, where some other test file happens to
+# import this first) can hit `sqlalchemy.exc.InvalidRequestError:
+# ... failed to locate a name ('User')` the first time any model with a
+# string-based relationship (e.g. `Membership.user`) is instantiated,
+# since SQLAlchemy only resolves those lazily, on first use, against
+# whatever has been imported *so far*. Matches `fusionflow.main`'s own
+# `from fusionflow.db import models as _models` import-for-side-effect.
+from fusionflow.db import models as _models  # noqa: E402, F401
+
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
 requires_postgres = pytest.mark.skipif(
