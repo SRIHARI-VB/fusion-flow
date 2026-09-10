@@ -13,11 +13,13 @@ import type { JsonSchema, JsonSchemaProperty } from "./types";
  * This is a pragmatic subset of JSON Schema, not a general compiler: it
  * covers what pydantic actually emits for the node config models in this
  * codebase (string/number/integer/boolean, `enum`, nullable-via-`anyOf`,
- * `required`). A field type it doesn't recognize falls back to a plain
- * text input.
+ * `required`, and - added for Phase 5's WhatsApp buttons/list-rows/
+ * contacts fields - `array` of a primitive or of a nested `BaseModel`,
+ * resolved through pydantic's `$ref`/`$defs` indirection). A field shape
+ * it doesn't recognize falls back to a plain text input.
  */
 
-export type FieldKind = "text" | "number" | "boolean" | "select";
+export type FieldKind = "text" | "number" | "boolean" | "select" | "array_text" | "array_object";
 
 export interface ResolvedField {
   key: string;
@@ -27,6 +29,11 @@ export interface ResolvedField {
   required: boolean;
   options?: string[];
   default?: unknown;
+  /** Only set when `kind === "array_object"` - the sub-fields of one
+   * array item, resolved the same recursive way as top-level fields, so
+   * a sub-field that is itself an array-of-objects (e.g. an interactive
+   * list's `sections[].rows`) renders correctly too. */
+  itemFields?: ResolvedField[];
 }
 
 function baseType(prop: JsonSchemaProperty): string | undefined {
@@ -35,51 +42,107 @@ function baseType(prop: JsonSchemaProperty): string | undefined {
   return nonNull?.type;
 }
 
-function fieldKind(prop: JsonSchemaProperty): FieldKind {
+/** Resolves a pydantic `"#/$defs/SomeModel"` ref against the top-level
+ * schema's `$defs` map. Returns undefined for anything else (external
+ * refs, malformed refs) - callers treat that as "couldn't resolve,
+ * fall back to a simpler field kind" rather than throwing. */
+function resolveRef(schema: JsonSchema, ref: string): JsonSchemaProperty | undefined {
+  const match = /^#\/\$defs\/(.+)$/.exec(ref);
+  if (!match) return undefined;
+  return schema.$defs?.[match[1]];
+}
+
+function resolveItemsSchema(schema: JsonSchema, items: JsonSchemaProperty | undefined): JsonSchemaProperty | undefined {
+  if (!items) return undefined;
+  if (items.$ref) return resolveRef(schema, items.$ref);
+  return items;
+}
+
+function fieldKind(schema: JsonSchema, prop: JsonSchemaProperty): FieldKind {
   if (prop.enum && prop.enum.length > 0) return "select";
   const type = baseType(prop);
   if (type === "boolean") return "boolean";
   if (type === "integer" || type === "number") return "number";
+  if (type === "array") {
+    const itemSchema = resolveItemsSchema(schema, prop.items);
+    return itemSchema?.properties ? "array_object" : "array_text";
+  }
   return "text";
+}
+
+function resolveField(schema: JsonSchema, key: string, prop: JsonSchemaProperty, requiredSet: Set<string>): ResolvedField {
+  const kind = fieldKind(schema, prop);
+  const field: ResolvedField = {
+    key,
+    kind,
+    label: prop.title ?? key,
+    description: prop.description,
+    required: requiredSet.has(key),
+    options: prop.enum,
+    default: prop.default,
+  };
+  if (kind === "array_object") {
+    const itemSchema = resolveItemsSchema(schema, prop.items);
+    if (itemSchema?.properties) {
+      const subRequired = new Set(itemSchema.required ?? []);
+      field.itemFields = Object.entries(itemSchema.properties).map(([subKey, subProp]) =>
+        resolveField(schema, subKey, subProp, subRequired),
+      );
+    }
+  }
+  return field;
 }
 
 export function resolveFields(schema: JsonSchema): ResolvedField[] {
   const required = new Set(schema.required ?? []);
-  return Object.entries(schema.properties ?? {}).map(([key, prop]) => ({
-    key,
-    kind: fieldKind(prop),
-    label: prop.title ?? key,
-    description: prop.description,
-    required: required.has(key),
-    options: prop.enum,
-    default: prop.default,
-  }));
+  return Object.entries(schema.properties ?? {}).map(([key, prop]) => resolveField(schema, key, prop, required));
+}
+
+function zodForField(field: ResolvedField): z.ZodTypeAny {
+  switch (field.kind) {
+    case "boolean":
+      return z.boolean();
+    case "number":
+      return field.required ? z.coerce.number() : z.coerce.number().optional();
+    case "array_text": {
+      let arr: z.ZodTypeAny = z.array(z.string());
+      if (field.required) arr = (arr as z.ZodArray<z.ZodString>).min(1, `${field.label} requires at least one item`);
+      return arr;
+    }
+    case "array_object": {
+      const subShape: Record<string, z.ZodTypeAny> = {};
+      for (const sub of field.itemFields ?? []) {
+        subShape[sub.key] = zodForField(sub);
+      }
+      let arr: z.ZodTypeAny = z.array(z.object(subShape).passthrough());
+      if (field.required) arr = (arr as z.ZodArray<z.ZodTypeAny>).min(1, `${field.label} requires at least one item`);
+      return arr;
+    }
+    case "select":
+    case "text":
+    default: {
+      let zodField: z.ZodTypeAny = z.string();
+      if (field.required) zodField = (zodField as z.ZodString).min(1, `${field.label} is required`);
+      return zodField;
+    }
+  }
 }
 
 /** Builds a `z.object(...)` shape from the resolved fields — required
- * fields must be non-empty; everything else is optional/nullable. */
+ * fields must be non-empty; everything else is optional/nullable
+ * (arrays are optional-only, never nullable - an empty array, not
+ * `null`, is the "nothing entered yet" value `useFieldArray` expects). */
 export function buildZodSchema(schema: JsonSchema): z.ZodTypeAny {
   const fields = resolveFields(schema);
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const field of fields) {
-    let zodField: z.ZodTypeAny;
-    switch (field.kind) {
-      case "boolean":
-        zodField = z.boolean();
-        break;
-      case "number":
-        zodField = field.required ? z.coerce.number() : z.coerce.number().optional();
-        break;
-      case "select":
-      case "text":
-      default:
-        zodField = z.string();
-        if (field.required) zodField = (zodField as z.ZodString).min(1, `${field.label} is required`);
-        break;
-    }
-    if (!field.required && field.kind !== "number") {
+    let zodField = zodForField(field);
+    const isArray = field.kind === "array_text" || field.kind === "array_object";
+    if (!field.required && field.kind !== "number" && !isArray) {
       zodField = zodField.optional().nullable();
+    } else if (!field.required && isArray) {
+      zodField = zodField.optional();
     }
     shape[field.key] = zodField;
   }
@@ -87,8 +150,19 @@ export function buildZodSchema(schema: JsonSchema): z.ZodTypeAny {
   return z.object(shape).passthrough();
 }
 
+function defaultForField(field: ResolvedField, existing: unknown): unknown {
+  if (existing !== undefined) return existing;
+  if (field.default !== undefined) return field.default;
+  if (field.kind === "boolean") return false;
+  if (field.kind === "array_text" || field.kind === "array_object") return [];
+  return "";
+}
+
 /** Default form values: existing config wins, falling back to the
- * schema's own defaults, falling back to a kind-appropriate empty value. */
+ * schema's own defaults, falling back to a kind-appropriate empty value.
+ * For `array_object`, each existing row's own sub-fields are defaulted
+ * the same recursive way, so a partially-filled saved row doesn't lose
+ * its own defaults. */
 export function buildDefaultValues(
   schema: JsonSchema,
   config: Record<string, unknown>,
@@ -96,12 +170,16 @@ export function buildDefaultValues(
   const fields = resolveFields(schema);
   const values: Record<string, unknown> = {};
   for (const field of fields) {
-    if (config[field.key] !== undefined) {
-      values[field.key] = config[field.key];
-    } else if (field.default !== undefined) {
-      values[field.key] = field.default;
+    if (field.kind === "array_object" && Array.isArray(config[field.key])) {
+      values[field.key] = (config[field.key] as Array<Record<string, unknown>>).map((row) => {
+        const rowValues: Record<string, unknown> = {};
+        for (const sub of field.itemFields ?? []) {
+          rowValues[sub.key] = defaultForField(sub, row[sub.key]);
+        }
+        return rowValues;
+      });
     } else {
-      values[field.key] = field.kind === "boolean" ? false : "";
+      values[field.key] = defaultForField(field, config[field.key]);
     }
   }
   return values;

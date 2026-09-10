@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { Button, Input } from "@fusion-flow/ui";
 import type { NodeType } from "../types";
 import { buildDefaultValues, buildZodSchema, resolveFields } from "../jsonSchemaForm";
+import { ArrayObjectField, ArrayTextField } from "./DynamicArrayFields";
 
 /**
  * Per-node config drawer — a dynamic form built from the selected node's
@@ -39,6 +40,7 @@ export function NodeConfigDrawer({
 
   const {
     register,
+    control,
     handleSubmit,
     reset,
     formState: { errors, isDirty },
@@ -130,8 +132,16 @@ export function NodeConfigDrawer({
 
             {field.kind === "text" && <Input id={field.key} {...register(field.key)} />}
 
+            {field.kind === "array_text" && (
+              <ArrayTextField control={control} name={field.key} field={field} errors={errors} />
+            )}
+
+            {field.kind === "array_object" && (
+              <ArrayObjectField control={control} register={register} name={field.key} field={field} errors={errors} />
+            )}
+
             {field.description && <p className="text-[11px] text-muted-foreground">{field.description}</p>}
-            {errors[field.key] && (
+            {!field.kind.startsWith("array") && errors[field.key] && (
               <p className="text-xs text-destructive">{String(errors[field.key]?.message)}</p>
             )}
           </div>

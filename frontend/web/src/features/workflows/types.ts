@@ -24,15 +24,25 @@ export interface ValidationIssue {
   node_id: string | null;
 }
 
-/** JSON Schema (subset), as produced by `pydantic.BaseModel.model_json_schema()`. */
+/** JSON Schema (subset), as produced by `pydantic.BaseModel.model_json_schema()`.
+ * `$defs` holds nested `BaseModel` sub-schemas pydantic factors out and
+ * references via `$ref` (e.g. a `list[SomeSubModel]` field's `items`) -
+ * see `jsonSchemaForm.ts`'s `resolveRef`/`resolveItemsSchema` for how
+ * those get resolved back into an inline shape for form rendering. */
 export interface JsonSchema {
   type?: string;
   title?: string;
   description?: string;
   properties?: Record<string, JsonSchemaProperty>;
   required?: string[];
+  $defs?: Record<string, JsonSchemaProperty>;
 }
 
+/** A property can also stand in for a full nested schema once a `$ref`
+ * has been resolved (pydantic's nested-`BaseModel` sub-schemas have
+ * exactly the same shape as a top-level `JsonSchema`) - hence this also
+ * carries `properties`/`required`/`$ref`/`items`, not just leaf-field
+ * attributes. */
 export interface JsonSchemaProperty {
   type?: string;
   title?: string;
@@ -41,7 +51,13 @@ export interface JsonSchemaProperty {
   enum?: string[];
   minLength?: number;
   maxLength?: number;
+  minItems?: number;
+  maxItems?: number;
   anyOf?: Array<{ type?: string }>;
+  items?: JsonSchemaProperty;
+  $ref?: string;
+  properties?: Record<string, JsonSchemaProperty>;
+  required?: string[];
 }
 
 export interface NodeType {
