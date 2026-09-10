@@ -27,6 +27,7 @@ export interface Business {
   slug: string;
   vertical: string | null;
   status: BusinessStatus;
+  messaging_paused: boolean;
   onboarding_completed_at: string | null;
   created_at?: string;
   role?: MembershipRole;
