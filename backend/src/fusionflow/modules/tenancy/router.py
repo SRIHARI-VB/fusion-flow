@@ -62,9 +62,14 @@ async def list_my_businesses(
 @router.get("/mine/feature-flags", response_model=dict[str, bool])
 async def my_feature_flags(context: TenantContextDep, session: SessionDep) -> dict[str, bool]:
     """`{flag_key: enabled}` for every known flag, resolved for the active
-    tenant - lets the web app decide what to show (e.g. the Support Agent
-    nav item) without duplicating the resolution logic client-side. See
-    `modules.admin.service.KNOWN_FEATURE_FLAGS`/`resolve_known_flags_for_tenant`.
+    tenant - lets a frontend decide what to show without duplicating the
+    resolution logic client-side. Not currently called by any frontend
+    (the Support Agent page/nav is gated by module entitlement instead,
+    not a feature flag - see `modules.admin.service.KNOWN_FEATURE_FLAGS`'s
+    docstring for why); kept as working infrastructure for the next
+    behavior-level toggle, see
+    `modules.admin.service.resolve_known_flags_for_tenant`'s docstring for
+    a worked example of when this is the right tool.
     """
     return await admin_service.resolve_known_flags_for_tenant(session, context.tenant_id)
 

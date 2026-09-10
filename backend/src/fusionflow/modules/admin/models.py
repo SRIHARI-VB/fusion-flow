@@ -61,7 +61,12 @@ class AuditLog(Base):
 
 
 class FeatureFlag(Base, TimestampMixin):
-    """Catalog of platform feature flags (e.g. `support_agent_enabled`)."""
+    """Catalog of platform feature flags - fine-grained behavior toggles
+    *inside* an already-accessible module (e.g. `advanced_workflows`
+    gating one experimental node type in the workflow palette), distinct
+    from whole-module access which lives in `modules.connectors.models.ConnectorType`
+    instead - see `modules.admin.service.KNOWN_FEATURE_FLAGS`'s docstring
+    for where the line is drawn."""
 
     __tablename__ = "feature_flags"
 

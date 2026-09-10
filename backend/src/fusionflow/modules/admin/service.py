@@ -528,19 +528,23 @@ async def list_audit_log(
 # already know (or go find in the codebase) the precise key a developer
 # picked, typed freely into a text box with no validation against typos.
 # `gates_real_behavior` is honest about which of these actually flip
-# something today (`support_agent_enabled` gates the /support-agent nav
-# item + route - see modules.tenancy.router::my_feature_flags and
-# frontend/web/src/App.tsx) versus ones reserved for a Phase 2+ feature
-# that doesn't exist yet (toggling them is a no-op until that code lands,
-# same "resolves False for an unknown flag" safety the resolver already
-# has - these three just also happen to be *known* unknowns).
+# something today.
+#
+# `support_agent_enabled` used to be the one real entry here (gating the
+# /support-agent nav item + route) but was superseded when
+# `modules.connectors`'s module-entitlement system grew a `support_agent`
+# FEATURE-category catalog key with its own template-bundling/request/
+# revoke support (see `modules.connectors.deps.require_module_access`,
+# now what actually gates that route in `frontend/web/src/App.tsx`) -
+# removed from here rather than left as dead weight an admin could toggle
+# with zero effect. This is also the deciding line for what belongs in
+# this catalog going forward vs. the module system: a *whole
+# page/route/module* belongs in `ConnectorType`; a *behavior toggle
+# inside* an already-accessible module (a beta UI variant, a gradual
+# rollout, a kill-switch narrower than "hide the whole page") belongs
+# here. See `resolve_known_flags_for_tenant`'s docstring for a worked
+# example of the latter.
 KNOWN_FEATURE_FLAGS: list[dict[str, str | bool]] = [
-    {
-        "key": "support_agent_enabled",
-        "label": "Support Agent (BYOM AI)",
-        "description": "Shows the Support Agent nav item and unlocks /support-agent for this tenant.",
-        "gates_real_behavior": True,
-    },
     {
         "key": "advanced_workflows",
         "label": "Advanced workflow features",
@@ -760,12 +764,28 @@ async def resolve_known_flags_for_tenant(
     """`{flag_key: enabled}` for every entry in `KNOWN_FEATURE_FLAGS`, for one tenant.
 
     Backs the tenant-facing `GET /businesses/mine/feature-flags` (see
-    `modules.tenancy.router`) - the web app calls this once to decide
-    what to show (e.g. the Support Agent nav item), rather than each
-    frontend feature needing its own bespoke gating logic. A flag that
-    doesn't exist yet in the `feature_flags` table (nobody has created it
-    in the admin panel yet) resolves to `False` via the same
-    unknown-key-is-safe behavior `is_feature_enabled` already has.
+    `modules.tenancy.router`) - not yet called by any frontend (the one
+    flag that used to back a real UI decision, `support_agent_enabled`,
+    was superseded by module entitlement - see `KNOWN_FEATURE_FLAGS`'s
+    docstring), but the endpoint/resolver stay in place as working
+    infrastructure for the next flag that DOES need this shape.
+
+    Worked example of what belongs here (vs. the module system): suppose
+    the workflow engine ships a new "AI condition" node type behind
+    `advanced_workflows`. Every tenant can already open `/workflows` (a
+    module they're entitled to) - the flag doesn't gate the page, it
+    gates one row in the node palette returned by `GET
+    /workflows/node-types`. That handler would call
+    `is_feature_enabled(session, "advanced_workflows", tenant_id)` and
+    filter the AI condition node out of the response for tenants where
+    it's `False` - letting you roll it out to a handful of tenants first,
+    same as any tenant-override/plan-based gradual rollout, without
+    needing a whole new catalog entry, template bundle, or request/
+    approve flow the way a new module would.
+
+    A flag that doesn't exist yet in the `feature_flags` table (nobody
+    has created it in the admin panel yet) resolves to `False` via the
+    same unknown-key-is-safe behavior `is_feature_enabled` already has.
     """
     return {
         str(entry["key"]): await is_feature_enabled(session, str(entry["key"]), tenant_id)

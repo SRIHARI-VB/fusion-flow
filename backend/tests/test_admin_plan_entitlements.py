@@ -28,7 +28,7 @@ _PLAN_ID = uuid.uuid4()
 
 
 def _flag(*, is_global_default: bool) -> FeatureFlag:
-    return FeatureFlag(id=_FLAG_ID, key="support_agent_enabled", is_global_default=is_global_default)
+    return FeatureFlag(id=_FLAG_ID, key="advanced_workflows", is_global_default=is_global_default)
 
 
 class _Result:

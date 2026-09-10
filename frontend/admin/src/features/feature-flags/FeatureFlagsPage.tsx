@@ -322,7 +322,7 @@ export function FeatureFlagsPage() {
             {keySelection === CUSTOM_KEY_OPTION && (
               <Input
                 id="flag-key"
-                placeholder="e.g. support_agent_enabled"
+                placeholder="e.g. advanced_workflows"
                 value={createForm.key}
                 onChange={(e) => setCreateForm((f) => ({ ...f, key: e.target.value }))}
                 required
