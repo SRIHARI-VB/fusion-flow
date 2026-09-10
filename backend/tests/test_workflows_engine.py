@@ -494,6 +494,39 @@ async def test_try_catch_success_handle_when_wired() -> None:
     assert [s.node_id for s in session.added] == ["trigger", "guard", "body", "after"]
 
 
+async def test_try_catch_success_never_follows_the_error_edge_when_only_error_is_wired() -> None:
+    """Regression test for a real bug found during design review: when
+    only "error" is wired (not "success") and the try body succeeds,
+    TryCatch must NOT return a plain `Success` - `_run_frontier` follows
+    every outgoing edge of a Success result regardless of handle label,
+    which would incorrectly also walk the "error"-labeled edge on a
+    success. The fix makes the success path an explicit Branch (selecting
+    nothing, since "success" isn't wired) whenever any handle is wired at
+    all - see flow_try_catch.py's comment."""
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("guard", "flow.try_catch"),
+                _node("body", "log.noop", parent_id="guard"),
+                _node("on_error", "log.noop"),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "guard"),
+                _edge("e2", "guard", "on_error", source_handle="error"),
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    assert [s.node_id for s in session.added] == ["trigger", "guard", "body"]
+    assert "on_error" not in [s.node_id for s in session.added]
+
+
 async def test_parallel_runs_each_branch_and_merges_outputs() -> None:
     graph = WorkflowGraph.from_json(
         {

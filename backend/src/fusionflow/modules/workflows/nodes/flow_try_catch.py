@@ -71,8 +71,19 @@ class TryCatchExecutor(NodeExecutor):
             )
 
         output = {cid: scoped_variables[cid] for cid in child_ids if cid in scoped_variables}
-        if "success" in wired_handles:
-            return Branch(selected_edge_handles=["success"], output=output)
+
+        # Correctness-critical: once EITHER handle is wired, the success
+        # path must also become an explicit Branch, never a plain Success.
+        # `_run_frontier` follows *every* outgoing edge for a Success
+        # result, regardless of any handle label on it - so if only
+        # "error" were wired and the body succeeded, a plain Success here
+        # would incorrectly also walk the "error"-labeled edge. Returning
+        # Branch(["error"]) only on failure and Branch(["success"] or [])
+        # on success keeps the two paths mutually exclusive, matching how
+        # every other branching node in this engine already behaves.
+        if "error" in wired_handles or "success" in wired_handles:
+            selected = ["success"] if "success" in wired_handles else []
+            return Branch(selected_edge_handles=selected, output=output)
         return Success(output=output)
 
 
