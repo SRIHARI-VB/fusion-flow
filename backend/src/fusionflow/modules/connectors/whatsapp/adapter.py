@@ -19,7 +19,7 @@ import hmac
 import json
 import logging
 import uuid
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from urllib.parse import urlencode
 
 import httpx
@@ -264,14 +264,266 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             )
             response.raise_for_status()
 
+    async def _post_message(
+        self, *, instance: ConnectorInstance, session: AsyncSession, message_payload: dict[str, Any]
+    ) -> None:
+        """Shared POST /{phone_number_id}/messages call, factored out of
+        `send_text_message` so the five newer send methods below don't each
+        repeat the credential/phone-number-id lookup and stub-mode check.
+        `message_payload` is everything after `messaging_product`/
+        `recipient_type`/`to` - i.e. just the `type`+type-specific keys."""
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        phone_number_id = (instance.provider_ref_ids or {}).get("phone_number_id")
+        if not phone_number_id:
+            raise RuntimeError(f"connector instance {instance.id} has no phone_number_id on record")
+
+        async with httpx.AsyncClient(base_url=settings.WHATSAPP_GRAPH_API_BASE_URL, timeout=15.0) as client:
+            response = await client.post(
+                f"/{phone_number_id}/messages",
+                headers={"Authorization": f"Bearer {secret['access_token']}"},
+                json={"messaging_product": "whatsapp", **message_payload},
+            )
+            response.raise_for_status()
+
+    async def send_media_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        media_type: Literal["image", "video", "audio", "document"],
+        media_url: str | None = None,
+        media_id: str | None = None,
+        caption: str | None = None,
+        filename: str | None = None,
+        session: AsyncSession,
+    ) -> None:
+        """Session (free-form) media message - only deliverable within the
+        24-hour customer service window, same as `send_text_message`; Meta
+        rejects it outside that window and the caller sees that as a clean
+        adapter-raised error, not a silent failure (see module docstring's
+        "let the provider be the source of truth" convention)."""
+        if not media_url and not media_id:
+            raise ValueError("send_media_message requires either media_url or media_id")
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping media send (instance=%s, to=%s, media_type=%s)",
+                instance.id, to, media_type,
+            )
+            return
+
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"messaging_product":"whatsapp","to":"{to}","type":"{media_type}",
+        #    "{media_type}": {"link": "{media_url}"} | {"id": "{media_id}"},
+        #    caption/filename as applicable}
+        media_object: dict[str, Any] = {"link": media_url} if media_url else {"id": media_id}
+        if caption and media_type in ("image", "video", "document"):
+            media_object["caption"] = caption
+        if filename and media_type == "document":
+            media_object["filename"] = filename
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={"to": to, "type": media_type, media_type: media_object},
+        )
+
+    async def send_location_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        latitude: float,
+        longitude: float,
+        name: str | None = None,
+        address: str | None = None,
+        session: AsyncSession,
+    ) -> None:
+        if not settings.whatsapp_configured:
+            logger.warning("[whatsapp] stub mode - skipping location send (instance=%s, to=%s)", instance.id, to)
+            return
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"type":"location","location":{"latitude":..,"longitude":..,"name":..,"address":..}}
+        location: dict[str, Any] = {"latitude": latitude, "longitude": longitude}
+        if name:
+            location["name"] = name
+        if address:
+            location["address"] = address
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={"to": to, "type": "location", "location": location},
+        )
+
+    async def send_contact_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        contacts: list[dict[str, str]],
+        session: AsyncSession,
+    ) -> None:
+        """`contacts`: `[{"name": str, "phone": str}, ...]` - a simplified
+        subset of Meta's much richer vCard-like contact object (which also
+        supports emails/orgs/addresses/birthday); extend here if a real use
+        case needs more than name+phone."""
+        if not settings.whatsapp_configured:
+            logger.warning("[whatsapp] stub mode - skipping contact send (instance=%s, to=%s)", instance.id, to)
+            return
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"type":"contacts","contacts":[{"name":{"formatted_name":..},"phones":[{"phone":..}]}]}
+        payload_contacts = [
+            {
+                "name": {"formatted_name": c["name"], "first_name": c["name"]},
+                "phones": [{"phone": c["phone"]}],
+            }
+            for c in contacts
+        ]
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={"to": to, "type": "contacts", "contacts": payload_contacts},
+        )
+
+    async def send_interactive_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        body_text: str,
+        interactive_type: Literal["button", "list"],
+        buttons: list[dict[str, str]] | None = None,
+        list_button_label: str | None = None,
+        sections: list[dict[str, Any]] | None = None,
+        session: AsyncSession,
+    ) -> None:
+        """Session message. `buttons`: up to 3 `{"id","title"}` quick-reply
+        buttons. `sections` (list mode): up to 10 rows total across all
+        sections, each `{"title","rows":[{"id","title","description"}]}` -
+        both are Meta's own hard limits, not this adapter's; a request
+        exceeding them is rejected by Meta and surfaces as a clean error."""
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping interactive send (instance=%s, to=%s, type=%s)",
+                instance.id, to, interactive_type,
+            )
+            return
+
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"type":"interactive","interactive":{"type":"button"|"list", "body":{"text":..},
+        #    "action":{"buttons":[...]} | {"button":.., "sections":[...]}}}
+        action: dict[str, Any]
+        if interactive_type == "button":
+            action = {"buttons": [{"type": "reply", "reply": {"id": b["id"], "title": b["title"]}} for b in (buttons or [])]}
+        else:
+            action = {"button": list_button_label or "Choose", "sections": sections or []}
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={
+                "to": to,
+                "type": "interactive",
+                "interactive": {"type": interactive_type, "body": {"text": body_text}, "action": action},
+            },
+        )
+
+    async def send_template_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        template_name: str,
+        language_code: str,
+        header_variable: str | None = None,
+        body_variables: list[str] | None = None,
+        session: AsyncSession,
+    ) -> None:
+        """Template (HSM) message - the only kind sendable outside the
+        24-hour customer service window, and the only kind Meta requires
+        pre-approval for (marketing/utility/authentication - see
+        `whatsapp/models.py::WhatsAppTemplate`). `template_name`/
+        `language_code` must match an approved template exactly; Meta
+        rejects an unknown/mismatched one, surfaced as a clean adapter
+        error rather than silently no-opping."""
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping template send (instance=%s, to=%s, template=%s/%s)",
+                instance.id, to, template_name, language_code,
+            )
+            return
+
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"type":"template","template":{"name":..,"language":{"code":..},
+        #    "components":[{"type":"header","parameters":[...]}, {"type":"body","parameters":[...]}]}}
+        components: list[dict[str, Any]] = []
+        if header_variable:
+            components.append({"type": "header", "parameters": [{"type": "text", "text": header_variable}]})
+        if body_variables:
+            components.append(
+                {"type": "body", "parameters": [{"type": "text", "text": v} for v in body_variables]}
+            )
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={
+                "to": to,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": language_code},
+                    **({"components": components} if components else {}),
+                },
+            },
+        )
+
+    async def sync_templates(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, Any]]:
+        """Pull this WABA's approved/pending/rejected message templates from
+        Meta - `whatsapp/service.py::sync_from_meta` upserts the result into
+        the local `WhatsAppTemplate` catalog. Stubbed the same way as every
+        other real call in this file when no app is configured, returning a
+        small canned example so the catalog/sync UI stays testable without
+        real Meta credentials."""
+        if not settings.whatsapp_configured:
+            logger.warning("[whatsapp] stub mode - returning canned example templates for sync")
+            return [
+                {
+                    "name": "order_confirmation",
+                    "language": "en_US",
+                    "category": "utility",
+                    "status": "approved",
+                    "components": [
+                        {"type": "BODY", "text": "Hi {{1}}, your order {{2}} has been confirmed!"},
+                    ],
+                },
+                {
+                    "name": "weekend_sale",
+                    "language": "en_US",
+                    "category": "marketing",
+                    "status": "approved",
+                    "components": [
+                        {"type": "BODY", "text": "{{1}}, enjoy 20% off this weekend only!"},
+                    ],
+                },
+            ]
+
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+        waba_id = (instance.provider_ref_ids or {}).get("waba_id")
+        # TODO(meta-graph-api): GET /{waba_id}/message_templates
+        async with httpx.AsyncClient(base_url=settings.WHATSAPP_GRAPH_API_BASE_URL, timeout=15.0) as client:
+            response = await client.get(
+                f"/{waba_id}/message_templates", params={"access_token": secret["access_token"]}
+            )
+            response.raise_for_status()
+            return response.json().get("data", [])
+
     async def perform_action(
         self, *, action: str, params: dict[str, Any], instance: ConnectorInstance, session: AsyncSession
     ) -> dict[str, Any]:
         """Dispatch for the generic `connector.action` workflow node type
-        (see `base.ConnectorAdapter.perform_action`'s docstring). Today:
-        only `send_text_message`, wrapping the method above - a future new
-        WhatsApp capability (e.g. a template message) is one more `elif`
-        branch here, not a new workflow node type."""
+        (see `base.ConnectorAdapter.perform_action`'s docstring) - kept as
+        the low-level escape hatch even though WhatsApp's primary send
+        capabilities now have their own dedicated, well-typed node
+        executors (`modules/workflows/nodes/whatsapp_send_*.py`) rather
+        than being reached only through this generic dispatch. A future
+        new capability is still one more `elif` branch here first."""
         if action == "send_text_message":
             to = params.get("to")
             body = params.get("body")
@@ -279,6 +531,57 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                 raise ValueError("send_text_message requires non-empty 'to' and 'body' params")
             await self.send_text_message(instance=instance, to=to, body=body, session=session)
             return {"to": to, "body": body}
+        if action == "send_media_message":
+            await self.send_media_message(
+                instance=instance,
+                to=params["to"],
+                media_type=params["media_type"],
+                media_url=params.get("media_url"),
+                media_id=params.get("media_id"),
+                caption=params.get("caption"),
+                filename=params.get("filename"),
+                session=session,
+            )
+            return {"to": params["to"], "media_type": params["media_type"]}
+        if action == "send_location_message":
+            await self.send_location_message(
+                instance=instance,
+                to=params["to"],
+                latitude=params["latitude"],
+                longitude=params["longitude"],
+                name=params.get("name"),
+                address=params.get("address"),
+                session=session,
+            )
+            return {"to": params["to"]}
+        if action == "send_contact_message":
+            await self.send_contact_message(
+                instance=instance, to=params["to"], contacts=params["contacts"], session=session
+            )
+            return {"to": params["to"]}
+        if action == "send_interactive_message":
+            await self.send_interactive_message(
+                instance=instance,
+                to=params["to"],
+                body_text=params["body_text"],
+                interactive_type=params["interactive_type"],
+                buttons=params.get("buttons"),
+                list_button_label=params.get("list_button_label"),
+                sections=params.get("sections"),
+                session=session,
+            )
+            return {"to": params["to"]}
+        if action == "send_template_message":
+            await self.send_template_message(
+                instance=instance,
+                to=params["to"],
+                template_name=params["template_name"],
+                language_code=params["language_code"],
+                header_variable=params.get("header_variable"),
+                body_variables=params.get("body_variables"),
+                session=session,
+            )
+            return {"to": params["to"], "template_name": params["template_name"]}
         raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
     def verify_webhook_signature(self, *, raw_payload: bytes, headers: Mapping[str, str]) -> bool:
@@ -341,13 +644,19 @@ class WhatsAppAdapter(base.ConnectorAdapter):
     def _extract_inbound_message(body: dict[str, Any]) -> dict[str, Any] | None:
         """Pull the first inbound user message out of a WhatsApp Cloud API
         webhook body, or return None if this webhook is a status callback
-        (`.statuses`) or otherwise doesn't carry a `.messages` entry.
+        (`.statuses`, see `_extract_status_update`) or otherwise doesn't
+        carry a `.messages` entry.
 
-        Real shape (Meta docs):
-          entry[0].changes[0].value.messages[0] = {
-            "from": "<wa_id>", "id": "<message_id>", "timestamp": "...",
-            "type": "text", "text": {"body": "..."}
-          }
+        Enriched beyond plain text to also surface, per `message.type`
+        (Meta docs shapes):
+          - `interactive`: `message.interactive.button_reply` or
+            `.list_reply`, each `{"id","title"}` - a workflow trigger
+            distinguishes this via `message_type == "interactive"` (see
+            `handle_webhook`'s routing to `whatsapp.interactive_reply_received`).
+          - `image`/`video`/`audio`/`document`: `message.{type}` =
+            `{"id","mime_type","caption"?,"filename"?}`.
+          - `location`: `message.location` = `{"latitude","longitude","name"?,"address"?}`.
+          - `contacts`: `message.contacts` (Meta's own list-of-vCard-like shape, passed through as-is).
         """
         entries = body.get("entry") or []
         for entry in entries:
@@ -357,13 +666,68 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                 if not messages:
                     continue
                 message = messages[0]
-                text_body = (message.get("text") or {}).get("body")
-                return {
+                message_type = message.get("type")
+                extracted: dict[str, Any] = {
                     "from": message.get("from"),
                     "message_id": message.get("id"),
-                    "message_type": message.get("type"),
-                    "text": text_body,
+                    "message_type": message_type,
+                    "text": (message.get("text") or {}).get("body"),
                     "timestamp": message.get("timestamp"),
+                }
+                if message_type == "interactive":
+                    interactive = message.get("interactive") or {}
+                    reply = interactive.get("button_reply") or interactive.get("list_reply")
+                    if reply:
+                        extracted["interactive"] = {
+                            "type": "button_reply" if "button_reply" in interactive else "list_reply",
+                            "id": reply.get("id"),
+                            "title": reply.get("title"),
+                        }
+                elif message_type in ("image", "video", "audio", "document"):
+                    media = message.get(message_type) or {}
+                    extracted["media"] = {
+                        "id": media.get("id"),
+                        "mime_type": media.get("mime_type"),
+                        "caption": media.get("caption"),
+                        "filename": media.get("filename"),
+                    }
+                elif message_type == "location":
+                    extracted["location"] = message.get("location")
+                elif message_type == "contacts":
+                    extracted["contacts"] = message.get("contacts")
+                return extracted
+        return None
+
+    @staticmethod
+    def _extract_status_update(body: dict[str, Any]) -> dict[str, Any] | None:
+        """Pull the first delivery-status callback out of a webhook body -
+        Meta's `.statuses` array, sent for every outbound message
+        (including template sends) as it moves through
+        sent -> delivered -> read (or -> failed), independent of the
+        `.messages` array `_extract_inbound_message` reads. This is what
+        makes marketing/utility delivery tracking possible.
+
+        Real shape (Meta docs):
+          entry[0].changes[0].value.statuses[0] = {
+            "id": "<message_id>", "status": "sent"|"delivered"|"read"|"failed",
+            "timestamp": "...", "recipient_id": "<wa_id>", "errors": [...]?
+          }
+        """
+        entries = body.get("entry") or []
+        for entry in entries:
+            for change in entry.get("changes") or []:
+                value = change.get("value") or {}
+                statuses = value.get("statuses") or []
+                if not statuses:
+                    continue
+                status = statuses[0]
+                errors = status.get("errors") or []
+                return {
+                    "message_id": status.get("id"),
+                    "status": status.get("status"),
+                    "recipient_id": status.get("recipient_id"),
+                    "timestamp": status.get("timestamp"),
+                    "error": errors[0].get("message") if errors else None,
                 }
         return None
 
@@ -390,14 +754,25 @@ class WhatsAppAdapter(base.ConnectorAdapter):
         session.add(event)
         await session.flush()
 
+        # Deferred import: `modules.workflows` (package __init__) imports
+        # its built-in nodes, one of which (`send_whatsapp_message`)
+        # imports *this* module for the `adapter` singleton - importing
+        # `event_bus` at module level here would be a circular import.
+        from fusionflow.modules.workflows.engine import event_bus
+
         inbound_message = self._extract_inbound_message(body)
         if inbound_message is not None:
-            # Deferred import: `modules.workflows` (package __init__) imports
-            # its built-in nodes, one of which (`send_whatsapp_message`)
-            # imports *this* module for the `adapter` singleton - importing
-            # `event_bus` at module level here would be a circular import.
-            from fusionflow.modules.workflows.engine import event_bus
-
+            # An interactive reply (button/list tap) gets its own dedicated
+            # trigger type rather than the generic `whatsapp.message_received`
+            # - exclusive routing, not additive, since this payload shape
+            # (`message_type == "interactive"`) was never populated before
+            # this phase, so no existing workflow depends on seeing it via
+            # the generic trigger.
+            event_type = (
+                "whatsapp.interactive_reply_received"
+                if inbound_message.get("message_type") == "interactive"
+                else "whatsapp.message_received"
+            )
             # Same transaction/session as the ConnectorEvent write above -
             # the outbox row and the audit row commit together or not at
             # all (transactional outbox, see event_bus.py). The caller
@@ -409,10 +784,27 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             await event_bus.publish_trigger_event(
                 session,
                 tenant_id=instance.tenant_id,
-                event_type="whatsapp.message_received",
+                event_type=event_type,
                 payload=inbound_message,
                 connector_instance_id=instance.id,
                 dedupe_key=inbound_message.get("message_id"),
+            )
+
+        status_update = self._extract_status_update(body)
+        if status_update is not None:
+            # dedupe_key includes the status itself: Meta can (and does)
+            # send a separate callback per status transition
+            # (sent/delivered/read/failed) for the SAME message_id, and
+            # each is a distinct, real event this trigger should fire for
+            # - only an exact redelivery of the identical status should be
+            # deduped, not the natural sent->delivered->read progression.
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="whatsapp.message_status_updated",
+                payload=status_update,
+                connector_instance_id=instance.id,
+                dedupe_key=f"{status_update.get('message_id')}:{status_update.get('status')}",
             )
 
         return [event]

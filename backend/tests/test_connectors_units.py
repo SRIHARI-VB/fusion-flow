@@ -154,6 +154,277 @@ async def test_whatsapp_handle_webhook_parses_json_payload() -> None:
 
 
 # --------------------------------------------------------------------------
+# WhatsApp: rich message send methods (stub mode - no real Meta credentials)
+# --------------------------------------------------------------------------
+
+
+class _FakeWhatsAppInstance:
+    id = "11111111-1111-1111-1111-111111111111"
+    tenant_id = "22222222-2222-2222-2222-222222222222"
+    provider_ref_ids = {"waba_id": "waba-1", "phone_number_id": "phone-1"}
+
+
+async def test_whatsapp_send_media_message_stub_mode_is_a_noop() -> None:
+    adapter = WhatsAppAdapter()
+    # Ambient module `settings` in this test environment has no
+    # WHATSAPP_APP_ID/SECRET configured - whatsapp_configured is False,
+    # so this must return cleanly without a session/credential lookup.
+    await adapter.send_media_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", media_type="image",
+        media_url="https://example.com/pic.jpg", session=None,
+    )
+
+
+async def test_whatsapp_send_media_message_requires_url_or_id() -> None:
+    adapter = WhatsAppAdapter()
+    with pytest.raises(ValueError, match="media_url or media_id"):
+        await adapter.send_media_message(
+            instance=_FakeWhatsAppInstance(), to="15551234567", media_type="image", session=None
+        )
+
+
+async def test_whatsapp_send_location_message_stub_mode_is_a_noop() -> None:
+    adapter = WhatsAppAdapter()
+    await adapter.send_location_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", latitude=1.0, longitude=2.0, session=None
+    )
+
+
+async def test_whatsapp_send_contact_message_stub_mode_is_a_noop() -> None:
+    adapter = WhatsAppAdapter()
+    await adapter.send_contact_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", contacts=[{"name": "Asha", "phone": "15551230000"}],
+        session=None,
+    )
+
+
+async def test_whatsapp_send_interactive_message_stub_mode_is_a_noop() -> None:
+    adapter = WhatsAppAdapter()
+    await adapter.send_interactive_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", body_text="Pick one",
+        interactive_type="button", buttons=[{"id": "yes", "title": "Yes"}], session=None,
+    )
+
+
+async def test_whatsapp_send_template_message_stub_mode_is_a_noop() -> None:
+    adapter = WhatsAppAdapter()
+    await adapter.send_template_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", template_name="order_confirmation",
+        language_code="en_US", body_variables=["Asha", "#1234"], session=None,
+    )
+
+
+async def test_whatsapp_sync_templates_stub_mode_returns_canned_examples() -> None:
+    adapter = WhatsAppAdapter()
+    templates = await adapter.sync_templates(instance=_FakeWhatsAppInstance(), session=None)
+    assert len(templates) >= 1
+    assert {"name", "language", "category", "status"} <= set(templates[0])
+
+
+@pytest.mark.parametrize(
+    "action,params",
+    [
+        ("send_media_message", {"to": "1", "media_type": "image", "media_url": "https://x/y.jpg"}),
+        ("send_location_message", {"to": "1", "latitude": 1.0, "longitude": 2.0}),
+        ("send_contact_message", {"to": "1", "contacts": [{"name": "A", "phone": "1"}]}),
+        ("send_interactive_message", {"to": "1", "body_text": "hi", "interactive_type": "button", "buttons": []}),
+        ("send_template_message", {"to": "1", "template_name": "x", "language_code": "en_US"}),
+    ],
+)
+async def test_whatsapp_perform_action_dispatches_every_new_action(action, params) -> None:
+    adapter = WhatsAppAdapter()
+    result = await adapter.perform_action(
+        action=action, params=params, instance=_FakeWhatsAppInstance(), session=None
+    )
+    assert result["to"] == "1"
+
+
+async def test_whatsapp_perform_action_unknown_action_raises_not_implemented() -> None:
+    adapter = WhatsAppAdapter()
+    with pytest.raises(NotImplementedError):
+        await adapter.perform_action(
+            action="bogus_action", params={}, instance=_FakeWhatsAppInstance(), session=None
+        )
+
+
+# --------------------------------------------------------------------------
+# WhatsApp: webhook payload parsing (interactive / media / location /
+# contacts / status updates)
+# --------------------------------------------------------------------------
+
+
+def _webhook_body(*, messages: list[dict] | None = None, statuses: list[dict] | None = None, waba_id: str = "waba-1") -> dict:
+    value: dict = {}
+    if messages is not None:
+        value["messages"] = messages
+    if statuses is not None:
+        value["statuses"] = statuses
+    return {"entry": [{"id": waba_id, "changes": [{"value": value}]}]}
+
+
+def test_extract_inbound_message_parses_interactive_button_reply() -> None:
+    body = _webhook_body(
+        messages=[
+            {
+                "from": "15551234567", "id": "wamid.1", "type": "interactive", "timestamp": "1",
+                "interactive": {"type": "button_reply", "button_reply": {"id": "yes", "title": "Yes"}},
+            }
+        ]
+    )
+    extracted = WhatsAppAdapter._extract_inbound_message(body)
+    assert extracted["message_type"] == "interactive"
+    assert extracted["interactive"] == {"type": "button_reply", "id": "yes", "title": "Yes"}
+
+
+def test_extract_inbound_message_parses_interactive_list_reply() -> None:
+    body = _webhook_body(
+        messages=[
+            {
+                "from": "1", "id": "wamid.2", "type": "interactive", "timestamp": "1",
+                "interactive": {"type": "list_reply", "list_reply": {"id": "row-1", "title": "Support"}},
+            }
+        ]
+    )
+    extracted = WhatsAppAdapter._extract_inbound_message(body)
+    assert extracted["interactive"] == {"type": "list_reply", "id": "row-1", "title": "Support"}
+
+
+def test_extract_inbound_message_parses_media() -> None:
+    body = _webhook_body(
+        messages=[
+            {
+                "from": "1", "id": "wamid.3", "type": "image", "timestamp": "1",
+                "image": {"id": "media-1", "mime_type": "image/jpeg", "caption": "look"},
+            }
+        ]
+    )
+    extracted = WhatsAppAdapter._extract_inbound_message(body)
+    assert extracted["media"] == {"id": "media-1", "mime_type": "image/jpeg", "caption": "look", "filename": None}
+
+
+def test_extract_inbound_message_parses_location() -> None:
+    body = _webhook_body(
+        messages=[
+            {"from": "1", "id": "wamid.4", "type": "location", "timestamp": "1",
+             "location": {"latitude": 1.0, "longitude": 2.0}}
+        ]
+    )
+    extracted = WhatsAppAdapter._extract_inbound_message(body)
+    assert extracted["location"] == {"latitude": 1.0, "longitude": 2.0}
+
+
+def test_extract_status_update_parses_delivered_status() -> None:
+    body = _webhook_body(statuses=[{"id": "wamid.1", "status": "delivered", "recipient_id": "1", "timestamp": "1"}])
+    extracted = WhatsAppAdapter._extract_status_update(body)
+    assert extracted == {"message_id": "wamid.1", "status": "delivered", "recipient_id": "1", "timestamp": "1", "error": None}
+
+
+def test_extract_status_update_parses_failed_status_with_error() -> None:
+    body = _webhook_body(
+        statuses=[{"id": "wamid.1", "status": "failed", "recipient_id": "1", "timestamp": "1",
+                   "errors": [{"message": "template not found"}]}]
+    )
+    extracted = WhatsAppAdapter._extract_status_update(body)
+    assert extracted["error"] == "template not found"
+
+
+def test_extract_status_update_returns_none_when_no_statuses() -> None:
+    body = _webhook_body(messages=[{"from": "1", "id": "1", "type": "text", "text": {"body": "hi"}}])
+    assert WhatsAppAdapter._extract_status_update(body) is None
+
+
+async def test_handle_webhook_routes_interactive_reply_to_dedicated_event_type(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+
+    class _FakeSession:
+        def add(self, obj: object) -> None:
+            pass
+
+        async def flush(self) -> None:
+            return None
+
+    adapter = WhatsAppAdapter()
+    body = _webhook_body(
+        messages=[
+            {"from": "1", "id": "wamid.1", "type": "interactive", "timestamp": "1",
+             "interactive": {"type": "button_reply", "button_reply": {"id": "yes", "title": "Yes"}}}
+        ]
+    )
+    await adapter.handle_webhook(
+        instance=_FakeWhatsAppInstance(), raw_payload=json.dumps(body).encode(), headers={}, session=_FakeSession()
+    )
+
+    assert len(published) == 1
+    assert published[0]["event_type"] == "whatsapp.interactive_reply_received"
+    assert published[0]["dedupe_key"] == "wamid.1"
+
+
+async def test_handle_webhook_routes_plain_text_to_message_received(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+
+    class _FakeSession:
+        def add(self, obj: object) -> None:
+            pass
+
+        async def flush(self) -> None:
+            return None
+
+    adapter = WhatsAppAdapter()
+    body = _webhook_body(messages=[{"from": "1", "id": "wamid.2", "type": "text", "text": {"body": "hi"}}])
+    await adapter.handle_webhook(
+        instance=_FakeWhatsAppInstance(), raw_payload=json.dumps(body).encode(), headers={}, session=_FakeSession()
+    )
+
+    assert len(published) == 1
+    assert published[0]["event_type"] == "whatsapp.message_received"
+
+
+async def test_handle_webhook_publishes_status_update_event(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+
+    class _FakeSession:
+        def add(self, obj: object) -> None:
+            pass
+
+        async def flush(self) -> None:
+            return None
+
+    adapter = WhatsAppAdapter()
+    body = _webhook_body(statuses=[{"id": "wamid.3", "status": "read", "recipient_id": "1", "timestamp": "1"}])
+    await adapter.handle_webhook(
+        instance=_FakeWhatsAppInstance(), raw_payload=json.dumps(body).encode(), headers={}, session=_FakeSession()
+    )
+
+    assert len(published) == 1
+    assert published[0]["event_type"] == "whatsapp.message_status_updated"
+    assert published[0]["dedupe_key"] == "wamid.3:read"
+
+
+# --------------------------------------------------------------------------
 # Razorpay: webhook signature verification + network-unreachable stub
 # --------------------------------------------------------------------------
 
