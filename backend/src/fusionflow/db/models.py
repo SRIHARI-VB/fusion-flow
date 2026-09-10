@@ -10,9 +10,13 @@ full metadata, and `main.py` imports it at startup.
 from fusionflow.db.base import Base
 from fusionflow.modules.admin.models import (
     AuditLog,
+    BusinessTemplate,
+    BusinessTemplateConnectorType,
     FeatureFlag,
     FeatureFlagOverride,
     ImpersonationSession,
+    Plan,
+    PlanFeatureFlag,
 )
 from fusionflow.modules.auth.models import RefreshToken, User
 from fusionflow.modules.catalog.models import (
@@ -23,6 +27,8 @@ from fusionflow.modules.catalog.models import (
     ProductServiceType,
 )
 from fusionflow.modules.connectors.models import (
+    ConnectorAccessRequest,
+    ConnectorAccessRequestStatus,
     ConnectorCategory,
     ConnectorCredential,
     ConnectorEvent,
@@ -73,6 +79,10 @@ __all__ = [
     "Base",
     "Business",
     "BusinessStatus",
+    "BusinessTemplate",
+    "BusinessTemplateConnectorType",
+    "ConnectorAccessRequest",
+    "ConnectorAccessRequestStatus",
     "ConnectorCategory",
     "ConnectorCredential",
     "ConnectorEvent",
@@ -101,6 +111,8 @@ __all__ = [
     "OrderStatus",
     "Payment",
     "PaymentStatus",
+    "Plan",
+    "PlanFeatureFlag",
     "ProductService",
     "ProductServiceType",
     "RefreshToken",

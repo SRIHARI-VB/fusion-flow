@@ -81,6 +81,12 @@ class ConnectorEventType(str, enum.Enum):
     ERROR = "error"
 
 
+class ConnectorAccessRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
 class ConnectorType(Base, TimestampMixin):
     """Global connector catalog - one row per provider adapter.
 
@@ -220,3 +226,53 @@ class ConnectorOAuthState(Base, TenantScopedMixin):
     state_token: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
     redirect_context: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ConnectorAccessRequest(Base, TenantScopedMixin):
+    """A tenant's request for access to a connector type outside its
+    `business_template`'s bundle.
+
+    Genuinely per-tenant (unlike every other new table this task adds -
+    see `modules.admin.models`'s module docstring), so this is the one
+    table in the whole "business templates / plans / entitlements" feature
+    that gets `TenantScopedMixin` and RLS. `modules.connectors.service.connect()`
+    treats an `approved` row here as the second of the two ways a tenant is
+    entitled to connect a given `connector_type_id` (the first being
+    membership in its `business_template`'s bundle via
+    `modules.admin.models.BusinessTemplateConnectorType`).
+
+    Admin routes reviewing this table (`/api/admin/connector-access-requests/*`)
+    have no `app.current_tenant_id` by default - see this task's report on
+    how `modules.admin.service` resolves the owning tenant before mutating.
+    """
+
+    __tablename__ = "connector_access_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    status: Mapped[ConnectorAccessRequestStatus] = mapped_column(
+        Enum(
+            ConnectorAccessRequestStatus,
+            name="connector_access_request_status",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=False,
+        default=ConnectorAccessRequestStatus.PENDING,
+        server_default=ConnectorAccessRequestStatus.PENDING.value,
+        index=True,
+    )
+    requested_by: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    connector_type: Mapped["ConnectorType"] = relationship()

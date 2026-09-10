@@ -125,3 +125,100 @@ class ImpersonationSession(Base):
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     jwt_jti: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+
+# --- Plans / business templates / connector entitlements --------------------
+#
+# Per the plan's "Business templates, connector access requests, and plan
+# entitlements" item: all four tables below are *global catalog* tables,
+# admin-managed, matching this module's own `FeatureFlag` and
+# `modules.custom_fields.FieldTemplate` - none of them get a
+# `TenantScopedMixin`. Only `connectors.models.ConnectorAccessRequest` (a
+# genuinely per-tenant table) is tenant-scoped; it lives in
+# `modules.connectors.models`, not here, since it's the thing
+# `modules.connectors.service.connect()` gates on.
+
+
+class Plan(Base, TimestampMixin):
+    """A billing/entitlement tier (e.g. "starter", "pro"). Global catalog."""
+
+    __tablename__ = "plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+
+class PlanFeatureFlag(Base, TimestampMixin):
+    """One (plan, feature_flag) entitlement row - the plan tier inserted into
+    `admin.service.is_feature_enabled`'s resolution order between a tenant
+    override and the global override/default."""
+
+    __tablename__ = "plan_feature_flags"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "feature_flag_id", name="uq_plan_feature_flag"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    feature_flag_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("feature_flags.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class BusinessTemplate(Base, TimestampMixin):
+    """A higher-level per-vertical "starter kit": a bundle of connector
+    types (via `BusinessTemplateConnectorType`) plus an optional default
+    plan, offered to a tenant during onboarding.
+
+    Deliberately distinct from `modules.custom_fields.FieldTemplate` (an
+    older, narrower per-entity-type custom-field bundle) - the onboarding
+    "apply a template" step now applies both: this row's connector bundle
+    is granted directly, and the matching `FieldTemplate`s for the same
+    `vertical` are applied through the existing custom-fields flow.
+    """
+
+    __tablename__ = "business_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vertical: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+
+class BusinessTemplateConnectorType(Base, TimestampMixin):
+    """One (business_template, connector_type) bundle membership row.
+
+    This is exactly the bundle `modules.connectors.service.connect()`
+    checks a tenant's `Business.business_template_id` against before
+    allowing a connect - being in this bundle is one of the two ways a
+    tenant is entitled to a connector (the other being an `approved`
+    `ConnectorAccessRequest`).
+    """
+
+    __tablename__ = "business_template_connector_types"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_template_id", "connector_type_id", name="uq_business_template_connector_type"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    business_template_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("business_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
