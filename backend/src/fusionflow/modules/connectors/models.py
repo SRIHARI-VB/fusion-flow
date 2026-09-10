@@ -33,6 +33,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -279,5 +280,40 @@ class ConnectorAccessRequest(Base, TenantScopedMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+    connector_type: Mapped["ConnectorType"] = relationship()
+
+
+class ConnectorAccessOverride(Base, TenantScopedMixin, TimestampMixin):
+    """An admin's explicit revoke/grant for ONE tenant on ONE connector or
+    fixed module, independent of `business_template` bundle membership or
+    any `ConnectorAccessRequest`.
+
+    Without this table there was no way to revoke a single bundled item
+    from one tenant without either reassigning its whole template (losing
+    every other grant it gives) or unassigning the template entirely -
+    which, for FEATURE-category modules, actually *over*-grants via the
+    grandfathering compat branch in `modules.connectors.deps` (a
+    pre-template tenant with no `business_template_id` gets full access).
+    `get_connector_access_map` checks this table FIRST, before the
+    bundle/request resolution - a row here always wins until an admin
+    deletes it (`DELETE /admin/tenants/{id}/connectors/{key}/override`),
+    reverting to the normal resolution.
+    """
+
+    __tablename__ = "connector_access_overrides"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "connector_type_id", name="uq_connector_access_override_tenant_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    set_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     connector_type: Mapped["ConnectorType"] = relationship()

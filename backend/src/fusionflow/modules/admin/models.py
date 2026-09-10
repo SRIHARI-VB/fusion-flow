@@ -13,12 +13,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from fusionflow.db.base import Base, TimestampMixin
+from fusionflow.db.base import Base, TenantScopedMixin, TimestampMixin
 
 
 class AuditLog(Base):
@@ -168,6 +168,56 @@ class PlanFeatureFlag(Base, TimestampMixin):
         PgUUID(as_uuid=True), ForeignKey("feature_flags.id", ondelete="CASCADE"), nullable=False, index=True
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class PlanResourceLimit(Base, TimestampMixin):
+    """One (plan, connector_type) resource-count ceiling - e.g. "the Starter
+    plan allows at most 50 products". Keyed by `connector_types.id` (the
+    same catalog `require_module_access` already gates modules by) rather
+    than a new enum, so limits and module-gating share one vocabulary. No
+    row for a given (plan, connector_type) pair means unlimited at the plan
+    level - see `admin.service.get_resource_limit`'s resolution order."""
+
+    __tablename__ = "plan_resource_limits"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "connector_type_id", name="uq_plan_resource_limit"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    max_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ResourceLimitOverride(Base, TenantScopedMixin, TimestampMixin):
+    """One tenant's explicit resource-count ceiling, overriding whatever
+    its plan (via `PlanResourceLimit`) would otherwise allow - the same
+    "tenant override beats plan default" shape as `FeatureFlagOverride`/
+    `PlanFeatureFlag`, applied to counts instead of booleans. No row means
+    no tenant-specific override; resolution falls through to the plan.
+
+    Genuinely per-tenant (like `modules.connectors.models.ConnectorAccessRequest`,
+    not like the other global-catalog tables in this module) since
+    `admin.service.get_resource_limit` is called from inside a tenant-scoped
+    request (the enforcement dependency on a create route) and needs RLS to
+    let that tenant see its own row - `TenantScopedMixin` + RLS, not a plain
+    `tenant_id` FK column.
+    """
+
+    __tablename__ = "resource_limit_overrides"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "connector_type_id", name="uq_resource_limit_override_tenant_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    max_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class BusinessTemplate(Base, TimestampMixin):
