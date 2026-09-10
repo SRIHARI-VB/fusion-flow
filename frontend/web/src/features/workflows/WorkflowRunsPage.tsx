@@ -16,7 +16,7 @@ import {
   TableRow,
   type BadgeVariant,
 } from "@fusion-flow/ui";
-import { getWorkflow, getWorkflowRun, listWorkflowRuns } from "./api";
+import { getWorkflow, getWorkflowRun, listWorkflowRuns, listWorkflowVersions } from "./api";
 import type { RunStatus } from "./types";
 import { RunStepTrace } from "./components/RunStepTrace";
 
@@ -47,6 +47,21 @@ export function WorkflowRunsPage() {
     queryFn: () => getWorkflowRun(selectedRunId as string),
     enabled: !!selectedRunId,
   });
+  const { data: versions = [] } = useQuery({
+    queryKey: ["workflow-versions", id],
+    queryFn: () => listWorkflowVersions(id as string),
+    enabled: !!id,
+  });
+
+  // The step trace's container-nesting indentation needs to know which
+  // graph node ids are embedded inside a container - resolved from the
+  // exact version this run executed (compiled_graph and .graph share the
+  // same node/parentId shape; either is fine for structure lookups since
+  // template resolution never changes a node's id or parentId).
+  const runVersion = versions.find((v) => v.id === runDetail?.workflow_version_id);
+  const nodeParentMap = new Map(
+    (runVersion?.graph.nodes ?? []).map((n) => [n.id, n.parentId ?? null]),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -121,7 +136,7 @@ export function WorkflowRunsPage() {
           <CardContent>
             {!selectedRunId && <p className="text-sm text-muted-foreground">Select a run to see its step trace.</p>}
             {selectedRunId && !runDetail && <p className="text-sm text-muted-foreground">Loading steps...</p>}
-            {runDetail && <RunStepTrace steps={runDetail.steps} />}
+            {runDetail && <RunStepTrace steps={runDetail.steps} nodeParentMap={nodeParentMap} />}
           </CardContent>
         </Card>
       </div>

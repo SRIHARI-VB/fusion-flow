@@ -52,6 +52,19 @@ export interface NodeType {
   description: string;
   config_schema: JsonSchema;
   output_handles: string[] | null;
+  /** Handles that MAY be wired 0 or 1 times (e.g. Try/Catch's "success"/
+   * "error") - distinct from `output_handles`' exactly-once-each. */
+  optional_output_handles?: string[] | null;
+  /** Opt-in embedding (Loop/TryCatch/Parallel) - see
+   * `engine.registry.NodeExecutor.can_contain_children`'s docstring. */
+  can_contain_children?: boolean;
+  child_role?: string | null;
+  /** Set only for a `WorkflowNodeTemplate`-backed palette entry - the
+   * config a newly dropped node of this type should be pre-filled with. */
+  default_config?: Record<string, unknown>;
+  /** Present only on a template-backed entry - which real registered
+   * node type this one compiles to at publish time. */
+  base_node_type?: string | null;
 }
 
 /** One React Flow node's `data` payload — matches the backend's
@@ -68,6 +81,27 @@ export interface WorkflowGraphNode {
   type?: string;
   data: WorkflowNodeData;
   position: { x: number; y: number };
+  /** Set only for a node embedded inside a container - matches React
+   * Flow v12's own `parentId`/`extent: "parent"` node nesting, so the
+   * persisted graph JSON needs no translation layer either direction. */
+  parentId?: string | null;
+  /** Container dimensions, persisted so a re-opened workflow renders the
+   * container at the size the author left it. Leaf nodes never set this. */
+  width?: number;
+  height?: number;
+}
+
+export interface EdgeFilter {
+  field_path: string;
+  operator: string;
+  value: unknown;
+}
+
+export interface WorkflowGraphEdgeData {
+  filter?: EdgeFilter | null;
+  label?: string | null;
+  // React Flow's own `Edge.data` type requires `Record<string, unknown>`.
+  [key: string]: unknown;
 }
 
 export interface WorkflowGraphEdge {
@@ -76,6 +110,7 @@ export interface WorkflowGraphEdge {
   target: string;
   sourceHandle?: string | null;
   targetHandle?: string | null;
+  data?: WorkflowGraphEdgeData | null;
 }
 
 export interface WorkflowGraphJson {
@@ -130,12 +165,18 @@ export interface WorkflowRunDetail extends WorkflowRun {
   steps: RunStep[];
 }
 
-/** The plan's 5 required publish-time validation rules, in a stable
- * display order for the validation panel. */
+/** The publish-time validation rules, in a stable display order for the
+ * validation panel. `unsafe_loops` already covers the container-aware
+ * cycle check (a cycle fully inside one Loop container's body is
+ * auto-safe) - that's the same rule id, not a separate entry;
+ * `containment_validity` is the one genuinely new rule added for
+ * containers (a parentId must reference an actual container type, and no
+ * edge may cross a container boundary). */
 export const VALIDATION_RULES: Array<{ rule: string; label: string }> = [
   { rule: "missing_required_fields", label: "Required fields" },
   { rule: "disconnected_connector_reference", label: "Connector references" },
   { rule: "unreachable_nodes", label: "Reachability" },
   { rule: "invalid_branches", label: "Branch wiring" },
   { rule: "unsafe_loops", label: "Loop safety" },
+  { rule: "containment_validity", label: "Container structure" },
 ];

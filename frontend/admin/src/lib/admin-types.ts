@@ -215,6 +215,25 @@ export interface BusinessTemplate {
   connector_type_ids: string[];
 }
 
+// Mirrors backend/src/fusionflow/modules/admin/schemas.py's
+// WorkflowNodeTemplate* DTOs - the "new integration without a deploy"
+// admin catalog on top of the workflow engine's generic executors
+// (connector.action, http.request, ...). See modules.admin.models.
+// WorkflowNodeTemplate's docstring for the full picture.
+export interface WorkflowNodeTemplate {
+  id: string;
+  key: string;
+  label: string;
+  description: string | null;
+  category: string;
+  base_node_type: string;
+  icon: string | null;
+  default_config: Record<string, unknown>;
+  config_schema_overrides: Record<string, unknown> | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface ConnectorTypeCatalogItem {
   id: string;
   key: string;

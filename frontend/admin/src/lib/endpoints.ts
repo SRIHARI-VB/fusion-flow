@@ -21,6 +21,7 @@ import type {
   TenantListItem,
   TenantModuleAccess,
   TenantResourceLimit,
+  WorkflowNodeTemplate,
 } from "./admin-types";
 
 export async function login(payload: LoginRequest): Promise<AuthTokens> {
@@ -278,6 +279,50 @@ export async function updateBusinessTemplate(
     payload,
   );
   return data;
+}
+
+// --- Workflow node templates (admin-managed palette entries, Part D) -----
+
+export async function fetchWorkflowNodeTemplates(): Promise<WorkflowNodeTemplate[]> {
+  const { data } = await apiClient.get<WorkflowNodeTemplate[]>("/api/admin/workflow-node-templates");
+  return data;
+}
+
+export interface WorkflowNodeTemplateInput {
+  key: string;
+  label: string;
+  description?: string | null;
+  category: string;
+  base_node_type: string;
+  icon?: string | null;
+  default_config: Record<string, unknown>;
+  config_schema_overrides?: Record<string, unknown> | null;
+  is_active: boolean;
+}
+
+export async function createWorkflowNodeTemplate(
+  payload: WorkflowNodeTemplateInput,
+): Promise<WorkflowNodeTemplate> {
+  const { data } = await apiClient.post<WorkflowNodeTemplate>(
+    "/api/admin/workflow-node-templates",
+    payload,
+  );
+  return data;
+}
+
+export async function updateWorkflowNodeTemplate(
+  templateId: string,
+  payload: Partial<Omit<WorkflowNodeTemplateInput, "base_node_type">>,
+): Promise<WorkflowNodeTemplate> {
+  const { data } = await apiClient.patch<WorkflowNodeTemplate>(
+    `/api/admin/workflow-node-templates/${templateId}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteWorkflowNodeTemplate(templateId: string): Promise<void> {
+  await apiClient.delete(`/api/admin/workflow-node-templates/${templateId}`);
 }
 
 export async function fetchConnectorTypeCatalog(): Promise<ConnectorTypeCatalogItem[]> {

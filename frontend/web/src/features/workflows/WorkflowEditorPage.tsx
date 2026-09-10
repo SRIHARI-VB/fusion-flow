@@ -14,6 +14,7 @@ import {
   type Connection,
   type Edge,
   type Node,
+  type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ArrowLeft, PlayCircle, Save, ShieldCheck, Upload } from "lucide-react";
@@ -26,17 +27,60 @@ import {
   simulateWorkflow,
   updateWorkflow,
 } from "./api";
-import type { NodeType, ValidationIssue, WorkflowGraphJson, WorkflowRunDetail } from "./types";
+import type { NodeType, ValidationIssue, WorkflowGraphEdgeData, WorkflowGraphJson, WorkflowRunDetail } from "./types";
 import { CardNode } from "./nodes/CardNode";
+import { ContainerNode, CONTAINER_MIN_HEIGHT, CONTAINER_MIN_WIDTH } from "./nodes/ContainerNode";
 import { NodePalette } from "./components/NodePalette";
 import { NodeConfigDrawer } from "./components/NodeConfigDrawer";
+import { EdgeConfigDrawer } from "./components/EdgeConfigDrawer";
 import { ValidationPanel } from "./components/ValidationPanel";
 import { RunStepTrace } from "./components/RunStepTrace";
-import { enrichNodes, edgesFromJson, toGraphJson, type CardNodeData } from "./graphUtils";
+import {
+  CONTAINER_RF_TYPE,
+  enrichNodes,
+  edgesFromJson,
+  toGraphJson,
+  type CardNodeData,
+} from "./graphUtils";
 
-const nodeTypesForFlow = { trigger: CardNode, action: CardNode, condition: CardNode };
+const nodeTypesForFlow = {
+  trigger: CardNode,
+  action: CardNode,
+  condition: CardNode,
+  [CONTAINER_RF_TYPE]: ContainerNode,
+};
 
 const EMPTY_GRAPH: WorkflowGraphJson = { nodes: [], edges: [] };
+
+/** Absolute (canvas-space) position for a node that may be nested inside
+ * one or more containers — walks `parentId` up to the top level, summing
+ * each ancestor's own (already-absolute, since containers are never
+ * nested inside another container in this proof-of-concept) position.
+ * Used by the drag-into/out-of-container handler to convert between a
+ * node's parent-relative `position` (what React Flow stores once
+ * `parentId` is set) and absolute canvas coordinates. */
+function toAbsolutePosition(
+  node: { position: { x: number; y: number }; parentId?: string | null },
+  nodesById: Map<string, Node<CardNodeData>>,
+): { x: number; y: number } {
+  if (!node.parentId) return node.position;
+  const parent = nodesById.get(node.parentId);
+  if (!parent) return node.position;
+  const parentAbsolute = toAbsolutePosition(parent, nodesById);
+  return { x: node.position.x + parentAbsolute.x, y: node.position.y + parentAbsolute.y };
+}
+
+function findContainerAt(point: { x: number; y: number }, nds: Node<CardNodeData>[]): Node<CardNodeData> | null {
+  for (const n of nds) {
+    if (n.type !== CONTAINER_RF_TYPE) continue;
+    const width = n.width ?? CONTAINER_MIN_WIDTH;
+    const height = n.height ?? CONTAINER_MIN_HEIGHT;
+    if (point.x >= n.position.x && point.x <= n.position.x + width && point.y >= n.position.y && point.y <= n.position.y + height) {
+      return n;
+    }
+  }
+  return null;
+}
 
 function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const queryClient = useQueryClient();
@@ -57,6 +101,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<CardNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [autosave, setAutosave] = useState(false);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[] | null>(null);
   const [showValidation, setShowValidation] = useState(false);
@@ -153,31 +198,100 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       const nodeType = nodeTypesByKey.get(nodeTypeKey);
       if (!nodeType) return;
 
-      const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const absolutePosition = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const id = `node_${Math.random().toString(36).slice(2, 10)}`;
+      // A trigger only makes sense as a graph root - never droppable
+      // inside a container (client-side guard; the real boundary is
+      // publish-time validation's containment-validity rule).
+      const container =
+        nodeType.kind !== "trigger" ? findContainerAt(absolutePosition, nodes) : null;
+
       const newNode: Node<CardNodeData> = {
         id,
-        type: nodeType.kind,
-        position,
-        data: { nodeType: nodeType.node_type, label: nodeType.label, config: {}, __meta: nodeType },
+        type: nodeType.can_contain_children ? CONTAINER_RF_TYPE : nodeType.kind,
+        position: container
+          ? { x: absolutePosition.x - container.position.x, y: absolutePosition.y - container.position.y }
+          : absolutePosition,
+        data: {
+          nodeType: nodeType.node_type,
+          label: nodeType.label,
+          config: nodeType.default_config ?? {},
+          __meta: nodeType,
+        },
+        ...(container ? { parentId: container.id, extent: "parent" as const } : {}),
       };
       setNodes((nds) => [...nds, newNode]);
     },
-    [nodeTypesByKey, reactFlow, setNodes],
+    [nodeTypesByKey, nodes, reactFlow, setNodes],
+  );
+
+  // Drag-into-container mechanics for an *existing* node: dragging it so
+  // its position falls inside a container's bounds sets parentId/extent
+  // ("parent") on drop; dragging it back outside clears parentId. Uses
+  // simple bounding-box containment against the dragged node's own
+  // (already-updated-by-RF) position rather than `getIntersectingNodes`,
+  // since the latter's rect-overlap semantics are a worse fit than
+  // "does the node's origin point land inside the container" for a card
+  // that's usually much smaller than the container it's being dropped
+  // into.
+  const onNodeDragStop: OnNodeDrag<Node<CardNodeData>> = useCallback(
+    (_event, draggedNode) => {
+      const meta = nodeTypesByKey.get(draggedNode.data.nodeType as string);
+      if (!meta || meta.kind === "trigger" || draggedNode.type === CONTAINER_RF_TYPE) return;
+
+      setNodes((nds) => {
+        const nodesById = new Map(nds.map((n) => [n.id, n]));
+        const current = nodesById.get(draggedNode.id);
+        if (!current) return nds;
+
+        const absolute = toAbsolutePosition({ position: draggedNode.position, parentId: current.parentId }, nodesById);
+        const container = findContainerAt(
+          absolute,
+          nds.filter((n) => n.id !== draggedNode.id),
+        );
+
+        return nds.map((n) => {
+          if (n.id !== draggedNode.id) return n;
+
+          if (container && container.id !== n.parentId) {
+            return {
+              ...n,
+              parentId: container.id,
+              extent: "parent" as const,
+              position: { x: absolute.x - container.position.x, y: absolute.y - container.position.y },
+            };
+          }
+          if (!container && n.parentId) {
+            const { parentId: _parentId, extent: _extent, ...rest } = n;
+            return { ...rest, position: absolute };
+          }
+          return n;
+        });
+      });
+    },
+    [nodeTypesByKey, setNodes],
   );
 
   function onNodeClick(_event: React.MouseEvent, node: Node) {
     setSelectedNodeId(node.id);
+    setSelectedEdgeId(null);
+  }
+
+  function onEdgeClick(_event: React.MouseEvent, edge: Edge) {
+    setSelectedEdgeId(edge.id);
+    setSelectedNodeId(null);
   }
 
   function onPaneClick() {
     setSelectedNodeId(null);
+    setSelectedEdgeId(null);
   }
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
   const selectedNodeType: NodeType | undefined = selectedNode
     ? nodeTypesByKey.get(selectedNode.data.nodeType)
     : undefined;
+  const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
 
   function updateSelectedNodeLabel(label: string) {
     if (!selectedNodeId) return;
@@ -191,9 +305,24 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   function deleteSelectedNode() {
     if (!selectedNodeId) return;
-    setNodes((nds) => nds.filter((n) => n.id !== selectedNodeId));
-    setEdges((eds) => eds.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId));
+    // Deleting a container also deletes its embedded children - leaving
+    // them behind with a dangling parentId would be a malformed graph
+    // (publish-time rule 6 would reject it anyway).
+    const childIds = new Set(nodes.filter((n) => n.parentId === selectedNodeId).map((n) => n.id));
+    const removedIds = new Set([selectedNodeId, ...childIds]);
+    setNodes((nds) => nds.filter((n) => !removedIds.has(n.id)));
+    setEdges((eds) => eds.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target)));
     setSelectedNodeId(null);
+  }
+
+  function saveSelectedEdgeData(data: WorkflowGraphEdgeData) {
+    if (!selectedEdgeId) return;
+    const hasContent = !!data.label || !!data.filter;
+    setEdges((eds) =>
+      eds.map((e) =>
+        e.id === selectedEdgeId ? { ...e, data: hasContent ? data : undefined, label: data.label ?? undefined } : e,
+      ),
+    );
   }
 
   return (
@@ -260,6 +389,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onDrop={onDrop}
             onDragOver={onDragOver}
             onNodeClick={onNodeClick}
+            onNodeDragStop={onNodeDragStop}
+            onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypesForFlow}
             defaultEdgeOptions={{ type: "default", style: { strokeWidth: 2 } }}
@@ -296,7 +427,10 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
               {lastRun && (
                 <div className="mt-3 border-t border-border pt-2">
                   <p className="mb-1 text-xs font-medium text-foreground">Run status: {lastRun.status}</p>
-                  <RunStepTrace steps={lastRun.steps} />
+                  <RunStepTrace
+                    steps={lastRun.steps}
+                    nodeParentMap={new Map(nodes.map((n) => [n.id, n.parentId ?? null]))}
+                  />
                 </div>
               )}
             </div>
@@ -313,6 +447,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onSave={saveSelectedNodeConfig}
             onClose={() => setSelectedNodeId(null)}
             onDelete={deleteSelectedNode}
+          />
+        ) : selectedEdge ? (
+          <EdgeConfigDrawer
+            edgeId={selectedEdge.id}
+            data={selectedEdge.data as WorkflowGraphEdgeData | undefined}
+            onSave={saveSelectedEdgeData}
+            onClose={() => setSelectedEdgeId(null)}
           />
         ) : (
           <NodePalette
