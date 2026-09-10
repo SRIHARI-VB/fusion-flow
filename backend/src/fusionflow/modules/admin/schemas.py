@@ -226,6 +226,39 @@ class PlanFeatureFlagsSetRequest(BaseModel):
     flags: list[PlanFeatureFlagIn] = Field(default_factory=list)
 
 
+class PlanResourceLimitOut(BaseModel):
+    """One catalog resource key + this plan's configured limit - built by
+    hand in `service.list_plan_resource_limits`, enriched with the full
+    catalog so the editor can show an input for every resource, not just
+    already-configured ones."""
+
+    connector_type_id: uuid.UUID
+    resource_key: str
+    display_name: str
+    max_count: int | None = None
+
+
+class PlanResourceLimitIn(BaseModel):
+    resource_key: str
+    max_count: int | None = Field(default=None, ge=0)
+
+
+class PlanResourceLimitsSetRequest(BaseModel):
+    limits: list[PlanResourceLimitIn] = Field(default_factory=list)
+
+
+class TenantResourceLimitOut(BaseModel):
+    connector_type_id: uuid.UUID
+    resource_key: str
+    display_name: str
+    limit: int | None = None
+    source: str
+
+
+class ResourceLimitOverrideRequest(BaseModel):
+    max_count: int = Field(ge=0)
+
+
 class BusinessTemplateOut(BaseModel):
     """Admin-facing projection - richer than the tenant-facing
     `modules.business_templates.schemas.BusinessTemplateOut` (which omits

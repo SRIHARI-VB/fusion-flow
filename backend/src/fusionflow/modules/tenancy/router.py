@@ -12,6 +12,11 @@ from fusionflow.modules.auth.http import set_refresh_cookie, to_token_response
 from fusionflow.modules.auth.schemas import TokenResponse
 from fusionflow.modules.auth.service import AuthError
 from fusionflow.modules.auth.service import select_business as select_business_service
+from fusionflow.modules.catalog import service as catalog_service
+from fusionflow.modules.catalog.models import ProductServiceType
+from fusionflow.modules.custom_fields import service as custom_fields_service
+from fusionflow.modules.customers import service as customers_service
+from fusionflow.modules.kb import service as kb_service
 from fusionflow.modules.tenancy import service as tenancy_service
 from fusionflow.modules.tenancy.models import MembershipRole
 from fusionflow.modules.tenancy.schemas import (
@@ -20,6 +25,23 @@ from fusionflow.modules.tenancy.schemas import (
     BusinessUpdateRequest,
     MemberOut,
 )
+from fusionflow.modules.workflows import service as workflows_service
+
+# resource_key -> tenant-scoped row-count function, for GET /businesses/mine/resource-usage.
+_RESOURCE_COUNT_FNS = {
+    "products": lambda session, tenant_id: catalog_service.count_products_services(
+        session, tenant_id, entity_type=ProductServiceType.PRODUCT
+    ),
+    "services": lambda session, tenant_id: catalog_service.count_products_services(
+        session, tenant_id, entity_type=ProductServiceType.SERVICE
+    ),
+    "coupons": catalog_service.count_coupons,
+    "offers": catalog_service.count_offers,
+    "customers": customers_service.count_customers,
+    "kb": kb_service.count_articles,
+    "workflows": workflows_service.count_workflows,
+    "custom_fields": custom_fields_service.count_field_definitions,
+}
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 
@@ -45,6 +67,25 @@ async def my_feature_flags(context: TenantContextDep, session: SessionDep) -> di
     `modules.admin.service.KNOWN_FEATURE_FLAGS`/`resolve_known_flags_for_tenant`.
     """
     return await admin_service.resolve_known_flags_for_tenant(session, context.tenant_id)
+
+
+@router.get("/mine/resource-usage", response_model=dict[str, dict[str, int | None]])
+async def my_resource_usage(context: TenantContextDep, session: SessionDep) -> dict[str, dict[str, int | None]]:
+    """`{resource_key: {"limit": int|null, "current": int}}` for every
+    limitable resource - lets the web app show "42/50 products" and
+    disable "New product" at the limit without duplicating the
+    tenant-override/plan/unlimited resolution client-side. The backend
+    403 on the create route (`enforce_resource_limit`) is the actual
+    boundary; this is a UX nicety on top of it.
+    """
+    usage: dict[str, dict[str, int | None]] = {}
+    for resource_key, count_fn in _RESOURCE_COUNT_FNS.items():
+        limit = await admin_service.get_resource_limit(
+            session, tenant_id=context.tenant_id, resource_key=resource_key
+        )
+        current = await count_fn(session, context.tenant_id)
+        usage[resource_key] = {"limit": limit, "current": current}
+    return usage
 
 
 @router.post("/{business_id}/switch", response_model=TokenResponse)

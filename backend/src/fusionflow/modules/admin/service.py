@@ -924,14 +924,33 @@ async def assign_tenant_plan(
 # docstring for the resolution order this powers.
 
 
-async def list_plan_resource_limits(session: AsyncSession, plan_id: uuid.UUID) -> list[PlanResourceLimit]:
-    return list(
-        (
+async def list_plan_resource_limits(session: AsyncSession, plan_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Every catalog resource key + this plan's configured limit (`None` if
+    unset - unlimited), for the admin plan editor's resource-limits grid.
+    Enriched the same way `get_tenant_resource_limits` is, rather than
+    returning bare `PlanResourceLimit` rows, so the UI can render an input
+    for every resource key, not just the ones already configured."""
+    if not _CONNECTORS_AVAILABLE:
+        return []
+
+    types = await connector_service.list_connector_types(session)
+    limits = {
+        row.connector_type_id: row.max_count
+        for row in (
             await session.execute(select(PlanResourceLimit).where(PlanResourceLimit.plan_id == plan_id))
         )
         .scalars()
         .all()
-    )
+    }
+    return [
+        {
+            "connector_type_id": t.id,
+            "resource_key": t.key,
+            "display_name": t.display_name,
+            "max_count": limits.get(t.id),
+        }
+        for t in types
+    ]
 
 
 async def set_plan_resource_limits(
@@ -1023,7 +1042,7 @@ async def get_tenant_resource_limits(session: AsyncSession, business_id: uuid.UU
         result.append(
             {
                 "connector_type_id": t.id,
-                "connector_type_key": t.key,
+                "resource_key": t.key,
                 "display_name": t.display_name,
                 "limit": limit,
                 "source": source,

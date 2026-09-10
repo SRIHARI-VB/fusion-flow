@@ -50,10 +50,14 @@ from fusionflow.modules.admin.schemas import (
     PlanFeatureFlagOut,
     PlanFeatureFlagsSetRequest,
     PlanOut,
+    PlanResourceLimitOut,
+    PlanResourceLimitsSetRequest,
     PlanUpdateRequest,
+    ResourceLimitOverrideRequest,
     TenantDetailOut,
     TenantListItemOut,
     TenantModuleAccessOut,
+    TenantResourceLimitOut,
 )
 from fusionflow.modules.admin.service import AdminError
 
@@ -435,6 +439,32 @@ async def set_plan_feature_flags(
     return [PlanFeatureFlagOut.model_validate(r) for r in rows]
 
 
+@router.get("/plans/{plan_id}/resource-limits", response_model=list[PlanResourceLimitOut])
+async def list_plan_resource_limits(
+    plan_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> list[PlanResourceLimitOut]:
+    rows = await admin_service.list_plan_resource_limits(session, plan_id)
+    return [PlanResourceLimitOut(**row) for row in rows]
+
+
+@router.put("/plans/{plan_id}/resource-limits", response_model=list[PlanResourceLimitOut])
+async def set_plan_resource_limits(
+    plan_id: uuid.UUID,
+    payload: PlanResourceLimitsSetRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> list[PlanResourceLimitOut]:
+    try:
+        await admin_service.set_plan_resource_limits(
+            session, plan_id, limits=[(l.resource_key, l.max_count) for l in payload.limits]
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    rows = await admin_service.list_plan_resource_limits(session, plan_id)
+    return [PlanResourceLimitOut(**row) for row in rows]
+
+
 @router.post("/tenants/{business_id}/plan", response_model=TenantListItemOut)
 async def assign_tenant_plan(
     business_id: uuid.UUID,
@@ -654,6 +684,52 @@ async def clear_connector_access_override(
 ) -> None:
     try:
         await admin_service.clear_connector_access_override(session, business_id, type_key)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+
+
+# --- Per-tenant resource count limits -----------------------------------------
+
+
+@router.get("/tenants/{business_id}/resource-limits", response_model=list[TenantResourceLimitOut])
+async def get_tenant_resource_limits(
+    business_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> list[TenantResourceLimitOut]:
+    rows = await admin_service.get_tenant_resource_limits(session, business_id)
+    return [TenantResourceLimitOut(**row) for row in rows]
+
+
+@router.put("/tenants/{business_id}/resource-limits/{resource_key}", response_model=TenantResourceLimitOut)
+async def set_tenant_resource_limit(
+    business_id: uuid.UUID,
+    resource_key: str,
+    payload: ResourceLimitOverrideRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> TenantResourceLimitOut:
+    try:
+        await admin_service.set_resource_limit_override(
+            session, business_id, resource_key, max_count=payload.max_count
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    rows = await admin_service.get_tenant_resource_limits(session, business_id)
+    match = next((r for r in rows if r["resource_key"] == resource_key), None)
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource key")
+    return TenantResourceLimitOut(**match)
+
+
+@router.delete(
+    "/tenants/{business_id}/resource-limits/{resource_key}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def clear_tenant_resource_limit(
+    business_id: uuid.UUID, resource_key: str, _admin: PlatformAdminDep, session: SessionDep
+) -> None:
+    try:
+        await admin_service.clear_resource_limit_override(session, business_id, resource_key)
     except AdminError as exc:
         raise _http(exc) from exc
     await session.commit()
