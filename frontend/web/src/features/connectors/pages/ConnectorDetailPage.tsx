@@ -1,16 +1,24 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CheckCircle2, RefreshCw, Unplug } from "lucide-react";
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@fusion-flow/ui";
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, cn } from "@fusion-flow/ui";
 import { ConnectorEventsTable } from "../components/ConnectorEventsTable";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useConnectorEvents, useConnectorInstances, useDisconnectConnector, useTestConnector } from "../hooks";
 import { CONNECTOR_HEALTH_DISPLAY, CONNECTOR_STATE_DISPLAY, formatRelativeTimestamp } from "../state-display";
+import { CONNECTOR_SETTINGS } from "../settings/registry";
+
+type Tab = "activity" | "settings";
 
 /**
  * `/connectors/:instanceId` - generic detail page for any connector
  * instance: identity (adapter-redacted allowlist only), event history,
- * and the same test/disconnect actions the grid card offers.
+ * and the same test/disconnect actions the grid card offers, plus a
+ * per-connector-type "Settings" tab (Part F's registry - see
+ * `../settings/registry.ts`) for anything beyond the generic lifecycle
+ * surface (e.g. WhatsApp's message template catalog). A connector with
+ * nothing registered there gets a plain fallback message - purely
+ * additive, no change for connectors without a settings panel.
  */
 export function ConnectorDetailPage() {
   const { instanceId } = useParams<{ instanceId: string }>();
@@ -23,6 +31,7 @@ export function ConnectorDetailPage() {
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const [tab, setTab] = useState<Tab>("activity");
 
   const instance = instances?.find((candidate) => candidate.id === instanceId);
 
@@ -90,35 +99,67 @@ export function ConnectorDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div>
-            <CardTitle>Activity</CardTitle>
-            <CardDescription>
-              Last webhook: {formatRelativeTimestamp(instance.last_webhook_at)} · Last sync:{" "}
-              {formatRelativeTimestamp(instance.last_sync_at)}
-            </CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => testMutation.mutate(instance.id)}
-              disabled={testMutation.isPending}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              {testMutation.isPending ? "Testing…" : "Test connection"}
-            </Button>
-            <Button variant="destructive" size="sm" onClick={() => setConfirmingDisconnect(true)}>
-              <Unplug className="h-3.5 w-3.5" />
-              Disconnect
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <ConnectorEventsTable events={events ?? []} isLoading={eventsLoading} />
-        </CardContent>
-      </Card>
+      <div className="flex gap-1 border-b border-border">
+        {(["activity", "settings"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={cn(
+              "border-b-2 px-3 py-2 text-sm font-medium capitalize",
+              tab === t ? "border-accent text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => setTab(t)}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "activity" && (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between">
+            <div>
+              <CardTitle>Activity</CardTitle>
+              <CardDescription>
+                Last webhook: {formatRelativeTimestamp(instance.last_webhook_at)} · Last sync:{" "}
+                {formatRelativeTimestamp(instance.last_sync_at)}
+              </CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => testMutation.mutate(instance.id)}
+                disabled={testMutation.isPending}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                {testMutation.isPending ? "Testing…" : "Test connection"}
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => setConfirmingDisconnect(true)}>
+                <Unplug className="h-3.5 w-3.5" />
+                Disconnect
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ConnectorEventsTable events={events ?? []} isLoading={eventsLoading} />
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "settings" &&
+        (() => {
+          const SettingsPanel = CONNECTOR_SETTINGS[instance.connector_type_key];
+          return SettingsPanel ? (
+            <SettingsPanel instance={instance} />
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                No additional settings for this connector.
+              </CardContent>
+            </Card>
+          );
+        })()}
 
       <ConfirmDialog
         open={confirmingDisconnect}
