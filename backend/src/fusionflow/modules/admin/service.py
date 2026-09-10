@@ -291,18 +291,44 @@ async def get_tenant_connector_health(
 # grandfathering compat branch in `modules.connectors.deps`. See
 # `modules.connectors.models.ConnectorAccessOverride`'s docstring.
 
+# Catalog keys that exist ONLY to carry a per-entity-type resource-count
+# limit (see custom_fields/router.py::create_definition) - never checked by
+# require_module_access, so granting/revoking one via the "Modules &
+# connectors" panel would silently do nothing. Excluded from that panel's
+# catalog listing below; see RESOURCE_LIMIT_KEYS for the mirror-image
+# problem (catalog keys that DO gate module access but enforce no count
+# limit, which get excluded from the resource-limits panels instead).
+LIMIT_ONLY_KEYS = frozenset(
+    {"custom_fields_product", "custom_fields_service", "custom_fields_coupon", "custom_fields_offer"}
+)
+
+# Catalog keys that `GET/PUT /admin/plans/{id}/resource-limits` and
+# `GET/PUT/DELETE /admin/tenants/{id}/resource-limits` actually enforce a
+# count against - every other catalog key (whatsapp/razorpay, orders/
+# payments/tickets/support_agent, and the plain "custom_fields" module-gate
+# key itself) would accept a number with zero effect, so the resource-limit
+# admin surfaces filter down to exactly this set instead of listing the
+# whole catalog and leaving those as confusing dead rows. Keep in sync by
+# hand with `modules.tenancy.router._RESOURCE_COUNT_FNS` (the 7 non-custom-
+# field keys) plus the 4 `LIMIT_ONLY_KEYS` above (enforced inline by
+# `custom_fields/router.py::create_definition`, not the generic dependency).
+RESOURCE_LIMIT_KEYS = frozenset(
+    {"products", "services", "coupons", "offers", "customers", "kb", "workflows"} | LIMIT_ONLY_KEYS
+)
+
 
 async def get_tenant_module_access(session: AsyncSession, business_id: uuid.UUID) -> list[dict[str, Any]]:
-    """Full connector/module catalog + this tenant's resolved `access_status`
-    + whether an admin override exists, for the admin's per-tenant "Modules
-    & connectors" panel. Same `set_tenant_context`-on-the-request-session
-    pattern as `get_tenant_connector_health` above - no `app.current_tenant_id`
-    is set by default under `/api/admin/*`."""
+    """Full connector/module catalog (minus `LIMIT_ONLY_KEYS`) + this
+    tenant's resolved `access_status` + whether an admin override exists,
+    for the admin's per-tenant "Modules & connectors" panel. Same
+    `set_tenant_context`-on-the-request-session pattern as
+    `get_tenant_connector_health` above - no `app.current_tenant_id` is set
+    by default under `/api/admin/*`."""
     if not _CONNECTORS_AVAILABLE:
         return []
 
     await set_tenant_context(session, business_id)
-    types = await connector_service.list_connector_types(session)
+    types = [t for t in await connector_service.list_connector_types(session) if t.key not in LIMIT_ONLY_KEYS]
     access_map = await connector_service.get_connector_access_map(
         session, tenant_id=business_id, connector_type_ids=[t.id for t in types]
     )
@@ -945,15 +971,17 @@ async def assign_tenant_plan(
 
 
 async def list_plan_resource_limits(session: AsyncSession, plan_id: uuid.UUID) -> list[dict[str, Any]]:
-    """Every catalog resource key + this plan's configured limit (`None` if
-    unset - unlimited), for the admin plan editor's resource-limits grid.
-    Enriched the same way `get_tenant_resource_limits` is, rather than
-    returning bare `PlanResourceLimit` rows, so the UI can render an input
-    for every resource key, not just the ones already configured."""
+    """Every key in `RESOURCE_LIMIT_KEYS` + this plan's configured limit
+    (`None` if unset - unlimited), for the admin plan editor's resource-
+    limits grid. Enriched the same way `get_tenant_resource_limits` is,
+    rather than returning bare `PlanResourceLimit` rows, so the UI can
+    render an input for every limitable key, not just the ones already
+    configured. Filtered to `RESOURCE_LIMIT_KEYS` rather than the whole
+    catalog - see that constant's docstring for why."""
     if not _CONNECTORS_AVAILABLE:
         return []
 
-    types = await connector_service.list_connector_types(session)
+    types = [t for t in await connector_service.list_connector_types(session) if t.key in RESOURCE_LIMIT_KEYS]
     limits = {
         row.connector_type_id: row.max_count
         for row in (
@@ -1018,13 +1046,14 @@ async def set_plan_resource_limits(
 
 
 async def get_tenant_resource_limits(session: AsyncSession, business_id: uuid.UUID) -> list[dict[str, Any]]:
-    """Every resource key's effective limit + source + current usage, for
-    the admin's per-tenant resource-limits panel."""
+    """Every key in `RESOURCE_LIMIT_KEYS`'s effective limit + source, for
+    the admin's per-tenant resource-limits panel. Filtered the same way
+    `list_plan_resource_limits` is - see `RESOURCE_LIMIT_KEYS`'s docstring."""
     if not _CONNECTORS_AVAILABLE:
         return []
 
     await set_tenant_context(session, business_id)
-    types = await connector_service.list_connector_types(session)
+    types = [t for t in await connector_service.list_connector_types(session) if t.key in RESOURCE_LIMIT_KEYS]
     overrides = {
         o.connector_type_id: o
         for o in (
