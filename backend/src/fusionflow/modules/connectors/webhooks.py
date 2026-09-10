@@ -34,6 +34,7 @@ from typing import Mapping
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from fusionflow.core.deps import SessionDep
+from fusionflow.db.session import set_tenant_context
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import get_connector_settings
 
@@ -74,6 +75,19 @@ async def _dispatch(type_key: str, request: Request, session: SessionDep) -> dic
             "[webhooks] signature verification failed for type=%s instance=%s", type_key, instance.id
         )
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # This session never goes through `get_tenant_context` (webhooks carry no
+    # bearer token - there is no request-scoped tenant to derive one from),
+    # so without this call `app.current_tenant_id` is unset and every
+    # tenant-scoped write `handle_webhook` makes (ConnectorEvent, and any
+    # Payment row a payment webhook creates) is rejected by RLS's WITH CHECK
+    # clause - confirmed live: `InsufficientPrivilegeError: new row violates
+    # row-level security policy for table "connector_events"`. Safe to set
+    # here specifically because `resolve_instance_for_webhook` has *already*
+    # authenticated this request (instance-lookup + signature check above),
+    # so `instance.tenant_id` is a verified fact about this webhook, not
+    # caller-supplied input.
+    await set_tenant_context(session, instance.tenant_id)
 
     events = await adapter_impl.handle_webhook(
         instance=instance, raw_payload=raw_payload, headers=headers, session=session
