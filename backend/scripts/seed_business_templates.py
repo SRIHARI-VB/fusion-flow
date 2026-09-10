@@ -29,21 +29,30 @@ TEMPLATES: list[dict] = [
         "name": "Retail starter kit",
         "description": "Product catalog with SKU/stock fields, WhatsApp for order updates, Razorpay for payments.",
         "vertical": "retail",
-        "connector_keys": ["whatsapp", "razorpay"],
+        "connector_keys": [
+            "whatsapp",
+            "razorpay",
+            "products",
+            "orders",
+            "customers",
+            "payments",
+            "coupons",
+            "offers",
+        ],
     },
     {
         "key": "salon-starter",
         "name": "Salon & beauty starter kit",
         "description": "Service bookings with duration/appointment fields, WhatsApp for appointment reminders.",
         "vertical": "salon",
-        "connector_keys": ["whatsapp"],
+        "connector_keys": ["whatsapp", "services", "customers", "tickets"],
     },
     {
         "key": "restaurant-starter",
         "name": "Restaurant starter kit",
         "description": "WhatsApp for order-taking, Razorpay for online payments.",
         "vertical": "restaurant",
-        "connector_keys": ["whatsapp", "razorpay"],
+        "connector_keys": ["whatsapp", "razorpay", "products", "orders", "customers", "payments"],
     },
 ]
 

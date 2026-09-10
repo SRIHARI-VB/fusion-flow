@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.payments import service as payments_service
 from fusionflow.modules.payments.schemas import PaymentCreate, PaymentOut
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+router = APIRouter(
+    prefix="/payments",
+    tags=["payments"],
+    dependencies=[Depends(require_module_access("payments"))],
+)
 
 
 @router.get("", response_model=list[PaymentOut])

@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.kb import service as kb_service
 from fusionflow.modules.kb.schemas import KbArticleCreate, KbArticleOut, KbArticleUpdate
 
-router = APIRouter(prefix="/kb-articles", tags=["kb"])
+router = APIRouter(
+    prefix="/kb-articles",
+    tags=["kb"],
+    dependencies=[Depends(require_module_access("kb"))],
+)
 
 
 @router.get("", response_model=list[KbArticleOut])

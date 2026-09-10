@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.tickets import service as tickets_service
 from fusionflow.modules.tickets.schemas import (
     TicketCreate,
@@ -21,7 +22,11 @@ from fusionflow.modules.tickets.schemas import (
     TicketUpdate,
 )
 
-router = APIRouter(prefix="/tickets", tags=["tickets"])
+router = APIRouter(
+    prefix="/tickets",
+    tags=["tickets"],
+    dependencies=[Depends(require_module_access("tickets"))],
+)
 
 
 @router.get("", response_model=list[TicketOut])

@@ -14,14 +14,19 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.workflows import schemas, service
 from fusionflow.modules.workflows.models import Workflow
 
-router = APIRouter(prefix="/workflows", tags=["workflows"])
+router = APIRouter(
+    prefix="/workflows",
+    tags=["workflows"],
+    dependencies=[Depends(require_module_access("workflows"))],
+)
 
 
 async def _get_workflow_or_404(session, tenant_id: uuid.UUID, workflow_id: uuid.UUID) -> Workflow:

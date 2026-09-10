@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.customers.schemas import CustomerCreate, CustomerOut, CustomerUpdate
 
-router = APIRouter(prefix="/customers", tags=["customers"])
+router = APIRouter(
+    prefix="/customers",
+    tags=["customers"],
+    dependencies=[Depends(require_module_access("customers"))],
+)
 
 
 @router.get("", response_model=list[CustomerOut])

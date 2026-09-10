@@ -31,6 +31,7 @@ from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.models import (
     ConnectorAccessRequest,
     ConnectorAccessRequestStatus,
+    ConnectorCategory,
     ConnectorCredential,
     ConnectorEvent,
     ConnectorEventType,
@@ -368,6 +369,8 @@ async def connect(
     connector_type = await get_connector_type_by_key(session, type_key)
     if connector_type is None or not connector_type.is_enabled_globally:
         raise ConnectorError(f"Unknown or disabled connector type: {type_key!r}", status_code=404)
+    if connector_type.category == ConnectorCategory.FEATURE:
+        raise ConnectorError("This is an internal module, not connectable", status_code=400)
 
     has_access = await _tenant_has_connector_access(
         session, tenant_id=tenant_id, connector_type_id=connector_type.id

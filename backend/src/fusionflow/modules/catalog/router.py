@@ -29,11 +29,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.catalog import service as catalog_service
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.catalog.models import ProductServiceType
 from fusionflow.modules.catalog.schemas import (
     CouponCreate,
@@ -51,9 +52,15 @@ from fusionflow.modules.custom_fields.models import EntityType
 _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
-def _build_product_service_router(*, entity_type: ProductServiceType, prefix: str, tag: str) -> APIRouter:
+def _build_product_service_router(
+    *, entity_type: ProductServiceType, prefix: str, tag: str, module_key: str
+) -> APIRouter:
     custom_field_entity_type = EntityType(entity_type.value)
-    router = APIRouter(prefix=prefix, tags=[tag])
+    router = APIRouter(
+        prefix=prefix,
+        tags=[tag],
+        dependencies=[Depends(require_module_access(module_key))],
+    )
 
     @router.get("", response_model=list[ProductServiceOut])
     async def list_items(context: TenantContextDep, session: SessionDep) -> list[ProductServiceOut]:
@@ -121,14 +128,22 @@ def _build_product_service_router(*, entity_type: ProductServiceType, prefix: st
 
 
 products_router = _build_product_service_router(
-    entity_type=ProductServiceType.PRODUCT, prefix="/products", tag="products"
+    entity_type=ProductServiceType.PRODUCT, prefix="/products", tag="products", module_key="products"
 )
 services_router = _build_product_service_router(
-    entity_type=ProductServiceType.SERVICE, prefix="/services", tag="services"
+    entity_type=ProductServiceType.SERVICE, prefix="/services", tag="services", module_key="services"
 )
 
-coupons_router = APIRouter(prefix="/coupons", tags=["coupons"])
-offers_router = APIRouter(prefix="/offers", tags=["offers"])
+coupons_router = APIRouter(
+    prefix="/coupons",
+    tags=["coupons"],
+    dependencies=[Depends(require_module_access("coupons"))],
+)
+offers_router = APIRouter(
+    prefix="/offers",
+    tags=["offers"],
+    dependencies=[Depends(require_module_access("offers"))],
+)
 
 
 # ---------------------------------------------------------------------------
