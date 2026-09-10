@@ -22,8 +22,10 @@ import {
   createPlan,
   fetchFeatureFlags,
   fetchPlanFeatureFlags,
+  fetchPlanResourceLimits,
   fetchPlans,
   setPlanFeatureFlags,
+  setPlanResourceLimits,
   updatePlan,
 } from "../../lib/endpoints";
 
@@ -41,6 +43,8 @@ export function PlansPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [pendingFlagEdits, setPendingFlagEdits] = useState<Record<string, boolean>>({});
+  // Keyed by resource_key. "" input means "unlimited" (max_count=null on save).
+  const [pendingLimitEdits, setPendingLimitEdits] = useState<Record<string, string>>({});
 
   const { data: plans, isLoading, isError } = useQuery({
     queryKey: ["admin", "plans"],
@@ -52,6 +56,12 @@ export function PlansPage() {
   const { data: planFlags } = useQuery({
     queryKey: ["admin", "plans", selectedPlanId, "feature-flags"],
     queryFn: () => fetchPlanFeatureFlags(selectedPlanId as string),
+    enabled: !!selectedPlanId,
+  });
+
+  const { data: planLimits } = useQuery({
+    queryKey: ["admin", "plans", selectedPlanId, "resource-limits"],
+    queryFn: () => fetchPlanResourceLimits(selectedPlanId as string),
     enabled: !!selectedPlanId,
   });
 
@@ -87,12 +97,32 @@ export function PlansPage() {
     },
   });
 
+  const saveLimitsMutation = useMutation({
+    mutationFn: () =>
+      setPlanResourceLimits(
+        selectedPlanId as string,
+        Object.entries(pendingLimitEdits).map(([resource_key, value]) => ({
+          resource_key,
+          max_count: value.trim() === "" ? null : Number(value),
+        })),
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plans", selectedPlanId, "resource-limits"] });
+      setPendingLimitEdits({});
+    },
+  });
+
   const selectedPlan = plans?.find((p) => p.id === selectedPlanId) ?? null;
   const enabledByFlagId = new Map((planFlags ?? []).map((f) => [f.feature_flag_id, f.enabled]));
 
   function isFlagEnabled(flagId: string): boolean {
     if (flagId in pendingFlagEdits) return pendingFlagEdits[flagId];
     return enabledByFlagId.get(flagId) ?? false;
+  }
+
+  function limitInputValue(resourceKey: string, maxCount: number | null): string {
+    if (resourceKey in pendingLimitEdits) return pendingLimitEdits[resourceKey];
+    return maxCount === null ? "" : String(maxCount);
   }
 
   return (
@@ -203,6 +233,52 @@ export function PlansPage() {
               <Button
                 onClick={() => saveFlagsMutation.mutate()}
                 disabled={Object.keys(pendingFlagEdits).length === 0 || saveFlagsMutation.isPending}
+              >
+                Save changes
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedPlan && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Resource limits for {selectedPlan.name}</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <p className="text-xs text-muted-foreground">
+              Leave blank for unlimited. A tenant-specific override (set on the tenant's detail page)
+              always beats this plan default.
+            </p>
+            <div className="flex flex-col gap-2">
+              {(planLimits ?? []).map((limit) => (
+                <div
+                  key={limit.connector_type_id}
+                  className="flex items-center gap-3 rounded-md border border-border p-3 text-sm"
+                >
+                  <span className="flex-1 font-mono">{limit.resource_key}</span>
+                  <span className="text-xs text-muted-foreground">{limit.display_name}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    placeholder="Unlimited"
+                    className="h-9 w-28"
+                    value={limitInputValue(limit.resource_key, limit.max_count)}
+                    onChange={(e) =>
+                      setPendingLimitEdits((edits) => ({ ...edits, [limit.resource_key]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
+              {(planLimits ?? []).length === 0 && (
+                <p className="py-4 text-center text-sm text-muted-foreground">No limitable resources found.</p>
+              )}
+            </div>
+            <div className="flex justify-end">
+              <Button
+                onClick={() => saveLimitsMutation.mutate()}
+                disabled={Object.keys(pendingLimitEdits).length === 0 || saveLimitsMutation.isPending}
               >
                 Save changes
               </Button>

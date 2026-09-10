@@ -185,6 +185,24 @@ export interface PlanFeatureFlag {
   enabled: boolean;
 }
 
+/** One catalog resource key + this plan's configured limit (`null` =
+ * unlimited at the plan level). Always one entry per catalog key, even if
+ * unconfigured, so the editor can show an input for every resource. */
+export interface PlanResourceLimit {
+  connector_type_id: string;
+  resource_key: string;
+  display_name: string;
+  max_count: number | null;
+}
+
+export interface TenantResourceLimit {
+  connector_type_id: string;
+  resource_key: string;
+  display_name: string;
+  limit: number | null;
+  source: "tenant_override" | "plan" | "unlimited";
+}
+
 export interface BusinessTemplate {
   id: string;
   key: string;

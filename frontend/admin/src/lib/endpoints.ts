@@ -15,10 +15,12 @@ import type {
   ImpersonateResponse,
   Plan,
   PlanFeatureFlag,
+  PlanResourceLimit,
   TemplatesResponse,
   TenantDetail,
   TenantListItem,
   TenantModuleAccess,
+  TenantResourceLimit,
 } from "./admin-types";
 
 export async function login(payload: LoginRequest): Promise<AuthTokens> {
@@ -195,6 +197,42 @@ export async function setPlanFeatureFlags(
     flags,
   });
   return data;
+}
+
+export async function fetchPlanResourceLimits(planId: string): Promise<PlanResourceLimit[]> {
+  const { data } = await apiClient.get<PlanResourceLimit[]>(`/api/admin/plans/${planId}/resource-limits`);
+  return data;
+}
+
+export async function setPlanResourceLimits(
+  planId: string,
+  limits: { resource_key: string; max_count: number | null }[],
+): Promise<PlanResourceLimit[]> {
+  const { data } = await apiClient.put<PlanResourceLimit[]>(`/api/admin/plans/${planId}/resource-limits`, {
+    limits,
+  });
+  return data;
+}
+
+export async function fetchTenantResourceLimits(tenantId: string): Promise<TenantResourceLimit[]> {
+  const { data } = await apiClient.get<TenantResourceLimit[]>(`/api/admin/tenants/${tenantId}/resource-limits`);
+  return data;
+}
+
+export async function setTenantResourceLimit(
+  tenantId: string,
+  resourceKey: string,
+  maxCount: number,
+): Promise<TenantResourceLimit> {
+  const { data } = await apiClient.put<TenantResourceLimit>(
+    `/api/admin/tenants/${tenantId}/resource-limits/${resourceKey}`,
+    { max_count: maxCount },
+  );
+  return data;
+}
+
+export async function clearTenantResourceLimit(tenantId: string, resourceKey: string): Promise<void> {
+  await apiClient.delete(`/api/admin/tenants/${tenantId}/resource-limits/${resourceKey}`);
 }
 
 export async function assignTenantPlan(tenantId: string, planId: string | null): Promise<TenantListItem> {

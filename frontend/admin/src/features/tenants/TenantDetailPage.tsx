@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { ArrowLeft, Blocks, CreditCard, Plug, ShieldQuestion, Users } from "lucide-react";
+import { ArrowLeft, Blocks, CreditCard, Gauge, Plug, ShieldQuestion, Users } from "lucide-react";
 import {
   Badge,
   type BadgeVariant,
@@ -25,14 +25,17 @@ import {
   approveTenant,
   assignTenantPlan,
   clearConnectorAccessOverride,
+  clearTenantResourceLimit,
   denyTenant,
   fetchPlans,
   fetchTenantConnectors,
   fetchTenantDetail,
   fetchTenantModuleAccess,
+  fetchTenantResourceLimits,
   impersonateTenantUser,
   reactivateTenant,
   setConnectorAccessOverride,
+  setTenantResourceLimit,
   suspendTenant,
 } from "../../lib/endpoints";
 
@@ -80,6 +83,13 @@ export function TenantDetailPage() {
     enabled: !!tenantId,
   });
 
+  const { data: resourceLimits } = useQuery({
+    queryKey: ["admin", "tenants", tenantId, "resource-limits"],
+    queryFn: () => fetchTenantResourceLimits(tenantId),
+    enabled: !!tenantId,
+  });
+  const [limitInputs, setLimitInputs] = useState<Record<string, string>>({});
+
   const { data: plans } = useQuery({ queryKey: ["admin", "plans"], queryFn: fetchPlans });
 
   const assignPlanMutation = useMutation({
@@ -121,6 +131,26 @@ export function TenantDetailPage() {
     onSuccess: invalidateModuleAccess,
   });
   const moduleActionBusy = revokeMutation.isPending || grantMutation.isPending || resetOverrideMutation.isPending;
+
+  function invalidateResourceLimits() {
+    void queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId, "resource-limits"] });
+  }
+  const saveLimitMutation = useMutation({
+    mutationFn: ({ resourceKey, maxCount }: { resourceKey: string; maxCount: number }) =>
+      setTenantResourceLimit(tenantId, resourceKey, maxCount),
+    onSuccess: (_result, { resourceKey }) => {
+      invalidateResourceLimits();
+      setLimitInputs((inputs) => {
+        const next = { ...inputs };
+        delete next[resourceKey];
+        return next;
+      });
+    },
+  });
+  const clearLimitMutation = useMutation({
+    mutationFn: (resourceKey: string) => clearTenantResourceLimit(tenantId, resourceKey),
+    onSuccess: invalidateResourceLimits,
+  });
 
   const impersonateMutation = useMutation({
     mutationFn: () =>
@@ -409,6 +439,92 @@ export function TenantDetailPage() {
                 <TableRow>
                   <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">
                     No catalog items found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center gap-2">
+          <Gauge className="h-4 w-4 text-muted-foreground" />
+          <CardTitle>Resource limits</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Set an explicit ceiling for this tenant, independent of its plan - always wins until reset.
+            Leave the plan's own default alone from the Plans page.
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Resource</TableHead>
+                <TableHead>Effective limit</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead className="w-72" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(resourceLimits ?? []).map((item) => (
+                <TableRow key={item.connector_type_id}>
+                  <TableCell className="font-medium text-foreground">
+                    {item.display_name}
+                    <span className="ml-1 font-mono text-xs text-muted-foreground">({item.resource_key})</span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {item.limit === null ? "unlimited" : `up to ${item.limit}`}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={item.source === "tenant_override" ? "secondary" : "outline"}>
+                      {item.source === "tenant_override"
+                        ? "tenant override"
+                        : item.source === "plan"
+                          ? "plan default"
+                          : "unlimited"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="flex flex-wrap items-center gap-2">
+                    <Input
+                      type="number"
+                      min={0}
+                      placeholder="set limit"
+                      className="h-9 w-24"
+                      value={limitInputs[item.resource_key] ?? ""}
+                      onChange={(e) =>
+                        setLimitInputs((inputs) => ({ ...inputs, [item.resource_key]: e.target.value }))
+                      }
+                    />
+                    <Button
+                      size="sm"
+                      disabled={!limitInputs[item.resource_key] || saveLimitMutation.isPending}
+                      onClick={() =>
+                        saveLimitMutation.mutate({
+                          resourceKey: item.resource_key,
+                          maxCount: Number(limitInputs[item.resource_key]),
+                        })
+                      }
+                    >
+                      Set
+                    </Button>
+                    {item.source === "tenant_override" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={clearLimitMutation.isPending}
+                        onClick={() => clearLimitMutation.mutate(item.resource_key)}
+                      >
+                        Reset
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {(resourceLimits ?? []).length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">
+                    No limitable resources found.
                   </TableCell>
                 </TableRow>
               )}
