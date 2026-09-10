@@ -187,6 +187,10 @@ export interface ConnectorAccessRequestAdmin {
   id: string;
   tenant_id: string;
   business_name: string;
+  /** The tenant's current status - "pending_approval" means this request
+   * was filed as part of a brand-new signup application, not a later
+   * additional request from an already-active tenant. */
+  business_status: BusinessStatus;
   connector_type_id: string;
   connector_type_key: string;
   status: ConnectorAccessRequestStatus;
