@@ -171,6 +171,116 @@ class FieldTemplatesUnavailableOut(BaseModel):
     reason: str = "modules.custom_fields.FieldTemplate does not exist in this checkout yet"
 
 
+class PlanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    name: str
+    is_default: bool
+    created_at: datetime
+
+
+class PlanCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    is_default: bool = False
+
+
+class PlanUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    is_default: bool | None = None
+
+
+class PlanFeatureFlagIn(BaseModel):
+    feature_flag_id: uuid.UUID
+    enabled: bool
+
+
+class PlanFeatureFlagOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    plan_id: uuid.UUID
+    feature_flag_id: uuid.UUID
+    enabled: bool
+
+
+class PlanFeatureFlagsSetRequest(BaseModel):
+    flags: list[PlanFeatureFlagIn] = Field(default_factory=list)
+
+
+class BusinessTemplateOut(BaseModel):
+    """Admin-facing projection - richer than the tenant-facing
+    `modules.business_templates.schemas.BusinessTemplateOut` (which omits
+    `created_at` and exposes connector types by `key`, not `id`)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    name: str
+    description: str | None = None
+    vertical: str | None = None
+    plan_id: uuid.UUID | None = None
+    is_active: bool
+    created_at: datetime
+    connector_type_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class BusinessTemplateCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    vertical: str | None = Field(default=None, max_length=80)
+    plan_id: uuid.UUID | None = None
+    is_active: bool = True
+    connector_type_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class BusinessTemplateUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    vertical: str | None = Field(default=None, max_length=80)
+    plan_id: uuid.UUID | None = None
+    is_active: bool | None = None
+    connector_type_ids: list[uuid.UUID] | None = None
+
+
+class AssignTenantPlanRequest(BaseModel):
+    """`plan_id=None` unassigns the tenant's plan."""
+
+    plan_id: uuid.UUID | None = None
+
+
+class ConnectorAccessRequestAdminOut(BaseModel):
+    """Cross-tenant projection - built by hand in `service.list_connector_access_requests`
+    from a joined `(ConnectorAccessRequest, Business, ConnectorType, User)` row tuple read
+    over `unscoped_session_factory`, so this is never `from_attributes`'d off a single ORM
+    instance the way most `*Out` schemas here are."""
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    business_name: str
+    connector_type_id: uuid.UUID
+    connector_type_key: str
+    status: str
+    reason: str | None = None
+    requested_by: uuid.UUID
+    requested_by_email: str | None = None
+    reviewed_by: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+
+
+class ConnectorAccessRequestReviewOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    status: str
+    reviewed_by: uuid.UUID | None = None
+    reviewed_at: datetime | None = None
+
+
 class BillingUsageOut(BaseModel):
     """Placeholder payload - phase 1 has no metering/billing model yet.
 

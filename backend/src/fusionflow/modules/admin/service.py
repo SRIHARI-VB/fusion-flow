@@ -13,18 +13,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt as pyjwt
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from fusionflow.config import get_settings
 from fusionflow.core.security import JWT_ALGORITHM
-from fusionflow.db.session import set_tenant_context
+from fusionflow.db.session import set_tenant_context, unscoped_session_factory
 from fusionflow.modules.admin.models import (
     AuditLog,
+    BusinessTemplate,
+    BusinessTemplateConnectorType,
     FeatureFlag,
     FeatureFlagOverride,
     ImpersonationSession,
+    Plan,
+    PlanFeatureFlag,
 )
 from fusionflow.modules.admin.schemas import (
     ConnectorHealthItemOut,
@@ -46,11 +50,19 @@ settings = get_settings()
 # them - regardless of which lands first. See the two functions below that
 # check these flags.
 try:
-    from fusionflow.modules.connectors.models import ConnectorInstance  # type: ignore[import-not-found]
+    from fusionflow.modules.connectors.models import (  # type: ignore[import-not-found]
+        ConnectorAccessRequest,
+        ConnectorAccessRequestStatus,
+        ConnectorInstance,
+        ConnectorType,
+    )
 
     _CONNECTORS_AVAILABLE = True
 except ImportError:
+    ConnectorAccessRequest = None  # type: ignore[assignment]
+    ConnectorAccessRequestStatus = None  # type: ignore[assignment]
     ConnectorInstance = None  # type: ignore[assignment]
+    ConnectorType = None  # type: ignore[assignment]
     _CONNECTORS_AVAILABLE = False
 
 try:
@@ -424,7 +436,12 @@ async def list_feature_flag_overrides(
 async def is_feature_enabled(
     session: AsyncSession, flag_key: str, tenant_id: uuid.UUID | None
 ) -> bool:
-    """Resolve one flag for one tenant: tenant override > global override > default.
+    """Resolve one flag for one tenant.
+
+    Resolution order: tenant override > tenant's plan entitlement >
+    global override > flag default. The plan tier was added for the
+    "business templates, connector access requests, and plan entitlements"
+    feature - see `modules.admin.models.Plan`/`PlanFeatureFlag`.
 
     Exported for other modules to import later (per the plan: "a resolution
     helper function ... that other modules could import later"). Unknown
@@ -448,6 +465,24 @@ async def is_feature_enabled(
         ).scalar_one_or_none()
         if tenant_override is not None:
             return tenant_override.enabled
+
+        # Plan tier: `Business.plan_id` doesn't exist on the ORM model in
+        # this checkout yet (see this task's report) - `getattr(...,
+        # None)` means this step is a no-op ("no plan") today and starts
+        # resolving the moment that column lands, no code change needed.
+        business = await session.get(Business, tenant_id)
+        plan_id = getattr(business, "plan_id", None) if business is not None else None
+        if plan_id is not None:
+            plan_flag = (
+                await session.execute(
+                    select(PlanFeatureFlag).where(
+                        PlanFeatureFlag.plan_id == plan_id,
+                        PlanFeatureFlag.feature_flag_id == flag.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if plan_flag is not None:
+                return plan_flag.enabled
 
     global_override = (
         await session.execute(
@@ -498,6 +533,330 @@ async def list_field_templates(
 
 def field_templates_available() -> bool:
     return _FIELD_TEMPLATES_AVAILABLE
+
+
+# --- Plans -------------------------------------------------------------------
+
+
+async def list_plans(session: AsyncSession) -> list[Plan]:
+    return list((await session.execute(select(Plan).order_by(Plan.name))).scalars().all())
+
+
+async def get_plan(session: AsyncSession, plan_id: uuid.UUID) -> Plan | None:
+    return await session.get(Plan, plan_id)
+
+
+async def create_plan(session: AsyncSession, *, key: str, name: str, is_default: bool) -> Plan:
+    existing = (await session.execute(select(Plan).where(Plan.key == key))).scalar_one_or_none()
+    if existing is not None:
+        raise AdminError(f"Plan '{key}' already exists", status_code=409)
+    if is_default:
+        # Only one plan can be the default at a time - clear any existing one.
+        await session.execute(update(Plan).values(is_default=False))
+    plan = Plan(id=uuid.uuid4(), key=key, name=name, is_default=is_default)
+    session.add(plan)
+    await session.flush()
+    return plan
+
+
+async def update_plan(
+    session: AsyncSession, plan_id: uuid.UUID, *, name: str | None, is_default: bool | None
+) -> Plan:
+    plan = await get_plan(session, plan_id)
+    if plan is None:
+        raise AdminError("Plan not found", status_code=404)
+    if name is not None:
+        plan.name = name
+    if is_default is not None:
+        if is_default:
+            await session.execute(update(Plan).values(is_default=False))
+        plan.is_default = is_default
+    await session.flush()
+    return plan
+
+
+async def list_plan_feature_flags(session: AsyncSession, plan_id: uuid.UUID) -> list[PlanFeatureFlag]:
+    return list(
+        (
+            await session.execute(select(PlanFeatureFlag).where(PlanFeatureFlag.plan_id == plan_id))
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def set_plan_feature_flags(
+    session: AsyncSession, plan_id: uuid.UUID, *, flags: list[tuple[uuid.UUID, bool]]
+) -> list[PlanFeatureFlag]:
+    """Upserts each `(feature_flag_id, enabled)` pair for this plan.
+
+    Replace-by-key, not replace-all: flags not named in `flags` keep
+    whatever entitlement they already had for this plan (mirrors
+    `upsert_feature_flag_override`'s upsert-not-replace convention).
+    """
+    plan = await get_plan(session, plan_id)
+    if plan is None:
+        raise AdminError("Plan not found", status_code=404)
+
+    result: list[PlanFeatureFlag] = []
+    for feature_flag_id, enabled in flags:
+        flag = await session.get(FeatureFlag, feature_flag_id)
+        if flag is None:
+            raise AdminError(f"Feature flag {feature_flag_id} not found", status_code=404)
+        existing = (
+            await session.execute(
+                select(PlanFeatureFlag).where(
+                    PlanFeatureFlag.plan_id == plan_id,
+                    PlanFeatureFlag.feature_flag_id == feature_flag_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.enabled = enabled
+            result.append(existing)
+        else:
+            row = PlanFeatureFlag(
+                id=uuid.uuid4(), plan_id=plan_id, feature_flag_id=feature_flag_id, enabled=enabled
+            )
+            session.add(row)
+            result.append(row)
+    await session.flush()
+    return result
+
+
+async def assign_tenant_plan(
+    session: AsyncSession, business_id: uuid.UUID, *, plan_id: uuid.UUID | None
+) -> Business:
+    """`plan_id=None` unassigns. `Business.plan_id` doesn't exist on the ORM
+    model in this checkout yet - see this task's report; the assignment
+    below is a documented no-op until that column lands via migration."""
+    business = await get_tenant(session, business_id)
+    if business is None:
+        raise AdminError("Tenant not found", status_code=404)
+    if plan_id is not None:
+        plan = await get_plan(session, plan_id)
+        if plan is None:
+            raise AdminError("Plan not found", status_code=404)
+    business.plan_id = plan_id  # type: ignore[attr-defined]
+    await session.flush()
+    return business
+
+
+# --- Business templates -------------------------------------------------------
+
+
+async def list_business_templates(session: AsyncSession) -> list[BusinessTemplate]:
+    return list(
+        (await session.execute(select(BusinessTemplate).order_by(BusinessTemplate.name))).scalars().all()
+    )
+
+
+async def get_business_template(session: AsyncSession, template_id: uuid.UUID) -> BusinessTemplate | None:
+    return await session.get(BusinessTemplate, template_id)
+
+
+async def get_business_template_connector_type_ids(
+    session: AsyncSession, template_id: uuid.UUID
+) -> list[uuid.UUID]:
+    rows = await session.execute(
+        select(BusinessTemplateConnectorType.connector_type_id).where(
+            BusinessTemplateConnectorType.business_template_id == template_id
+        )
+    )
+    return list(rows.scalars().all())
+
+
+async def _replace_business_template_connector_types(
+    session: AsyncSession, template_id: uuid.UUID, connector_type_ids: list[uuid.UUID]
+) -> None:
+    await session.execute(
+        delete(BusinessTemplateConnectorType).where(
+            BusinessTemplateConnectorType.business_template_id == template_id
+        )
+    )
+    for connector_type_id in connector_type_ids:
+        session.add(
+            BusinessTemplateConnectorType(
+                id=uuid.uuid4(),
+                business_template_id=template_id,
+                connector_type_id=connector_type_id,
+            )
+        )
+    await session.flush()
+
+
+async def create_business_template(
+    session: AsyncSession,
+    *,
+    key: str,
+    name: str,
+    description: str | None,
+    vertical: str | None,
+    plan_id: uuid.UUID | None,
+    is_active: bool,
+    connector_type_ids: list[uuid.UUID],
+) -> BusinessTemplate:
+    existing = (
+        await session.execute(select(BusinessTemplate).where(BusinessTemplate.key == key))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise AdminError(f"Business template '{key}' already exists", status_code=409)
+
+    template = BusinessTemplate(
+        id=uuid.uuid4(),
+        key=key,
+        name=name,
+        description=description,
+        vertical=vertical,
+        plan_id=plan_id,
+        is_active=is_active,
+    )
+    session.add(template)
+    await session.flush()
+    if connector_type_ids:
+        await _replace_business_template_connector_types(session, template.id, connector_type_ids)
+    return template
+
+
+async def update_business_template(
+    session: AsyncSession,
+    template_id: uuid.UUID,
+    *,
+    name: str | None,
+    description: str | None,
+    vertical: str | None,
+    plan_id: uuid.UUID | None,
+    is_active: bool | None,
+    connector_type_ids: list[uuid.UUID] | None,
+) -> BusinessTemplate:
+    template = await get_business_template(session, template_id)
+    if template is None:
+        raise AdminError("Business template not found", status_code=404)
+    if name is not None:
+        template.name = name
+    if description is not None:
+        template.description = description
+    if vertical is not None:
+        template.vertical = vertical
+    if plan_id is not None:
+        template.plan_id = plan_id
+    if is_active is not None:
+        template.is_active = is_active
+    await session.flush()
+    if connector_type_ids is not None:
+        await _replace_business_template_connector_types(session, template.id, connector_type_ids)
+    return template
+
+
+# --- Connector access requests (cross-tenant admin queue) --------------------
+
+
+def connectors_available() -> bool:
+    return _CONNECTORS_AVAILABLE
+
+
+async def list_connector_access_requests(*, status_filter: str | None = None) -> list[dict[str, Any]]:
+    """The cross-tenant "pending connector access requests" admin queue.
+
+    A true cross-tenant read RLS can never satisfy (see
+    `fusionflow.db.session.unscoped_session_factory`'s docstring) - runs on
+    that unscoped session for this one read, then discards it. Never mixed
+    with a mutation (approve/deny go through `_review_connector_access_request`,
+    which re-derives tenant context from scratch on a normal session).
+    """
+    if not _CONNECTORS_AVAILABLE:
+        return []
+
+    async with unscoped_session_factory() as session:
+        query = (
+            select(ConnectorAccessRequest, Business, ConnectorType, User)  # type: ignore[arg-type]
+            .join(Business, Business.id == ConnectorAccessRequest.tenant_id)  # type: ignore[union-attr]
+            .join(ConnectorType, ConnectorType.id == ConnectorAccessRequest.connector_type_id)  # type: ignore[union-attr]
+            .join(User, User.id == ConnectorAccessRequest.requested_by)  # type: ignore[union-attr]
+        )
+        if status_filter is not None:
+            query = query.where(
+                ConnectorAccessRequest.status == ConnectorAccessRequestStatus(status_filter)  # type: ignore[union-attr]
+            )
+        rows = (await session.execute(query)).all()
+
+    def _sort_key(row: tuple[Any, ...]) -> tuple[int, float]:
+        request = row[0]
+        pending_first = 0 if request.status == ConnectorAccessRequestStatus.PENDING else 1
+        return (pending_first, -request.created_at.timestamp())
+
+    rows = sorted(rows, key=_sort_key)
+    return [
+        {
+            "id": request.id,
+            "tenant_id": request.tenant_id,
+            "business_name": business.name,
+            "connector_type_id": request.connector_type_id,
+            "connector_type_key": connector_type.key,
+            "status": request.status.value,
+            "reason": request.reason,
+            "requested_by": request.requested_by,
+            "requested_by_email": user.email,
+            "reviewed_by": request.reviewed_by,
+            "reviewed_at": request.reviewed_at,
+            "created_at": request.created_at,
+        }
+        for request, business, connector_type, user in rows
+    ]
+
+
+async def _resolve_access_request_tenant(request_id: uuid.UUID) -> uuid.UUID | None:
+    """Learn which tenant a `request_id` belongs to, bypassing RLS.
+
+    Same chicken-and-egg problem as `connectors.service._resolve_oauth_state_tenant`:
+    an admin request has no `app.current_tenant_id` set, and a plain RLS-scoped
+    read of this tenant-scoped row returns nothing even though it exists. Used
+    ONLY to learn the tenant_id; the authoritative fetch+mutate happens
+    afterward on the normal session, once `set_tenant_context` has run.
+    """
+    if not _CONNECTORS_AVAILABLE:
+        return None
+    async with unscoped_session_factory() as session:
+        request = await session.get(ConnectorAccessRequest, request_id)  # type: ignore[arg-type]
+        return request.tenant_id if request is not None else None
+
+
+async def _review_connector_access_request(
+    session: AsyncSession, request_id: uuid.UUID, *, admin_id: uuid.UUID, approve: bool
+) -> ConnectorAccessRequest:
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    tenant_id = await _resolve_access_request_tenant(request_id)
+    if tenant_id is None:
+        raise AdminError("Connector access request not found", status_code=404)
+    await set_tenant_context(session, tenant_id)
+
+    request = await session.get(ConnectorAccessRequest, request_id)  # type: ignore[arg-type]
+    if request is None:
+        raise AdminError("Connector access request not found", status_code=404)
+    if request.status != ConnectorAccessRequestStatus.PENDING:
+        raise AdminError(f"Request already {request.status.value}", status_code=409)
+
+    request.status = (
+        ConnectorAccessRequestStatus.APPROVED if approve else ConnectorAccessRequestStatus.DENIED
+    )
+    request.reviewed_by = admin_id
+    request.reviewed_at = datetime.now(timezone.utc)
+    await session.flush()
+    return request
+
+
+async def approve_connector_access_request(
+    session: AsyncSession, request_id: uuid.UUID, *, admin_id: uuid.UUID
+) -> ConnectorAccessRequest:
+    return await _review_connector_access_request(session, request_id, admin_id=admin_id, approve=True)
+
+
+async def deny_connector_access_request(
+    session: AsyncSession, request_id: uuid.UUID, *, admin_id: uuid.UUID
+) -> ConnectorAccessRequest:
+    return await _review_connector_access_request(session, request_id, admin_id=admin_id, approve=False)
 
 
 # --- Billing usage (stub) ----------------------------------------------------

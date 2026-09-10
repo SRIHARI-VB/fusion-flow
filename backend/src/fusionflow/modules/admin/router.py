@@ -17,13 +17,20 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.admin.audit import AuditLoggingRoute
 from fusionflow.modules.admin.deps import PlatformAdminDep, SessionDep
 from fusionflow.modules.admin.schemas import (
+    AssignTenantPlanRequest,
     AuditLogOut,
     AuditLogPage,
+    BusinessTemplateCreateRequest,
+    BusinessTemplateOut,
+    BusinessTemplateUpdateRequest,
+    ConnectorAccessRequestAdminOut,
+    ConnectorAccessRequestReviewOut,
     ConnectorHealthOut,
     FeatureFlagCreateRequest,
     FeatureFlagOut,
@@ -34,6 +41,11 @@ from fusionflow.modules.admin.schemas import (
     FieldTemplatesUnavailableOut,
     ImpersonateRequest,
     ImpersonateResponse,
+    PlanCreateRequest,
+    PlanFeatureFlagOut,
+    PlanFeatureFlagsSetRequest,
+    PlanOut,
+    PlanUpdateRequest,
     TenantDetailOut,
     TenantListItemOut,
 )
@@ -282,36 +294,247 @@ async def list_templates(_admin: PlatformAdminDep, session: SessionDep):
     return await admin_service.list_field_templates(session)
 
 
-@router.post("/templates", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def create_template(_admin: PlatformAdminDep) -> dict:
-    """Stubbed until `modules.custom_fields.FieldTemplate` lands.
+# NOTE on the old `POST /templates` / `PATCH /templates/{id}` 501 stubs that
+# used to live here: they were placeholders for authoring
+# `modules.custom_fields.FieldTemplate` (the per-entity-type custom-field
+# bundle listed read-only by `GET /templates` above), a concept this task
+# deliberately does not touch (see this task's report - conflating it with
+# the new `BusinessTemplate` "starter kit" concept below was flagged
+# explicitly as something to avoid). `GET /templates` above is untouched.
+# The two 501 stubs are removed rather than repurposed - full CRUD for the
+# new, distinct `BusinessTemplate` model lives at `/admin/business-templates`
+# below instead, so nothing that previously worked (the read-only `GET
+# /templates` list) changes shape, and nothing that never worked (the two
+# stubs) is left half-real under a misleading old path.
 
-    Kept as a real, discoverable route (rather than omitted) so the frontend
-    can call it and render a clear "not available yet" state instead of a
-    404 that looks like a typo'd URL - see this agent's report.
-    """
-    if not admin_service.field_templates_available():
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Global field template authoring is not wired up yet: modules.custom_fields.FieldTemplate does not exist in this checkout.",
+
+# --- Plans ---------------------------------------------------------------
+
+
+@router.get("/plans", response_model=list[PlanOut])
+async def list_plans(_admin: PlatformAdminDep, session: SessionDep) -> list[PlanOut]:
+    plans = await admin_service.list_plans(session)
+    return [PlanOut.model_validate(p) for p in plans]
+
+
+@router.post("/plans", response_model=PlanOut, status_code=status.HTTP_201_CREATED)
+async def create_plan(
+    payload: PlanCreateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> PlanOut:
+    try:
+        plan = await admin_service.create_plan(
+            session, key=payload.key, name=payload.name, is_default=payload.is_default
         )
-    raise HTTPException(  # pragma: no cover - unreachable until custom_fields lands
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Template creation exists in the model but is not yet implemented in modules/admin.",
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return PlanOut.model_validate(plan)
+
+
+@router.patch("/plans/{plan_id}", response_model=PlanOut)
+async def update_plan(
+    plan_id: uuid.UUID, payload: PlanUpdateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> PlanOut:
+    try:
+        plan = await admin_service.update_plan(
+            session, plan_id, name=payload.name, is_default=payload.is_default
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return PlanOut.model_validate(plan)
+
+
+@router.get("/plans/{plan_id}/feature-flags", response_model=list[PlanFeatureFlagOut])
+async def list_plan_feature_flags(
+    plan_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> list[PlanFeatureFlagOut]:
+    rows = await admin_service.list_plan_feature_flags(session, plan_id)
+    return [PlanFeatureFlagOut.model_validate(r) for r in rows]
+
+
+@router.put("/plans/{plan_id}/feature-flags", response_model=list[PlanFeatureFlagOut])
+async def set_plan_feature_flags(
+    plan_id: uuid.UUID,
+    payload: PlanFeatureFlagsSetRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> list[PlanFeatureFlagOut]:
+    try:
+        rows = await admin_service.set_plan_feature_flags(
+            session, plan_id, flags=[(f.feature_flag_id, f.enabled) for f in payload.flags]
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return [PlanFeatureFlagOut.model_validate(r) for r in rows]
+
+
+@router.post("/tenants/{business_id}/plan", response_model=TenantListItemOut)
+async def assign_tenant_plan(
+    business_id: uuid.UUID,
+    payload: AssignTenantPlanRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> TenantListItemOut:
+    """Assign (or unassign, `plan_id=None`) a tenant's plan directly -
+    independent of whether it ever applied a `BusinessTemplate`."""
+    try:
+        business = await admin_service.assign_tenant_plan(session, business_id, plan_id=payload.plan_id)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    memberships = await admin_service.get_tenant_memberships(session, business_id)
+    return TenantListItemOut(
+        id=business.id,
+        name=business.name,
+        slug=business.slug,
+        vertical=business.vertical,
+        status=business.status,
+        member_count=len(memberships),
+        created_at=business.created_at,
     )
 
 
-@router.patch("/templates/{template_id}", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-async def update_template(template_id: uuid.UUID, _admin: PlatformAdminDep) -> dict:
-    """See `create_template` above - same stubbed-until-custom_fields-lands story."""
-    if not admin_service.field_templates_available():
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Global field template authoring is not wired up yet: modules.custom_fields.FieldTemplate does not exist in this checkout.",
+# --- Business templates (starter kits) ---------------------------------------
+
+
+async def _to_business_template_out(session: AsyncSession, template) -> BusinessTemplateOut:
+    connector_type_ids = await admin_service.get_business_template_connector_type_ids(session, template.id)
+    return BusinessTemplateOut(
+        id=template.id,
+        key=template.key,
+        name=template.name,
+        description=template.description,
+        vertical=template.vertical,
+        plan_id=template.plan_id,
+        is_active=template.is_active,
+        created_at=template.created_at,
+        connector_type_ids=connector_type_ids,
+    )
+
+
+@router.get("/business-templates", response_model=list[BusinessTemplateOut])
+async def list_business_templates(
+    _admin: PlatformAdminDep, session: SessionDep
+) -> list[BusinessTemplateOut]:
+    templates = await admin_service.list_business_templates(session)
+    return [await _to_business_template_out(session, t) for t in templates]
+
+
+@router.get("/business-templates/{template_id}", response_model=BusinessTemplateOut)
+async def get_business_template(
+    template_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> BusinessTemplateOut:
+    template = await admin_service.get_business_template(session, template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Business template not found")
+    return await _to_business_template_out(session, template)
+
+
+@router.post(
+    "/business-templates", response_model=BusinessTemplateOut, status_code=status.HTTP_201_CREATED
+)
+async def create_business_template(
+    payload: BusinessTemplateCreateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> BusinessTemplateOut:
+    try:
+        template = await admin_service.create_business_template(
+            session,
+            key=payload.key,
+            name=payload.name,
+            description=payload.description,
+            vertical=payload.vertical,
+            plan_id=payload.plan_id,
+            is_active=payload.is_active,
+            connector_type_ids=payload.connector_type_ids,
         )
-    raise HTTPException(  # pragma: no cover - unreachable until custom_fields lands
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Template editing exists in the model but is not yet implemented in modules/admin.",
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return await _to_business_template_out(session, template)
+
+
+@router.patch("/business-templates/{template_id}", response_model=BusinessTemplateOut)
+async def update_business_template(
+    template_id: uuid.UUID,
+    payload: BusinessTemplateUpdateRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> BusinessTemplateOut:
+    try:
+        template = await admin_service.update_business_template(
+            session,
+            template_id,
+            name=payload.name,
+            description=payload.description,
+            vertical=payload.vertical,
+            plan_id=payload.plan_id,
+            is_active=payload.is_active,
+            connector_type_ids=payload.connector_type_ids,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return await _to_business_template_out(session, template)
+
+
+# --- Connector access requests (cross-tenant admin queue) --------------------
+
+
+@router.get("/connector-access-requests", response_model=list[ConnectorAccessRequestAdminOut])
+async def list_connector_access_requests(
+    _admin: PlatformAdminDep,
+    status_filter: str | None = Query(default=None, alias="status"),
+) -> list[ConnectorAccessRequestAdminOut]:
+    """Pending-first, cross-tenant. Reads over `unscoped_session_factory` -
+    see `admin_service.list_connector_access_requests`'s docstring - so this
+    handler deliberately takes no `SessionDep` of its own."""
+    rows = await admin_service.list_connector_access_requests(status_filter=status_filter)
+    return [ConnectorAccessRequestAdminOut(**row) for row in rows]
+
+
+@router.post(
+    "/connector-access-requests/{request_id}/approve", response_model=ConnectorAccessRequestReviewOut
+)
+async def approve_connector_access_request(
+    request_id: uuid.UUID, admin: PlatformAdminDep, session: SessionDep
+) -> ConnectorAccessRequestReviewOut:
+    try:
+        request = await admin_service.approve_connector_access_request(
+            session, request_id, admin_id=admin.id
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return ConnectorAccessRequestReviewOut(
+        id=request.id,
+        tenant_id=request.tenant_id,
+        status=request.status.value,
+        reviewed_by=request.reviewed_by,
+        reviewed_at=request.reviewed_at,
+    )
+
+
+@router.post(
+    "/connector-access-requests/{request_id}/deny", response_model=ConnectorAccessRequestReviewOut
+)
+async def deny_connector_access_request(
+    request_id: uuid.UUID, admin: PlatformAdminDep, session: SessionDep
+) -> ConnectorAccessRequestReviewOut:
+    try:
+        request = await admin_service.deny_connector_access_request(
+            session, request_id, admin_id=admin.id
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return ConnectorAccessRequestReviewOut(
+        id=request.id,
+        tenant_id=request.tenant_id,
+        status=request.status.value,
+        reviewed_by=request.reviewed_by,
+        reviewed_at=request.reviewed_at,
     )
 
 
