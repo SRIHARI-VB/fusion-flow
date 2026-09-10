@@ -41,10 +41,16 @@ class Payment(Base, TenantScopedMixin):
     order_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    customer_id: Mapped[uuid.UUID] = mapped_column(
+    # Nullable: a payment arriving via a provider webhook may not resolve to
+    # a known customer at all (no built-in way to map a raw Razorpay
+    # payment back to one of our customers unless our own id was embedded
+    # in the provider's `notes` field ahead of time - see
+    # razorpay/adapter.py::handle_webhook). Leaving it null rather than
+    # guessing is safer than a wrong attribution.
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     # FK to connector_instances.id, added in integration migration once connector framework lands

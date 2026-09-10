@@ -19,6 +19,7 @@ import hmac
 import json
 import logging
 import uuid
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
 import httpx
@@ -36,6 +37,8 @@ from fusionflow.modules.connectors.models import (
     ConnectorType,
     HealthStatus,
 )
+from fusionflow.modules.payments import service as payments_service
+from fusionflow.modules.payments.models import PaymentStatus
 
 logger = logging.getLogger(__name__)
 settings = get_connector_settings()
@@ -59,6 +62,34 @@ CONFIG_SCHEMA: dict[str, Any] = {
 # opposed to "reached Razorpay and it rejected the key pair" - only the
 # former falls back to a stub result.
 _NETWORK_UNREACHABLE_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError, httpx.TimeoutException)
+
+# Razorpay's `payment.entity.status` values that map onto our own
+# PaymentStatus vocabulary. `created`/other in-flight statuses we don't
+# recognise are deliberately left unmapped (see `_upsert_payment_from_entity`)
+# rather than guessed at.
+_RAZORPAY_PAYMENT_STATUS_MAP: dict[str, PaymentStatus] = {
+    "authorized": PaymentStatus.PENDING,
+    "captured": PaymentStatus.SUCCEEDED,
+    "failed": PaymentStatus.FAILED,
+    "refunded": PaymentStatus.REFUNDED,
+}
+
+
+def _parse_uuid(value: Any) -> uuid.UUID | None:
+    """Best-effort UUID parse for `notes.internal_customer_id`/`internal_order_id`.
+
+    Both are our own convention for a future "create a Razorpay payment
+    request embedding our ids" flow (not built yet) - a webhook may
+    legitimately have neither, or a merchant may have hand-created the
+    payment link in the Razorpay dashboard with unrelated notes, so any
+    non-UUID value here is ignored rather than raising.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
 
 
 class RazorpayAdapter(base.ConnectorAdapter):
@@ -216,15 +247,12 @@ class RazorpayAdapter(base.ConnectorAdapter):
         headers: Mapping[str, str],
         session: AsyncSession,
     ) -> list[ConnectorEvent]:
-        """Records the raw event only.
+        """Records the raw event, then turns a `payment.*` event into a `payments` row.
 
-        Turning a `payment.captured`/`payment.failed` webhook into a
-        `payments` table row is the fixed-connector `payments` module's
-        job (owned by a different agent in this wave) - it should consume
-        `connector_events` rows where `event_type=webhook_received` and
-        the parent instance's `connector_type.key == "razorpay"`, exactly
-        the transactional-outbox pattern the plan's workflow engine also
-        uses. Not wired up here - see this task's final report.
+        Requires the caller (webhooks.py::_dispatch) to have already called
+        `set_tenant_context` for `instance.tenant_id` on `session` - every
+        write below is tenant-scoped and RLS will reject them otherwise
+        (confirmed live; see the webhooks.py fix this depended on).
         """
         try:
             body = json.loads(raw_payload)
@@ -240,7 +268,68 @@ class RazorpayAdapter(base.ConnectorAdapter):
         )
         session.add(event)
         await session.flush()
+
+        event_type = body.get("event", "")
+        if isinstance(event_type, str) and event_type.startswith("payment."):
+            entity = body.get("payload", {}).get("payment", {}).get("entity")
+            if isinstance(entity, dict):
+                await self._upsert_payment_from_entity(
+                    session, instance=instance, entity=entity, connector_event_id=event.id
+                )
+
         return [event]
+
+    async def _upsert_payment_from_entity(
+        self,
+        session: AsyncSession,
+        *,
+        instance: ConnectorInstance,
+        entity: dict[str, Any],
+        connector_event_id: uuid.UUID,
+    ) -> None:
+        provider_ref = entity.get("id")
+        if not provider_ref:
+            logger.warning("[razorpay] payment webhook entity has no id, skipping payments row")
+            return
+
+        razorpay_status = entity.get("status", "")
+        status = _RAZORPAY_PAYMENT_STATUS_MAP.get(razorpay_status)
+        if status is None:
+            logger.info(
+                "[razorpay] unrecognized payment.entity.status %r for %s, skipping payments row",
+                razorpay_status,
+                provider_ref,
+            )
+            return
+
+        # Razorpay amounts are integers in the currency's smallest unit
+        # (paise for INR, cents for USD, ...) - our `payments.amount` is a
+        # plain decimal in major currency units, matching every other
+        # amount field in this codebase (Order.total_amount, the manual
+        # POST /payments test route, ...).
+        amount_minor = entity.get("amount")
+        try:
+            amount = Decimal(amount_minor) / Decimal(100) if amount_minor is not None else Decimal("0")
+        except (InvalidOperation, TypeError):
+            amount = Decimal("0")
+        currency = str(entity.get("currency") or "INR")[:3].upper()
+
+        notes = entity.get("notes") if isinstance(entity.get("notes"), dict) else {}
+        customer_id = _parse_uuid(notes.get("internal_customer_id"))
+        order_id = _parse_uuid(notes.get("internal_order_id"))
+
+        await payments_service.upsert_payment_from_provider(
+            session,
+            tenant_id=instance.tenant_id,
+            connector_instance_id=instance.id,
+            provider_ref=provider_ref,
+            amount=amount,
+            currency=currency,
+            status=status,
+            customer_id=customer_id,
+            order_id=order_id,
+            raw_event_ref=str(connector_event_id),
+        )
 
 
 adapter = RazorpayAdapter()

@@ -18,7 +18,7 @@ class PaymentCreate(BaseModel):
     """
 
     order_id: uuid.UUID | None = None
-    customer_id: uuid.UUID
+    customer_id: uuid.UUID | None = None
     connector_instance_id: uuid.UUID | None = None
     provider_ref: str | None = Field(default=None, max_length=200)
     amount: Decimal = Field(ge=0)
@@ -32,7 +32,7 @@ class PaymentOut(BaseModel):
 
     id: uuid.UUID
     order_id: uuid.UUID | None
-    customer_id: uuid.UUID
+    customer_id: uuid.UUID | None
     connector_instance_id: uuid.UUID | None
     provider_ref: str | None
     amount: Decimal
