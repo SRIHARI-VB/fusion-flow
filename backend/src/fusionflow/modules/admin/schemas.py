@@ -273,6 +273,21 @@ class ConnectorAccessRequestAdminOut(BaseModel):
     created_at: datetime
 
 
+class ConnectorTypeCatalogOut(BaseModel):
+    """Minimal projection of the global `connector_types` catalog - just
+    enough for the admin "pick connectors for this bundle" UI. The full
+    `ConnectorTypeOut` (with `config_schema` etc.) lives in
+    `modules.connectors.schemas` and isn't reachable from `/api/admin/*`
+    (that surface has no tenant context - see this task's report)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    display_name: str
+    category: str
+
+
 class ConnectorAccessRequestReviewOut(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID

@@ -32,6 +32,7 @@ from fusionflow.modules.admin.schemas import (
     ConnectorAccessRequestAdminOut,
     ConnectorAccessRequestReviewOut,
     ConnectorHealthOut,
+    ConnectorTypeCatalogOut,
     FeatureFlagCreateRequest,
     FeatureFlagOut,
     FeatureFlagOverrideOut,
@@ -394,6 +395,15 @@ async def assign_tenant_plan(
         member_count=len(memberships),
         created_at=business.created_at,
     )
+
+
+@router.get("/connector-types", response_model=list[ConnectorTypeCatalogOut])
+async def list_connector_type_catalog(
+    _admin: PlatformAdminDep, session: SessionDep
+) -> list[ConnectorTypeCatalogOut]:
+    """Global catalog, for the business-template "pick connectors" UI."""
+    rows = await admin_service.list_connector_type_catalog(session)
+    return [ConnectorTypeCatalogOut(**row) for row in rows]
 
 
 # --- Business templates (starter kits) ---------------------------------------

@@ -755,6 +755,24 @@ def connectors_available() -> bool:
     return _CONNECTORS_AVAILABLE
 
 
+async def list_connector_type_catalog(session: AsyncSession) -> list[dict[str, Any]]:
+    """Minimal `connector_types` projection for the admin "pick connectors for
+    this business-template bundle" UI - `/api/admin/*` has no tenant context
+    (see this module's module docstring), so it can't reuse
+    `modules.connectors.router.list_connector_types` (which computes a
+    per-tenant `access_status`); this is the global catalog only, no
+    per-tenant fields at all."""
+    if not _CONNECTORS_AVAILABLE:
+        return []
+    rows = (
+        await session.execute(select(ConnectorType).order_by(ConnectorType.display_name))  # type: ignore[arg-type]
+    ).scalars().all()
+    return [
+        {"id": row.id, "key": row.key, "display_name": row.display_name, "category": row.category.value}
+        for row in rows
+    ]
+
+
 async def list_connector_access_requests(*, status_filter: str | None = None) -> list[dict[str, Any]]:
     """The cross-tenant "pending connector access requests" admin queue.
 
