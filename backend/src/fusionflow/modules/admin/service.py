@@ -29,6 +29,8 @@ from fusionflow.modules.admin.models import (
     ImpersonationSession,
     Plan,
     PlanFeatureFlag,
+    PlanResourceLimit,
+    ResourceLimitOverride,
 )
 from fusionflow.modules.admin.schemas import (
     ConnectorHealthItemOut,
@@ -700,6 +702,58 @@ async def is_feature_enabled(
     return flag.is_global_default
 
 
+async def get_resource_limit(
+    session: AsyncSession, *, tenant_id: uuid.UUID, resource_key: str
+) -> int | None:
+    """Resolve the max-row-count ceiling for one tenant on one resource
+    (e.g. "products", "kb"), or `None` for unlimited.
+
+    Resolution order: tenant override (`ResourceLimitOverride`) > tenant's
+    plan (`PlanResourceLimit`) > unlimited - the same shape as
+    `is_feature_enabled` above, minus the global-override tier (a resource
+    limit is either set for a plan/tenant or it doesn't exist - there is no
+    "everyone gets N by default" concept the way `FeatureFlag.is_global_default`
+    is for booleans). Keyed by the same `connector_types.key` catalog
+    `require_module_access` already gates modules by - unknown keys resolve
+    to unlimited rather than raising, matching `is_feature_enabled`'s
+    "unknown key -> permissive default" convention... except here
+    "permissive" means unlimited, not `False`.
+    """
+    if not _CONNECTORS_AVAILABLE:
+        return None
+
+    connector_type = await connector_service.get_connector_type_by_key(session, resource_key)
+    if connector_type is None:
+        return None
+
+    tenant_override = (
+        await session.execute(
+            select(ResourceLimitOverride).where(
+                ResourceLimitOverride.tenant_id == tenant_id,
+                ResourceLimitOverride.connector_type_id == connector_type.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if tenant_override is not None:
+        return tenant_override.max_count
+
+    business = await session.get(Business, tenant_id)
+    plan_id = business.plan_id if business is not None else None
+    if plan_id is not None:
+        plan_limit = (
+            await session.execute(
+                select(PlanResourceLimit).where(
+                    PlanResourceLimit.plan_id == plan_id,
+                    PlanResourceLimit.connector_type_id == connector_type.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if plan_limit is not None:
+            return plan_limit.max_count
+
+    return None
+
+
 async def resolve_known_flags_for_tenant(
     session: AsyncSession, tenant_id: uuid.UUID
 ) -> dict[str, bool]:
@@ -861,6 +915,171 @@ async def assign_tenant_plan(
     business.plan_id = plan_id  # type: ignore[attr-defined]
     await session.flush()
     return business
+
+
+# --- Resource count limits (plan defaults + tenant overrides) ----------------
+#
+# Mirrors the plan_feature_flags/feature_flag_overrides shape one section
+# up, applied to counts instead of booleans - see `get_resource_limit`'s
+# docstring for the resolution order this powers.
+
+
+async def list_plan_resource_limits(session: AsyncSession, plan_id: uuid.UUID) -> list[PlanResourceLimit]:
+    return list(
+        (
+            await session.execute(select(PlanResourceLimit).where(PlanResourceLimit.plan_id == plan_id))
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def set_plan_resource_limits(
+    session: AsyncSession, plan_id: uuid.UUID, *, limits: list[tuple[str, int | None]]
+) -> list[PlanResourceLimit]:
+    """Upserts each `(resource_key, max_count)` pair for this plan.
+    `max_count=None` deletes the row for that key (reverts to unlimited at
+    the plan level) rather than storing a sentinel - matches how "no row"
+    already means unlimited in `get_resource_limit`."""
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    plan = await get_plan(session, plan_id)
+    if plan is None:
+        raise AdminError("Plan not found", status_code=404)
+
+    result: list[PlanResourceLimit] = []
+    for resource_key, max_count in limits:
+        connector_type = await connector_service.get_connector_type_by_key(session, resource_key)
+        if connector_type is None:
+            raise AdminError(f"Unknown resource key: {resource_key!r}", status_code=404)
+        existing = (
+            await session.execute(
+                select(PlanResourceLimit).where(
+                    PlanResourceLimit.plan_id == plan_id,
+                    PlanResourceLimit.connector_type_id == connector_type.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if max_count is None:
+            if existing is not None:
+                await session.delete(existing)
+            continue
+        if existing is not None:
+            existing.max_count = max_count
+            result.append(existing)
+        else:
+            row = PlanResourceLimit(
+                id=uuid.uuid4(), plan_id=plan_id, connector_type_id=connector_type.id, max_count=max_count
+            )
+            session.add(row)
+            result.append(row)
+    await session.flush()
+    return result
+
+
+async def get_tenant_resource_limits(session: AsyncSession, business_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Every resource key's effective limit + source + current usage, for
+    the admin's per-tenant resource-limits panel."""
+    if not _CONNECTORS_AVAILABLE:
+        return []
+
+    await set_tenant_context(session, business_id)
+    types = await connector_service.list_connector_types(session)
+    overrides = {
+        o.connector_type_id: o
+        for o in (
+            await session.execute(
+                select(ResourceLimitOverride).where(ResourceLimitOverride.tenant_id == business_id)
+            )
+        )
+        .scalars()
+        .all()
+    }
+    business = await session.get(Business, business_id)
+    plan_id = business.plan_id if business is not None else None
+    plan_limits: dict[uuid.UUID, int] = {}
+    if plan_id is not None:
+        plan_limits = {
+            row.connector_type_id: row.max_count
+            for row in (
+                await session.execute(
+                    select(PlanResourceLimit).where(PlanResourceLimit.plan_id == plan_id)
+                )
+            )
+            .scalars()
+            .all()
+        }
+
+    result = []
+    for t in types:
+        override = overrides.get(t.id)
+        if override is not None:
+            limit, source = override.max_count, "tenant_override"
+        elif t.id in plan_limits:
+            limit, source = plan_limits[t.id], "plan"
+        else:
+            limit, source = None, "unlimited"
+        result.append(
+            {
+                "connector_type_id": t.id,
+                "connector_type_key": t.key,
+                "display_name": t.display_name,
+                "limit": limit,
+                "source": source,
+            }
+        )
+    return result
+
+
+async def set_resource_limit_override(
+    session: AsyncSession, business_id: uuid.UUID, resource_key: str, *, max_count: int
+) -> ResourceLimitOverride:
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    await set_tenant_context(session, business_id)
+    connector_type = await connector_service.get_connector_type_by_key(session, resource_key)
+    if connector_type is None:
+        raise AdminError(f"Unknown resource key: {resource_key!r}", status_code=404)
+
+    existing = (
+        await session.execute(
+            select(ResourceLimitOverride).where(
+                ResourceLimitOverride.tenant_id == business_id,
+                ResourceLimitOverride.connector_type_id == connector_type.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.max_count = max_count
+        await session.flush()
+        return existing
+
+    override = ResourceLimitOverride(
+        id=uuid.uuid4(), tenant_id=business_id, connector_type_id=connector_type.id, max_count=max_count
+    )
+    session.add(override)
+    await session.flush()
+    return override
+
+
+async def clear_resource_limit_override(session: AsyncSession, business_id: uuid.UUID, resource_key: str) -> None:
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    await set_tenant_context(session, business_id)
+    connector_type = await connector_service.get_connector_type_by_key(session, resource_key)
+    if connector_type is None:
+        raise AdminError(f"Unknown resource key: {resource_key!r}", status_code=404)
+
+    await session.execute(
+        delete(ResourceLimitOverride).where(
+            ResourceLimitOverride.tenant_id == business_id,
+            ResourceLimitOverride.connector_type_id == connector_type.id,
+        )
+    )
+    await session.flush()
 
 
 # --- Business templates -------------------------------------------------------

@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Sequence
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.catalog.models import Coupon, Offer, ProductService, ProductServiceType
@@ -65,6 +65,19 @@ async def list_products_services(
     if entity_type is not None:
         stmt = stmt.where(ProductService.entity_type == entity_type)
     return (await session.execute(stmt.order_by(ProductService.created_at.desc()))).scalars().all()
+
+
+async def count_products_services(
+    session: AsyncSession, tenant_id: uuid.UUID, *, entity_type: ProductServiceType
+) -> int:
+    """Used by `enforce_resource_limit("products"/"services", ...)` -
+    `entity_type` is bound at router-registration time via `functools.partial`
+    or a small closure (see `catalog/router.py`'s `_build_product_service_router`),
+    matching how that factory already binds `module_key` per router."""
+    stmt = select(func.count()).select_from(ProductService).where(
+        ProductService.tenant_id == tenant_id, ProductService.entity_type == entity_type
+    )
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def get_product_service(
@@ -130,6 +143,11 @@ async def list_coupons(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequen
     return (await session.execute(stmt)).scalars().all()
 
 
+async def count_coupons(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    stmt = select(func.count()).select_from(Coupon).where(Coupon.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one()
+
+
 async def get_coupon(session: AsyncSession, *, tenant_id: uuid.UUID, coupon_id: uuid.UUID) -> Coupon | None:
     return (
         await session.execute(select(Coupon).where(Coupon.id == coupon_id, Coupon.tenant_id == tenant_id))
@@ -187,6 +205,11 @@ async def delete_coupon(session: AsyncSession, coupon: Coupon) -> None:
 async def list_offers(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequence[Offer]:
     stmt = select(Offer).where(Offer.tenant_id == tenant_id).order_by(Offer.created_at.desc())
     return (await session.execute(stmt)).scalars().all()
+
+
+async def count_offers(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    stmt = select(func.count()).select_from(Offer).where(Offer.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def get_offer(session: AsyncSession, *, tenant_id: uuid.UUID, offer_id: uuid.UUID) -> Offer | None:

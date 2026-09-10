@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
-from fusionflow.modules.connectors.deps import require_module_access
+from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
 from fusionflow.modules.workflows import schemas, service
 from fusionflow.modules.workflows.models import Workflow
 
@@ -27,6 +27,7 @@ router = APIRouter(
     tags=["workflows"],
     dependencies=[Depends(require_module_access("workflows"))],
 )
+_resource_gate = Depends(enforce_resource_limit("workflows", service.count_workflows))
 
 
 async def _get_workflow_or_404(session, tenant_id: uuid.UUID, workflow_id: uuid.UUID) -> Workflow:
@@ -62,7 +63,7 @@ async def list_workflows(context: TenantContextDep, session: SessionDep) -> list
 
 @router.post("", response_model=schemas.WorkflowOut, status_code=status.HTTP_201_CREATED)
 async def create_workflow(
-    payload: schemas.WorkflowCreateRequest, context: TenantContextDep, session: SessionDep
+    payload: schemas.WorkflowCreateRequest, context: TenantContextDep, session: SessionDep, _gate=_resource_gate
 ) -> schemas.WorkflowOut:
     workflow = await service.create_workflow(
         session,

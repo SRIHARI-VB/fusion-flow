@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.kb.models import KbArticle
@@ -21,6 +21,11 @@ async def list_articles(session: AsyncSession, tenant_id: uuid.UUID) -> list[KbA
         select(KbArticle).where(KbArticle.tenant_id == tenant_id).order_by(KbArticle.created_at.desc())
     )
     return list(rows.scalars().all())
+
+
+async def count_articles(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    stmt = select(func.count()).select_from(KbArticle).where(KbArticle.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def get_article(session: AsyncSession, tenant_id: uuid.UUID, article_id: uuid.UUID) -> KbArticle | None:

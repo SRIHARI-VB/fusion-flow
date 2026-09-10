@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
-from fusionflow.modules.connectors.deps import require_module_access
+from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
 from fusionflow.modules.custom_fields import service as custom_fields_service
 from fusionflow.modules.custom_fields.models import EntityType
 from fusionflow.modules.custom_fields.schemas import (
@@ -35,6 +35,9 @@ _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Field 
 # business is fully set up) and must stay reachable, which a router-level
 # `dependencies=[]` cannot selectively exclude one route from.
 _require_custom_fields = Depends(require_module_access("custom_fields"))
+_custom_fields_resource_gate = Depends(
+    enforce_resource_limit("custom_fields", custom_fields_service.count_field_definitions)
+)
 
 
 @router.get("/definitions", response_model=list[FieldDefinitionOut])
@@ -52,7 +55,11 @@ async def list_definitions(
 
 @router.post("/definitions", response_model=FieldDefinitionOut, status_code=status.HTTP_201_CREATED)
 async def create_definition(
-    payload: FieldDefinitionCreate, context: TenantContextDep, session: SessionDep, _gate=_require_custom_fields
+    payload: FieldDefinitionCreate,
+    context: TenantContextDep,
+    session: SessionDep,
+    _gate=_require_custom_fields,
+    _limit_gate=_custom_fields_resource_gate,
 ) -> FieldDefinitionOut:
     definition = await custom_fields_service.create_field_definition(
         session, tenant_id=context.tenant_id, payload=payload

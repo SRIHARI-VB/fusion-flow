@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
-from fusionflow.modules.connectors.deps import require_module_access
+from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.customers.schemas import CustomerCreate, CustomerOut, CustomerUpdate
 
@@ -21,6 +21,7 @@ router = APIRouter(
     tags=["customers"],
     dependencies=[Depends(require_module_access("customers"))],
 )
+_resource_gate = Depends(enforce_resource_limit("customers", customers_service.count_customers))
 
 
 @router.get("", response_model=list[CustomerOut])
@@ -31,7 +32,7 @@ async def list_customers(session: SessionDep, context: TenantContextDep) -> list
 
 @router.post("", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)
 async def create_customer(
-    payload: CustomerCreate, session: SessionDep, context: TenantContextDep
+    payload: CustomerCreate, session: SessionDep, context: TenantContextDep, _gate=_resource_gate
 ) -> CustomerOut:
     customer = await customers_service.create_customer(session, context.tenant_id, payload)
     await commit_and_keep_tenant_context(session)

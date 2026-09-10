@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.catalog import service as catalog_service
-from fusionflow.modules.connectors.deps import require_module_access
+from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
 from fusionflow.modules.catalog.models import ProductServiceType
 from fusionflow.modules.catalog.schemas import (
     CouponCreate,
@@ -62,6 +62,11 @@ def _build_product_service_router(
         dependencies=[Depends(require_module_access(module_key))],
     )
 
+    async def _count_fn(session, tenant_id):
+        return await catalog_service.count_products_services(session, tenant_id, entity_type=entity_type)
+
+    _resource_gate = Depends(enforce_resource_limit(module_key, _count_fn))
+
     @router.get("", response_model=list[ProductServiceOut])
     async def list_items(context: TenantContextDep, session: SessionDep) -> list[ProductServiceOut]:
         items = await catalog_service.list_products_services(
@@ -71,7 +76,7 @@ def _build_product_service_router(
 
     @router.post("", response_model=ProductServiceOut, status_code=status.HTTP_201_CREATED)
     async def create_item(
-        payload: ProductServiceCreate, context: TenantContextDep, session: SessionDep
+        payload: ProductServiceCreate, context: TenantContextDep, session: SessionDep, _gate=_resource_gate
     ) -> ProductServiceOut:
         if payload.entity_type != entity_type:
             raise HTTPException(
@@ -144,6 +149,8 @@ offers_router = APIRouter(
     tags=["offers"],
     dependencies=[Depends(require_module_access("offers"))],
 )
+_coupons_resource_gate = Depends(enforce_resource_limit("coupons", catalog_service.count_coupons))
+_offers_resource_gate = Depends(enforce_resource_limit("offers", catalog_service.count_offers))
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +165,9 @@ async def list_coupons(context: TenantContextDep, session: SessionDep) -> list[C
 
 
 @coupons_router.post("", response_model=CouponOut, status_code=status.HTTP_201_CREATED)
-async def create_coupon(payload: CouponCreate, context: TenantContextDep, session: SessionDep) -> CouponOut:
+async def create_coupon(
+    payload: CouponCreate, context: TenantContextDep, session: SessionDep, _gate=_coupons_resource_gate
+) -> CouponOut:
     custom_fields = await catalog_service.validate_entity_custom_fields(
         session, tenant_id=context.tenant_id, entity_type=EntityType.COUPON, payload=payload.custom_fields
     )
@@ -215,7 +224,9 @@ async def list_offers(context: TenantContextDep, session: SessionDep) -> list[Of
 
 
 @offers_router.post("", response_model=OfferOut, status_code=status.HTTP_201_CREATED)
-async def create_offer(payload: OfferCreate, context: TenantContextDep, session: SessionDep) -> OfferOut:
+async def create_offer(
+    payload: OfferCreate, context: TenantContextDep, session: SessionDep, _gate=_offers_resource_gate
+) -> OfferOut:
     custom_fields = await catalog_service.validate_entity_custom_fields(
         session, tenant_id=context.tenant_id, entity_type=EntityType.OFFER, payload=payload.custom_fields
     )

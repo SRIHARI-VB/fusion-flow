@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
-from fusionflow.modules.connectors.deps import require_module_access
+from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
 from fusionflow.modules.kb import service as kb_service
 from fusionflow.modules.kb.schemas import KbArticleCreate, KbArticleOut, KbArticleUpdate
 
@@ -21,6 +21,7 @@ router = APIRouter(
     tags=["kb"],
     dependencies=[Depends(require_module_access("kb"))],
 )
+_resource_gate = Depends(enforce_resource_limit("kb", kb_service.count_articles))
 
 
 @router.get("", response_model=list[KbArticleOut])
@@ -31,7 +32,7 @@ async def list_kb_articles(session: SessionDep, context: TenantContextDep) -> li
 
 @router.post("", response_model=KbArticleOut, status_code=status.HTTP_201_CREATED)
 async def create_kb_article(
-    payload: KbArticleCreate, session: SessionDep, context: TenantContextDep
+    payload: KbArticleCreate, session: SessionDep, context: TenantContextDep, _gate=_resource_gate
 ) -> KbArticleOut:
     article = await kb_service.create_article(session, context.tenant_id, payload)
     await commit_and_keep_tenant_context(session)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
@@ -64,6 +64,11 @@ async def list_workflows(session: AsyncSession, *, tenant_id: uuid.UUID) -> list
         select(Workflow).where(Workflow.tenant_id == tenant_id).order_by(Workflow.created_at.desc())
     )
     return list(rows.scalars().all())
+
+
+async def count_workflows(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    stmt = select(func.count()).select_from(Workflow).where(Workflow.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def get_workflow(session: AsyncSession, workflow_id: uuid.UUID) -> Workflow | None:

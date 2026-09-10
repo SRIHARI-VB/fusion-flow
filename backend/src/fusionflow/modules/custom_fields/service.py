@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.custom_fields.models import EntityType, FieldDefinition, FieldTemplate
@@ -30,6 +30,14 @@ async def list_field_definitions(
         stmt = stmt.where(FieldDefinition.entity_type == entity_type)
     stmt = stmt.order_by(FieldDefinition.entity_type, FieldDefinition.sort_order, FieldDefinition.key)
     return (await session.execute(stmt)).scalars().all()
+
+
+async def count_field_definitions(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    """Total field definitions across every entity_type - "limit custom
+    fields" is interpreted as one ceiling on the whole per-tenant set, not
+    per entity_type."""
+    stmt = select(func.count()).select_from(FieldDefinition).where(FieldDefinition.tenant_id == tenant_id)
+    return (await session.execute(stmt)).scalar_one()
 
 
 async def get_field_definition(
