@@ -83,12 +83,33 @@ cp .env.example .env             # then edit DATABASE_URL / JWT_SECRET
 > Point the venv somewhere local (e.g. `python -m venv %LOCALAPPDATA%\Temp\ff-venv`)
 > if you hit that.
 
-### Database roles
+### Database: Docker (recommended for local dev)
+
+```bash
+docker compose -f ../infra/docker/docker-compose.dev.yml up -d
+```
+
+This starts a disposable local Postgres matching `.env.example`'s defaults
+exactly (`DATABASE_URL=postgresql+asyncpg://fusionflow:fusionflow@localhost:5432/fusionflow`)
+and creates the low-privilege `fusionflow_app` role automatically on first
+boot (`infra/docker/initdb/01-create-app-role.sql`) with the
+`RUNTIME_DATABASE_URL` from `.env.example` already matching its password
+(`fusionflow_app_dev_only`). Nothing else to configure — copy `.env.example`
+to `.env`, uncomment `RUNTIME_DATABASE_URL`, and skip straight to Migrate
+below.
+
+To start over: `docker compose -f ../infra/docker/docker-compose.dev.yml down -v`
+(the `-v` drops the data volume, so the init script re-runs and re-creates
+the role on next `up`).
+
+### Database: manual setup (no Docker, or a shared/remote Postgres)
 
 Create two roles. This matters: **Postgres table owners bypass RLS unless
-`FORCE ROW LEVEL SECURITY` is set, and superusers bypass it always.** The
-API must run as a low-privilege, non-owner, non-superuser role or the
-isolation policies are decorative.
+`FORCE ROW LEVEL SECURITY` is set, and superusers (and, on managed
+providers like Supabase, any role with `rolbypassrls=true` — check for
+this explicitly, it is not the same as superuser) bypass it always.** The
+API must run as a low-privilege, non-owner, non-superuser, non-bypassrls
+role or the isolation policies are decorative.
 
 ```sql
 CREATE DATABASE fusionflow;
@@ -146,7 +167,17 @@ symmetric case holds, that a session with **no** tenant context sees zero
 rows (not an error, not everything), and that a cross-tenant INSERT is
 rejected by the policy's `WITH CHECK`.
 
-It is skipped unless `TEST_DATABASE_URL` is set:
+It is skipped unless `TEST_DATABASE_URL` is set.
+
+**Using the Docker compose Postgres**: it already has the low-privilege
+role, so this is just:
+
+```bash
+export TEST_DATABASE_URL=postgresql+asyncpg://fusionflow_app:fusionflow_app_dev_only@localhost:5432/fusionflow
+pytest tests/test_rls_isolation.py -v
+```
+
+**Manual Postgres**:
 
 ```bash
 # 1. a throwaway database, migrated

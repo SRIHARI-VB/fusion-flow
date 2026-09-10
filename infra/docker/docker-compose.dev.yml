@@ -1,0 +1,35 @@
+# Disposable local Postgres for fusion-flow development, so RLS/migrations
+# can be exercised without depending on a specific Supabase project.
+#
+# Usage:
+#   docker compose -f infra/docker/docker-compose.dev.yml up -d
+#   cd backend && alembic upgrade head   # DATABASE_URL from .env.example already matches this
+#
+# The low-privilege `fusionflow_app` role RLS actually needs (see
+# backend/src/fusionflow/config.py::RUNTIME_DATABASE_URL and
+# backend/src/fusionflow/db/rls.py) is created automatically on first boot
+# by initdb/01-create-app-role.sql - Postgres's official image runs every
+# script in that directory exactly once, the first time the data volume is
+# initialized.
+services:
+  postgres:
+    image: postgres:16
+    container_name: fusionflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fusionflow
+      POSTGRES_PASSWORD: fusionflow
+      POSTGRES_DB: fusionflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - fusionflow-db-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fusionflow -d fusionflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  fusionflow-db-data:
