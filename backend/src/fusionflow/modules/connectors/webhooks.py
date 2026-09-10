@@ -34,8 +34,9 @@ from typing import Mapping
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from fusionflow.core.deps import SessionDep
-from fusionflow.db.session import set_tenant_context
+from fusionflow.db.session import set_tenant_context, unscoped_session_factory
 from fusionflow.modules.connectors import base
+from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
 
 # Imported for their registration side effect (see base.registry) - this
@@ -60,34 +61,46 @@ async def _dispatch(type_key: str, request: Request, session: SessionDep) -> dic
     headers: Mapping[str, str] = {k.lower(): v for k, v in request.headers.items()}
     query_params = dict(request.query_params)
 
-    instance = await adapter_impl.resolve_instance_for_webhook(
-        raw_payload=raw_payload, headers=headers, query_params=query_params, session=session
-    )
-    if instance is None:
-        # 200 (not 404/401): providers retry aggressively on a non-2xx
-        # response, and "we don't recognise this yet" must not trigger a
-        # retry storm - log it and move on.
-        logger.warning("[webhooks] no matching connector instance for type=%s", type_key)
-        return {"received": False}
+    # Resolution runs on `unscoped_session_factory`, not the request's
+    # normal (RLS-restricted) `session`: at this point nobody has set
+    # `app.current_tenant_id` yet (webhooks carry no bearer token, so
+    # there's no tenant to derive one from), and `resolve_instance_for_webhook`
+    # has to read `connector_instances` (tenant-scoped) to figure out
+    # *which* tenant this is - a chicken-and-egg problem confirmed live:
+    # that lookup returns zero rows under RLS with no context set, even
+    # for a row that demonstrably exists. The instance object returned
+    # here is only used to read `.tenant_id`/`.id`; it is intentionally
+    # discarded once the unscoped session closes rather than mutated -
+    # see the re-fetch below.
+    async with unscoped_session_factory() as unscoped_session:
+        candidate = await adapter_impl.resolve_instance_for_webhook(
+            raw_payload=raw_payload, headers=headers, query_params=query_params, session=unscoped_session
+        )
+        if candidate is None:
+            # 200 (not 404/401): providers retry aggressively on a non-2xx
+            # response, and "we don't recognise this yet" must not trigger a
+            # retry storm - log it and move on.
+            logger.warning("[webhooks] no matching connector instance for type=%s", type_key)
+            return {"received": False}
+        tenant_id, instance_id = candidate.tenant_id, candidate.id
 
     if not adapter_impl.verify_webhook_signature(raw_payload=raw_payload, headers=headers):
         logger.warning(
-            "[webhooks] signature verification failed for type=%s instance=%s", type_key, instance.id
+            "[webhooks] signature verification failed for type=%s instance=%s", type_key, instance_id
         )
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    # This session never goes through `get_tenant_context` (webhooks carry no
-    # bearer token - there is no request-scoped tenant to derive one from),
-    # so without this call `app.current_tenant_id` is unset and every
-    # tenant-scoped write `handle_webhook` makes (ConnectorEvent, and any
-    # Payment row a payment webhook creates) is rejected by RLS's WITH CHECK
-    # clause - confirmed live: `InsufficientPrivilegeError: new row violates
-    # row-level security policy for table "connector_events"`. Safe to set
-    # here specifically because `resolve_instance_for_webhook` has *already*
-    # authenticated this request (instance-lookup + signature check above),
-    # so `instance.tenant_id` is a verified fact about this webhook, not
-    # caller-supplied input.
-    await set_tenant_context(session, instance.tenant_id)
+    # Now that the tenant is known (established above via a signature- and
+    # lookup-authenticated token, not caller-supplied input), set it on the
+    # request's normal session and re-fetch the instance through that -
+    # every write from here on (ConnectorEvent, any Payment row, this
+    # instance's own last_webhook_at) goes through the properly
+    # RLS-scoped session, never the unscoped one.
+    await set_tenant_context(session, tenant_id)
+    instance = await connector_service.get_instance(session, tenant_id=tenant_id, instance_id=instance_id)
+    if instance is None:
+        logger.warning("[webhooks] resolved instance %s vanished on re-fetch", instance_id)
+        return {"received": False}
 
     events = await adapter_impl.handle_webhook(
         instance=instance, raw_payload=raw_payload, headers=headers, session=session

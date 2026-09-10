@@ -22,6 +22,26 @@ engine = create_async_engine(settings.runtime_database_url, pool_pre_ping=True, 
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
+# Bound to DATABASE_URL (the migration/owner role), which bypasses RLS in
+# every environment this codebase provisions (Supabase's `postgres` role
+# has rolbypassrls=true; the Docker-compose role created by
+# infra/docker/initdb's owner is a superuser). Exists to resolve which
+# tenant an already-authenticated-by-other-means opaque token belongs to
+# - an OAuth `state` value, or a webhook's HMAC signature - *before*
+# `app.current_tenant_id` can be set for that tenant. Confirmed live: a
+# bare `SELECT ... WHERE id = :id` against a tenant-scoped table with no
+# tenant context set returns zero rows even for a row that demonstrably
+# exists, which is a chicken-and-egg problem for exactly these two flows
+# (connectors/webhooks.py, connectors/service.py's OAuth callback path)
+# - they cannot know which tenant's context to set without first reading
+# a row that RLS is hiding from them. Use this ONLY to look up the bare
+# fact of which tenant a pre-authenticated token belongs to; once known,
+# call `set_tenant_context` on the normal `async_session_factory` session
+# and re-query through that for anything else (including any write) -
+# never perform tenant-scoped business logic through this engine.
+_unscoped_engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+unscoped_session_factory = async_sessionmaker(_unscoped_engine, expire_on_commit=False, autoflush=False)
+
 # Key under which the active tenant id is stashed on `session.info`.
 TENANT_CONTEXT_KEY = "fusionflow_tenant_id"
 

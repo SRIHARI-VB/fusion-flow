@@ -76,6 +76,12 @@ async def connect_connector(
         )
     except ConnectorError as exc:
         raise _http(exc) from exc
+    except Exception as exc:  # noqa: BLE001 - see service.connect's docstring: adapter-raised
+        # exceptions (bad credentials, provider rejection, ...) propagate as-is from the
+        # adapter on purpose, precisely so this route can surface them as a clean 400
+        # instead of the framework-error shape ConnectorError represents. Without this,
+        # e.g. an invalid Razorpay key pair 500s instead of returning a useful message.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return ConnectResponse(instance=connector_service.to_instance_out(instance), redirect_url=result.redirect_url)
 
@@ -113,6 +119,13 @@ async def oauth_callback(
     except ConnectorError as exc:
         return RedirectResponse(
             url=f"{frontend_base}/connectors/{type_key}/connect?error={exc.detail}",
+            status_code=302,
+        )
+    except Exception as exc:  # noqa: BLE001 - same rationale as connect_connector above:
+        # the browser is mid-redirect here, so even a provider-side adapter failure must
+        # end in a redirect, never a raw 500 page.
+        return RedirectResponse(
+            url=f"{frontend_base}/connectors/{type_key}/connect?error={exc}",
             status_code=302,
         )
 

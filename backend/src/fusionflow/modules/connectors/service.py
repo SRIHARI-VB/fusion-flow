@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from fusionflow.core.encryption import CURRENT_KEY_VERSION, decrypt_secret, encrypt_secret, redact_preview
-from fusionflow.db.session import commit_and_keep_tenant_context
+from fusionflow.db.session import commit_and_keep_tenant_context, set_tenant_context, unscoped_session_factory
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.models import (
@@ -124,23 +124,6 @@ async def get_instance(
                 ConnectorInstance.id == instance_id, ConnectorInstance.tenant_id == tenant_id
             )
         )
-    ).scalar_one_or_none()
-
-
-async def get_instance_by_id_unscoped(
-    session: AsyncSession, instance_id: uuid.UUID
-) -> ConnectorInstance | None:
-    """Load an instance by id with no tenant filter.
-
-    Used only by the OAuth callback route: the browser redirect back from
-    the provider carries no auth token, so the only thing correlating it
-    to a tenant is the `state` token (already unguessable, single-use,
-    short-lived) resolved via `ConnectorOAuthState`, not a fresh RLS
-    check. Never expose this to a route that doesn't already have that
-    correlation established.
-    """
-    return (
-        await session.execute(_instance_query().where(ConnectorInstance.id == instance_id))
     ).scalar_one_or_none()
 
 
@@ -287,13 +270,36 @@ async def create_oauth_state(
     return state
 
 
-async def _consume_oauth_state(session: AsyncSession, state_token: str) -> ConnectorOAuthState:
-    """Look up + validate a state token. Unscoped by tenant - see callers.
+async def _resolve_oauth_state_tenant(state_token: str) -> uuid.UUID | None:
+    """Learn which tenant a `state_token` belongs to, bypassing RLS.
 
-    This is the one place the OAuth callback route is allowed to resolve
-    a tenant it doesn't already have a JWT for; it works only because
-    `state_token` is a 256-bit unguessable value the tenant's own
-    frontend redirect included, not because the query is filtered.
+    `ConnectorOAuthState` is tenant-scoped, and at this point in the OAuth
+    callback nobody has set `app.current_tenant_id` yet (the provider's
+    redirect carries no bearer token) - a normal RLS-scoped read of this
+    row returns nothing even though it exists, the same chicken-and-egg
+    problem `webhooks.py::_dispatch` has. Runs on `unscoped_session_factory`
+    (bypasses RLS) purely to read the tenant_id; the authoritative
+    fetch+validate+delete of the row happens afterward in
+    `_consume_oauth_state`, on the normal session, once tenant context is
+    set - this function never mutates anything.
+    """
+    async with unscoped_session_factory() as unscoped_session:
+        state = (
+            await unscoped_session.execute(
+                select(ConnectorOAuthState).where(ConnectorOAuthState.state_token == state_token)
+            )
+        ).scalar_one_or_none()
+        return state.tenant_id if state is not None else None
+
+
+async def _consume_oauth_state(session: AsyncSession, state_token: str) -> ConnectorOAuthState:
+    """Look up + validate + delete a state token.
+
+    Callers must have already called `set_tenant_context` for this
+    token's tenant (via `_resolve_oauth_state_tenant`) - `state_token`
+    being a 256-bit unguessable value the tenant's own frontend redirect
+    included is what makes it safe to trust *which* tenant this is, not
+    a reason to skip RLS on the row itself.
     """
     state = (
         await session.execute(select(ConnectorOAuthState).where(ConnectorOAuthState.state_token == state_token))
@@ -318,12 +324,17 @@ async def complete_oauth_callback(
     if adapter is None:
         raise ConnectorError(f"No adapter registered for connector type: {type_key!r}", status_code=501)
 
+    tenant_id = await _resolve_oauth_state_tenant(state_token)
+    if tenant_id is None:
+        raise ConnectorError("Unknown or already-used OAuth state", status_code=400)
+    await set_tenant_context(session, tenant_id)
+
     oauth_state = await _consume_oauth_state(session, state_token)
     if oauth_state.connector_instance_id is None:
         raise ConnectorError("OAuth state has no associated connector instance", status_code=400)
 
-    instance = await get_instance_by_id_unscoped(session, oauth_state.connector_instance_id)
-    if instance is None or instance.tenant_id != oauth_state.tenant_id:
+    instance = await get_instance(session, tenant_id=tenant_id, instance_id=oauth_state.connector_instance_id)
+    if instance is None:
         raise ConnectorError("Connector instance not found for this OAuth state", status_code=404)
 
     # Single-use: delete immediately so a replayed callback URL can't
