@@ -18,6 +18,8 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createFieldDefinition, deleteFieldDefinition, updateFieldDefinition } from "./api";
 import { useFieldDefinitions } from "./useFieldDefinitions";
 import type { CustomFieldEntityType, CustomFieldType, FieldDefinition } from "./types";
@@ -74,6 +76,10 @@ const selectClassName =
  */
 export function CustomFieldsSettingsPage() {
   const queryClient = useQueryClient();
+  const { usage } = useResourceLimits();
+  // count_field_definitions counts across every entity_type, not just the
+  // currently-selected tab - one ceiling for the tenant's whole set.
+  const { atLimit } = usage("custom_fields");
   const [entityType, setEntityType] = useState<CustomFieldEntityType>("product");
   const [editing, setEditing] = useState<FieldDefinition | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -204,9 +210,12 @@ export function CustomFieldsSettingsPage() {
             <CardTitle>{ENTITY_TABS.find((t) => t.value === entityType)?.label} fields</CardTitle>
             <CardDescription>Required fields must be filled in on every create/edit form.</CardDescription>
           </div>
-          <Button onClick={openCreateForm}>
-            <Plus className="mr-2 h-4 w-4" /> Add field
-          </Button>
+          <div className="flex items-center gap-2">
+            <ResourceUsageBadge resourceKey="custom_fields" />
+            <Button onClick={openCreateForm} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
+              <Plus className="mr-2 h-4 w-4" /> Add field
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading && <p className="text-sm text-muted-foreground">Loading...</p>}

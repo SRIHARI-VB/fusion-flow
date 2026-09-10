@@ -18,6 +18,8 @@ import {
   TableRow,
   type BadgeVariant,
 } from "@fusion-flow/ui";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createWorkflow, listWorkflows } from "./api";
 import type { WorkflowStatus } from "./types";
 
@@ -32,6 +34,8 @@ export function WorkflowsListPage() {
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
+  const { usage } = useResourceLimits();
+  const { atLimit } = usage("workflows");
 
   const { data: workflows = [], isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
 
@@ -52,10 +56,17 @@ export function WorkflowsListPage() {
             Build, publish, and monitor automations across triggers, actions, and conditions.
           </p>
         </div>
-        <Button onClick={() => setFormOpen((open) => !open)}>
-          <Plus className="h-4 w-4" />
-          New Workflow
-        </Button>
+        <div className="flex items-center gap-2">
+          <ResourceUsageBadge resourceKey="workflows" />
+          <Button
+            onClick={() => setFormOpen((open) => !open)}
+            disabled={atLimit}
+            title={atLimit ? "You've reached your plan's limit" : undefined}
+          >
+            <Plus className="h-4 w-4" />
+            New Workflow
+          </Button>
+        </div>
       </div>
 
       {formOpen && (

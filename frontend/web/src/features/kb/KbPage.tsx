@@ -20,6 +20,8 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createArticle, deleteArticle, listArticles, updateArticle } from "./api";
 import type { KbArticle, KbArticleStatus } from "./types";
 
@@ -43,6 +45,8 @@ function toTagsArray(tags: string | undefined): string[] {
 
 export function KbPage() {
   const queryClient = useQueryClient();
+  const { usage } = useResourceLimits();
+  const { atLimit } = usage("kb");
   const [editing, setEditing] = useState<KbArticle | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
@@ -123,10 +127,13 @@ export function KbPage() {
             Help articles your customers and support agent can reference.
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New Article
-        </Button>
+        <div className="flex items-center gap-2">
+          <ResourceUsageBadge resourceKey="kb" />
+          <Button onClick={openCreate} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
+            <Plus className="h-4 w-4" />
+            New Article
+          </Button>
+        </div>
       </div>
 
       {formOpen && (

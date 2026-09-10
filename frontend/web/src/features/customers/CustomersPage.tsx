@@ -20,6 +20,8 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createCustomer, deleteCustomer, listCustomers, updateCustomer } from "./api";
 import type { Customer } from "./types";
 
@@ -34,6 +36,8 @@ type CustomerFormValues = z.infer<typeof customerSchema>;
 
 export function CustomersPage() {
   const queryClient = useQueryClient();
+  const { usage } = useResourceLimits();
+  const { atLimit } = usage("customers");
   const [editing, setEditing] = useState<Customer | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
@@ -116,10 +120,13 @@ export function CustomersPage() {
           <h1 className="text-2xl font-semibold text-foreground">Customers</h1>
           <p className="text-sm text-muted-foreground">Everyone who has ever bought from or messaged you.</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New Customer
-        </Button>
+        <div className="flex items-center gap-2">
+          <ResourceUsageBadge resourceKey="customers" />
+          <Button onClick={openCreate} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
+            <Plus className="h-4 w-4" />
+            New Customer
+          </Button>
+        </div>
       </div>
 
       {formOpen && (

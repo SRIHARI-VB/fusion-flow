@@ -24,11 +24,18 @@ import {
   DynamicCustomFieldsFields,
   useFieldDefinitions,
 } from "../custom-fields";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createProductService, deleteProductService, listProductsServices, updateProductService } from "./api";
 import type { ProductService, ProductServiceType } from "./types";
 
 interface ProductServiceCatalogPageProps {
   entityType: ProductServiceType;
+  /** Matches the connector_types catalog key ("products"/"services") -
+   * distinct from `entityType` for clarity even though today they're the
+   * same strings, since one is a backend catalog key and the other a
+   * ProductService discriminator. */
+  resourceKey: string;
   title: string;
   description: string;
   itemNoun: string;
@@ -58,6 +65,7 @@ const DEFAULT_VALUES: FormValues = {
  */
 export function ProductServiceCatalogPage({
   entityType,
+  resourceKey,
   title,
   description,
   itemNoun,
@@ -66,6 +74,8 @@ export function ProductServiceCatalogPage({
   const queryKey = ["products-services", entityType];
   const [editing, setEditing] = useState<ProductService | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const { usage } = useResourceLimits();
+  const { atLimit } = usage(resourceKey);
 
   const { data: items = [], isLoading } = useQuery({
     queryKey,
@@ -159,10 +169,13 @@ export function ProductServiceCatalogPage({
           <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New {itemNoun}
-        </Button>
+        <div className="flex items-center gap-2">
+          <ResourceUsageBadge resourceKey={resourceKey} />
+          <Button onClick={openCreate} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
+            <Plus className="h-4 w-4" />
+            New {itemNoun}
+          </Button>
+        </div>
       </div>
 
       {formOpen && (

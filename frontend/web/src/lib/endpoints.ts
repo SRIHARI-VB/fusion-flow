@@ -32,6 +32,22 @@ export async function fetchMyBusinesses(): Promise<Business[]> {
   return data;
 }
 
+export interface ResourceUsageEntry {
+  limit: number | null;
+  current: number;
+}
+
+/** `{resource_key: {limit, current}}` for every limitable resource - backs
+ * `useResourceLimits()`. The backend 403 on the actual create route is the
+ * real enforcement boundary; this only drives the UI's usage badge/disabled
+ * state. */
+export async function fetchResourceUsage(): Promise<Record<string, ResourceUsageEntry>> {
+  const { data } = await apiClient.get<Record<string, ResourceUsageEntry>>(
+    "/api/v1/businesses/mine/resource-usage",
+  );
+  return data;
+}
+
 export async function switchBusiness(businessId: string): Promise<AuthTokens> {
   const { data } = await apiClient.post<AuthTokens>(`/api/v1/businesses/${businessId}/switch`);
   return data;

@@ -24,6 +24,8 @@ import {
   DynamicCustomFieldsFields,
   useFieldDefinitions,
 } from "../custom-fields";
+import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
+import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createCoupon, deleteCoupon, listCoupons, updateCoupon } from "./api";
 import type { Coupon, DiscountType } from "./types";
 
@@ -59,6 +61,8 @@ function toIsoOrNull(value: string): string | null {
 export function CouponsPage() {
   const queryClient = useQueryClient();
   const queryKey = ["coupons"];
+  const { usage } = useResourceLimits();
+  const { atLimit } = usage("coupons");
   const [editing, setEditing] = useState<Coupon | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
@@ -147,10 +151,13 @@ export function CouponsPage() {
           <h1 className="text-2xl font-semibold text-foreground">Coupons</h1>
           <p className="text-sm text-muted-foreground">Discount codes your customers can redeem.</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New coupon
-        </Button>
+        <div className="flex items-center gap-2">
+          <ResourceUsageBadge resourceKey="coupons" />
+          <Button onClick={openCreate} disabled={atLimit} title={atLimit ? "You've reached your plan's limit" : undefined}>
+            <Plus className="h-4 w-4" />
+            New coupon
+          </Button>
+        </div>
       </div>
 
       {formOpen && (
