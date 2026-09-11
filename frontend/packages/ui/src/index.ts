@@ -11,6 +11,9 @@ export type { BadgeProps, BadgeVariant } from "./components/Badge";
 export { Input } from "./components/Input";
 export type { InputProps } from "./components/Input";
 
+export { Textarea } from "./components/Textarea";
+export type { TextareaProps } from "./components/Textarea";
+
 export {
   Table,
   TableHeader,

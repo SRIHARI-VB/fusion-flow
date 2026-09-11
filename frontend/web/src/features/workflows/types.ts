@@ -3,10 +3,45 @@
 
 export type WorkflowStatus = "draft" | "published" | "archived";
 export type ValidationStatus = "valid" | "invalid";
-export type RunStatus = "running" | "completed" | "failed" | "cancelled";
+export type RunStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
 export type NodeKind = "trigger" | "action" | "condition";
 export type IssueSeverity = "error" | "warning";
+
+/** `GET /workflows/starter-templates` (composable-builder redesign, Phase
+ * 6) - a ready-to-use example workflow a tenant can start a new workflow
+ * from (see `StarterTemplatePicker.tsx`). The full graph/required-object-
+ * type spec stays server-side; this tenant-facing summary is just enough
+ * for a picker card. */
+export interface WorkflowStarterTemplate {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  icon?: string | null;
+}
+
+/** `GET /workflows/components` - a small, reusable fragment (a handful of
+ * nodes+edges) a tenant inserts into a workflow they're already editing,
+ * as opposed to `WorkflowStarterTemplate`'s whole-new-workflow shape.
+ * `source` distinguishes the admin-curated catalog from a tenant's own
+ * saved selection - both are merged into one list by the backend, same
+ * "one merged picker" pattern `ModuleCatalogEntry.source` already uses.
+ * Unlike `WorkflowStarterTemplate`, `graph_fragment` IS included here -
+ * a component is merged into the canvas client-side (fresh node ids,
+ * dropped near the current viewport), so the frontend genuinely needs the
+ * raw fragment, not just catalog metadata. */
+export interface WorkflowComponent {
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  icon?: string | null;
+  source: "admin" | "user";
+  graph_fragment: WorkflowGraphJson;
+  required_object_types?: Record<string, unknown>[] | null;
+}
 
 export interface Workflow {
   id: string;
@@ -58,6 +93,11 @@ export interface JsonSchemaProperty {
   $ref?: string;
   properties?: Record<string, JsonSchemaProperty>;
   required?: string[];
+  /** Pydantic `json_schema_extra` hint - today only `"textarea"` is
+   * recognized (see `jsonSchemaForm.ts`'s `fieldKind`), marking a plain
+   * string field as multi-line message/body content rather than a short
+   * single-line value. */
+  format?: string;
 }
 
 export interface NodeType {
@@ -85,6 +125,61 @@ export interface NodeType {
   /** Present only on a template-backed entry - which real registered
    * node type this one compiles to at publish time. */
   base_node_type?: string | null;
+  /** Which connector type (by key) a tenant must be entitled to for this
+   * node type to appear at all - `null`/absent means "not tied to one
+   * module/connector," never gated. The `/workflows/node-types` response
+   * is already filtered server-side to only entitled entries, so the
+   * frontend never re-checks this for visibility - it's only read here
+   * for the channel filter bar (`ChannelFilterBar.tsx`) and for prefilling
+   * a dropped node's `connector_instance_id`. */
+  required_connector_type_key?: string | null;
+  /** Same JSON-Schema-lite shape as `config_schema`, describing the
+   * well-known keys of this node's `Success.output` - `null`/absent for
+   * most node types (not every one declares it). Walked by
+   * `flattenOutputPaths` to build the "insert variable" picker's options. */
+  output_schema?: JsonSchema | null;
+  /** Per-config-field precomputed options (already filtered to what the
+   * tenant is entitled to/has connected), keyed by config field name - e.g.
+   * `{"connector_instance_id": [{value, label}]}`. `null`/absent means no
+   * field on this node type has computable suggestions. */
+  field_suggestions?: Record<string, { value: string; label: string }[]> | null;
+  /** Composable-builder redesign: a `lucide-react` icon key for the
+   * palette card (see `nodes/cardSummaries.ts`'s `NODE_ICONS`), and the
+   * task-oriented palette bucket this entry shows under by default
+   * ("Talk to Customer" / "Records" / "Payments" / "Flow Control" /
+   * "Advanced" / "Triggers") - additive, layered above `category`/
+   * `subcategory` (still used by `ChannelFilterBar`/`NodePalette`'s
+   * secondary grouping), not a replacement for them. Always present
+   * (backend fills in a fallback bucket for any node type that doesn't
+   * declare one explicitly). */
+  icon?: string | null;
+  palette_group: string;
+}
+
+/** One field a `records.query`/`records.upsert` node's `fields`/`filters`
+ * config can target, or one field on a `whatsapp.ask_choice` module
+ * source's underlying rows - the same flat shape whether it came from a
+ * fixed module's schema or a tenant's own custom object type (see
+ * `GET /workflows/modules`, backend `module_catalog.py`). */
+export interface ModuleField {
+  key: string;
+  label: string;
+  field_type: string;
+  options?: unknown[] | null;
+  required: boolean;
+}
+
+/** One entry in the unified module picker (`GET /workflows/modules`): a
+ * fixed module (Products, Orders, ...) or one of this tenant's own custom
+ * object types (Delivery, Appointment, ...) - the same shape either way. */
+export interface ModuleCatalogEntry {
+  key: string;
+  label: string;
+  icon?: string | null;
+  category: string;
+  source: "fixed" | "custom";
+  supported_operations: string[];
+  fields: ModuleField[];
 }
 
 /** One React Flow node's `data` payload — matches the backend's

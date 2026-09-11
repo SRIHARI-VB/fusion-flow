@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useController, useFieldArray, type Control, type FieldErrors, type UseFormRegister } from "react-hook-form";
 import { Plus, Trash2 } from "lucide-react";
-import { Button, Input } from "@fusion-flow/ui";
+import { Button, Input, cn } from "@fusion-flow/ui";
 import type { ResolvedField } from "../jsonSchemaForm";
+import { InsertVariableMenu } from "./InsertVariableMenu";
 
 /**
  * Renders a repeatable field for `array_text`/`array_object`-kind
@@ -153,6 +155,67 @@ export function ArrayObjectField({ control, register, name, field, errors }: Arr
         <Plus className="h-3.5 w-3.5" />
         Add {field.label.toLowerCase()}
       </Button>
+      {errorAt(errors, name) && <p className="text-xs text-destructive">{errorAt(errors, name)}</p>}
+    </div>
+  );
+}
+
+interface JsonObjectFieldProps {
+  control: Control<Record<string, unknown>>;
+  name: string;
+  field: ResolvedField;
+  errors: FieldErrors;
+  /** Upstream-node output paths available for this node (see
+   * `WorkflowEditorPage.tsx`'s `upstreamSuggestions`) - rendered as an
+   * "insert variable" affordance next to the textarea. Owned here rather
+   * than in `NodeConfigDrawer.tsx`'s generic per-field slot because a
+   * `json_object` field's actual RHF value is a real object, not a
+   * string - insertion has to append into this component's own local
+   * textarea string, not the form value directly. */
+  upstreamSuggestions?: { path: string; label: string }[];
+}
+
+/** A `dict[str, Any]`-typed config field (`filters`/`fields`/`params`/
+ * `outputs` - see `jsonSchemaForm.ts`'s `"json_object"` kind), edited as
+ * pretty-printed JSON text. Keeps its own local string state for what's
+ * currently typed; only commits to the real (object-typed) form value on
+ * blur, and only if it parses - an in-progress edit that doesn't parse
+ * yet shows an inline error instead of corrupting the field into a raw
+ * string (the bug this kind exists to fix). */
+export function JsonObjectField({ control, name, field, errors, upstreamSuggestions = [] }: JsonObjectFieldProps) {
+  const { field: controllerField } = useController({ control, name: name as never, defaultValue: {} as never });
+  const [text, setText] = useState(() => JSON.stringify(controllerField.value ?? {}, null, 2));
+  const [invalid, setInvalid] = useState(false);
+
+  function commit(nextText: string) {
+    try {
+      const parsed = JSON.parse(nextText || "{}");
+      controllerField.onChange(parsed);
+      setInvalid(false);
+    } catch {
+      setInvalid(true);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-start gap-1">
+        <textarea
+          id={name}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          rows={4}
+          className={cn(
+            "flex w-full rounded-md border bg-card px-3 py-2 font-mono text-xs text-foreground",
+            "placeholder:text-muted-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            invalid ? "border-destructive" : "border-input",
+          )}
+        />
+        <InsertVariableMenu suggestions={upstreamSuggestions} onInsert={(path) => setText((t) => `${t}{{${path}}}`)} />
+      </div>
+      {invalid && <p className="text-xs text-destructive">Invalid JSON</p>}
       {errorAt(errors, name) && <p className="text-xs text-destructive">{errorAt(errors, name)}</p>}
     </div>
   );

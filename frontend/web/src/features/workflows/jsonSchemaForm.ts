@@ -19,7 +19,16 @@ import type { JsonSchema, JsonSchemaProperty } from "./types";
  * it doesn't recognize falls back to a plain text input.
  */
 
-export type FieldKind = "text" | "number" | "boolean" | "select" | "array_text" | "array_object";
+export type FieldKind =
+  | "text"
+  | "textarea"
+  | "number"
+  | "boolean"
+  | "select"
+  | "array_text"
+  | "array_object"
+  | "json_object"
+  | "suggested_select";
 
 export interface ResolvedField {
   key: string;
@@ -34,7 +43,15 @@ export interface ResolvedField {
    * a sub-field that is itself an array-of-objects (e.g. an interactive
    * list's `sections[].rows`) renders correctly too. */
   itemFields?: ResolvedField[];
+  /** Only set when `kind === "suggested_select"` - the tenant-specific
+   * `{value, label}` options computed server-side (`NodeType.field_suggestions`),
+   * e.g. connected connector instances or granted modules. */
+  suggestedOptions?: { value: string; label: string }[];
 }
+
+/** Per-config-field precomputed option lists, as returned by the backend
+ * on `NodeType.field_suggestions` - keyed by config field name. */
+export type FieldSuggestions = Record<string, { value: string; label: string }[]> | null | undefined;
 
 function baseType(prop: JsonSchemaProperty): string | undefined {
   if (prop.type && prop.type !== "null") return prop.type;
@@ -67,11 +84,32 @@ function fieldKind(schema: JsonSchema, prop: JsonSchemaProperty): FieldKind {
     const itemSchema = resolveItemsSchema(schema, prop.items);
     return itemSchema?.properties ? "array_object" : "array_text";
   }
+  if (type === "object") {
+    // A pydantic `dict[str, Any]` field (e.g. `module.list`'s `filters`,
+    // `connector.action`'s `params`) has no fixed `properties` - resolve a
+    // `$ref` first (mirrors `resolveItemsSchema`'s treatment of arrays)
+    // since a dict-shaped def can also be expressed indirectly.
+    const resolved = prop.$ref ? resolveRef(schema, prop.$ref) : prop;
+    if (!resolved?.properties) return "json_object";
+  }
+  // Backend hint (`Field(json_schema_extra={"format": "textarea"})`) for a
+  // plain string field that holds multi-line message/body content (a
+  // WhatsApp body, a question being asked, ...) rather than a short
+  // single-line value - checked last, after every other shape-based kind,
+  // so it only ever applies to what would otherwise be a plain "text" field.
+  if (prop.format === "textarea") return "textarea";
   return "text";
 }
 
-function resolveField(schema: JsonSchema, key: string, prop: JsonSchemaProperty, requiredSet: Set<string>): ResolvedField {
-  const kind = fieldKind(schema, prop);
+function resolveField(
+  schema: JsonSchema,
+  key: string,
+  prop: JsonSchemaProperty,
+  requiredSet: Set<string>,
+  fieldSuggestions?: FieldSuggestions,
+): ResolvedField {
+  const suggested = fieldSuggestions?.[key];
+  const kind = suggested ? "suggested_select" : fieldKind(schema, prop);
   const field: ResolvedField = {
     key,
     kind,
@@ -81,6 +119,7 @@ function resolveField(schema: JsonSchema, key: string, prop: JsonSchemaProperty,
     options: prop.enum,
     default: prop.default,
   };
+  if (suggested) field.suggestedOptions = suggested;
   if (kind === "array_object") {
     const itemSchema = resolveItemsSchema(schema, prop.items);
     if (itemSchema?.properties) {
@@ -93,9 +132,11 @@ function resolveField(schema: JsonSchema, key: string, prop: JsonSchemaProperty,
   return field;
 }
 
-export function resolveFields(schema: JsonSchema): ResolvedField[] {
+export function resolveFields(schema: JsonSchema, fieldSuggestions?: FieldSuggestions): ResolvedField[] {
   const required = new Set(schema.required ?? []);
-  return Object.entries(schema.properties ?? {}).map(([key, prop]) => resolveField(schema, key, prop, required));
+  return Object.entries(schema.properties ?? {}).map(([key, prop]) =>
+    resolveField(schema, key, prop, required, fieldSuggestions),
+  );
 }
 
 function zodForField(field: ResolvedField): z.ZodTypeAny {
@@ -118,8 +159,12 @@ function zodForField(field: ResolvedField): z.ZodTypeAny {
       if (field.required) arr = (arr as z.ZodArray<z.ZodTypeAny>).min(1, `${field.label} requires at least one item`);
       return arr;
     }
+    case "json_object":
+      return z.record(z.string(), z.unknown());
     case "select":
+    case "suggested_select":
     case "text":
+    case "textarea":
     default: {
       let zodField: z.ZodTypeAny = z.string();
       if (field.required) zodField = (zodField as z.ZodString).min(1, `${field.label} is required`);
@@ -132,8 +177,8 @@ function zodForField(field: ResolvedField): z.ZodTypeAny {
  * fields must be non-empty; everything else is optional/nullable
  * (arrays are optional-only, never nullable - an empty array, not
  * `null`, is the "nothing entered yet" value `useFieldArray` expects). */
-export function buildZodSchema(schema: JsonSchema): z.ZodTypeAny {
-  const fields = resolveFields(schema);
+export function buildZodSchema(schema: JsonSchema, fieldSuggestions?: FieldSuggestions): z.ZodTypeAny {
+  const fields = resolveFields(schema, fieldSuggestions);
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const field of fields) {
@@ -155,6 +200,7 @@ function defaultForField(field: ResolvedField, existing: unknown): unknown {
   if (field.default !== undefined) return field.default;
   if (field.kind === "boolean") return false;
   if (field.kind === "array_text" || field.kind === "array_object") return [];
+  if (field.kind === "json_object") return {};
   return "";
 }
 
@@ -166,8 +212,9 @@ function defaultForField(field: ResolvedField, existing: unknown): unknown {
 export function buildDefaultValues(
   schema: JsonSchema,
   config: Record<string, unknown>,
+  fieldSuggestions?: FieldSuggestions,
 ): Record<string, unknown> {
-  const fields = resolveFields(schema);
+  const fields = resolveFields(schema, fieldSuggestions);
   const values: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.kind === "array_object" && Array.isArray(config[field.key])) {
@@ -183,4 +230,40 @@ export function buildDefaultValues(
     }
   }
   return values;
+}
+
+/** Walks a node type's `output_schema` (same JSON-Schema-lite shape as
+ * `config_schema`, resolved through `$ref`/`$defs` the same way) to build
+ * the "insert variable" picker's options - one `{path, label}` per leaf
+ * key, `path` being the dotted reference to append inside `{{...}}`
+ * (`prefix` is the upstream node's own graph id) and `label` a
+ * human-readable "›"-joined breadcrumb. Returns `[]` for a `null`/absent
+ * schema (most node types don't declare one yet); for a schema with no
+ * `properties` at all, returns the bare node reference itself - still a
+ * useful insertion (`{{node_id}}`) even with no known sub-shape. */
+export function flattenOutputPaths(
+  schema: JsonSchema | null | undefined,
+  prefix: string,
+): { path: string; label: string }[] {
+  if (!schema) return [];
+  if (!schema.properties || Object.keys(schema.properties).length === 0) {
+    return [{ path: prefix, label: prefix }];
+  }
+
+  function walk(properties: Record<string, JsonSchemaProperty>, path: string, label: string): { path: string; label: string }[] {
+    const results: { path: string; label: string }[] = [];
+    for (const [key, prop] of Object.entries(properties)) {
+      const resolved = prop.$ref ? resolveRef(schema!, prop.$ref) : prop;
+      const nextPath = `${path}.${key}`;
+      const nextLabel = `${label} › ${prop.title ?? key}`;
+      if (resolved?.properties) {
+        results.push(...walk(resolved.properties, nextPath, nextLabel));
+      } else {
+        results.push({ path: nextPath, label: nextLabel });
+      }
+    }
+    return results;
+  }
+
+  return walk(schema.properties, prefix, prefix);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Button, Input } from "@fusion-flow/ui";
 import type { EdgeFilter, WorkflowGraphEdgeData } from "../types";
 
@@ -13,6 +13,14 @@ import type { EdgeFilter, WorkflowGraphEdgeData } from "../types";
  * properties today, not a nested `filter` object) — a deliberate, small
  * scope reduction from a literal "zero new code" reading of the plan,
  * kept honest here rather than silently claimed as full reuse.
+ *
+ * Composable-builder redesign: the always-relevant "Label" field stays
+ * visually primary; the conditional-routing filter (easy to confuse with
+ * a cosmetic label, since both live in the same small panel) now sits
+ * behind an "Advanced" disclosure, collapsed by default unless this edge
+ * already has a filter - matching the palette's own "Advanced" default-
+ * collapsed convention. Purely a visual/disclosure change - state shape
+ * and `onSave` payload are unchanged.
  */
 
 const OPERATORS = [
@@ -38,6 +46,9 @@ export function EdgeConfigDrawer({ edgeId, data, onSave, onClose }: EdgeConfigDr
   const [filter, setFilter] = useState<EdgeFilter>(
     data?.filter ?? { field_path: "", operator: "eq", value: "" },
   );
+  // Collapsed by default - open automatically when this edge already has
+  // a filter, so an existing configuration is never hidden on load.
+  const [advancedOpen, setAdvancedOpen] = useState(!!data?.filter);
 
   // Re-hydrate whenever the selected edge changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -45,6 +56,7 @@ export function EdgeConfigDrawer({ edgeId, data, onSave, onClose }: EdgeConfigDr
     setLabel(data?.label ?? "");
     setFilterEnabled(!!data?.filter);
     setFilter(data?.filter ?? { field_path: "", operator: "eq", value: "" });
+    setAdvancedOpen(!!data?.filter);
   }, [edgeId]);
 
   function handleApply() {
@@ -85,21 +97,39 @@ export function EdgeConfigDrawer({ edgeId, data, onSave, onClose }: EdgeConfigDr
           <p className="text-[11px] text-muted-foreground">Pure annotation - no effect on execution.</p>
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <input
-              type="checkbox"
-              checked={filterEnabled}
-              onChange={(e) => setFilterEnabled(e.target.checked)}
-            />
-            Only follow this edge if...
-          </label>
-          <p className="text-[11px] text-muted-foreground">
-            A simple per-connection guard - skips this edge unless the condition matches, without needing
-            a separate condition node.
-          </p>
+        <hr className="border-border" />
 
-          {filterEnabled && (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between text-left"
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advanced</span>
+            {advancedOpen ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </button>
+
+          {advancedOpen && (
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <input
+                  type="checkbox"
+                  checked={filterEnabled}
+                  onChange={(e) => setFilterEnabled(e.target.checked)}
+                />
+                Only follow this edge if...
+              </label>
+              <p className="text-[11px] text-muted-foreground">
+                A simple per-connection guard - skips this edge unless the condition matches, without needing
+                a separate condition node. Most edges in a guided conversation flow don't need this - branching
+                already comes from the "Ask" node itself.
+              </p>
+
+              {filterEnabled && (
             <div className="flex flex-col gap-2 rounded-md border border-border p-2">
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="edge-filter-field" className="text-xs font-medium text-foreground">
@@ -139,6 +169,8 @@ export function EdgeConfigDrawer({ edgeId, data, onSave, onClose }: EdgeConfigDr
                   onChange={(e) => setFilter((f) => ({ ...f, value: e.target.value }))}
                 />
               </div>
+            </div>
+          )}
             </div>
           )}
         </div>
