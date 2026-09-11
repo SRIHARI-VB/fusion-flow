@@ -52,6 +52,11 @@ class RunStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Phase 8 Part A: the run is paused mid-graph at `waiting_node_id`,
+    # waiting for a specific customer's next inbound message
+    # (`waiting_correlation_key`, e.g. a phone number) on a specific
+    # connector instance - see run_loop.py's `RunSuspended`/`resume_run`.
+    WAITING = "waiting"
 
 
 class StepStatus(str, enum.Enum):
@@ -141,6 +146,23 @@ class WorkflowVersion(Base, TenantScopedMixin, TimestampMixin):
 
 class WorkflowRun(Base, TenantScopedMixin):
     __tablename__ = "workflow_runs"
+    __table_args__ = (
+        # Phase 8 Part A: at most one paused conversation per customer per
+        # channel at a time - a second inbound message from the same
+        # customer while one run is already waiting always resumes that
+        # same run (see event_bus.find_pending_wait), never starts a
+        # second one. Partial (only enforced while status='waiting'),
+        # mirroring WorkflowTriggerInbox's own partial-unique-index
+        # pattern above.
+        Index(
+            "uq_workflow_runs_waiting_correlation",
+            "tenant_id",
+            "waiting_connector_instance_id",
+            "waiting_correlation_key",
+            unique=True,
+            postgresql_where=text("status = 'waiting'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     workflow_id: Mapped[uuid.UUID] = mapped_column(
@@ -168,6 +190,21 @@ class WorkflowRun(Base, TenantScopedMixin):
     # the run, independent of and in addition to publish-time static
     # cycle analysis.
     loop_guard_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    # Phase 8 Part A: suspended-run state, populated only while
+    # `status == WAITING` (cleared back to NULL on resume, see
+    # run_loop.py::resume_run). A run has at most one active pause at a
+    # time, so this lives directly on the row instead of a new table.
+    waiting_node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # No FK: `connector_instances` lives in a different module built in a
+    # parallel wave, same reasoning as `WorkflowTrigger.connector_instance_id`.
+    waiting_connector_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True
+    )
+    waiting_correlation_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    waiting_frontier: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    waiting_variables: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    waiting_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     steps: Mapped[list["WorkflowRunStep"]] = relationship(
         back_populates="run",
@@ -259,3 +296,28 @@ class WorkflowTriggerInbox(Base, TenantScopedMixin):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkflowUserComponent(Base, TenantScopedMixin, TimestampMixin):
+    """A tenant's own reusable workflow fragment - the "save this selection
+    of nodes as a component" sibling of the admin-curated
+    `modules.admin.models.WorkflowComponent` catalog. Both are merged into
+    one list by `service.list_components`, distinguished there by a
+    `source: "admin" | "user"` tag rather than by table.
+
+    `graph_fragment` is built client-side from whatever nodes+edges the
+    tenant currently has selected on their canvas (see
+    `WorkflowEditorPage.tsx`'s "Save as Component" action) - the same
+    `{"nodes": [...], "edges": [...]}` shape a full workflow graph uses,
+    stripped of client-only fields (`__meta`, etc.) the same way
+    `graphUtils.toGraphJson` already strips them before a workflow save.
+    """
+
+    __tablename__ = "workflow_user_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True, default="Custom")
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    graph_fragment: Mapped[dict] = mapped_column(JSONB, nullable=False)

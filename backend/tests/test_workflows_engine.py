@@ -20,7 +20,7 @@ import pytest
 
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 from fusionflow.modules.workflows.engine.registry import node_executor_registry
-from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run
+from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run, resume_run
 from fusionflow.modules.workflows.models import RunStatus, StepStatus, WorkflowRun
 from fusionflow.modules.workflows import validation
 
@@ -944,6 +944,186 @@ async def test_edge_filter_follows_the_edge_when_it_matches() -> None:
 
     assert result.status == RunStatus.COMPLETED
     assert [s.node_id for s in session.added] == ["trigger", "gated"]
+
+
+# --------------------------------------------------------------------------
+# run_loop — Suspend / RunSuspended / resume_run (Phase 8 Part A)
+# --------------------------------------------------------------------------
+
+
+def _make_ask_executor(node_type: str):
+    """Builds a throwaway `can_suspend` test node type - a real
+    `NodeExecutor` subclass, constructed fresh per test/node_type so tests
+    registering the same type name never collide across test runs."""
+    from fusionflow.modules.workflows.engine.registry import ExecutionContext, NodeExecutor, NodeResult, Suspend
+
+    async def execute(self, context: ExecutionContext) -> NodeResult:
+        return Suspend(correlation_key=context.variables["trigger"]["from"])
+
+    async def extract_resume_value(self, config: dict, resume_payload: dict) -> Any:
+        return resume_payload.get("text")
+
+    executor_cls = type(
+        "_Executor",
+        (NodeExecutor,),
+        {
+            "node_type": node_type,
+            "kind": "action",
+            "can_suspend": True,
+            "execute": execute,
+            "extract_resume_value": extract_resume_value,
+        },
+    )
+    return executor_cls()
+
+
+def _ask_graph(connector_instance_id: uuid.UUID | None = None) -> WorkflowGraph:
+    ask_config = {"connector_instance_id": str(connector_instance_id)} if connector_instance_id else {}
+    return WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("ask", "test.ask_question", ask_config),
+                _node("after", "log.noop", {"message": "after"}),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "ask"),
+                _edge("e2", "ask", "after"),
+            ],
+        }
+    )
+
+
+async def test_ask_node_suspends_and_persists_waiting_state() -> None:
+    node_executor_registry.register(_make_ask_executor("test.ask_question"))
+    try:
+        connector_id = uuid.uuid4()
+        graph = _ask_graph(connector_id)
+        run = _run()
+        session = FakeSession()
+
+        result = await execute_run(session, run, graph, trigger_payload={"from": "15551234567"})
+
+        assert result.status == RunStatus.WAITING
+        assert result.waiting_node_id == "ask"
+        assert result.waiting_correlation_key == "15551234567"
+        assert result.waiting_connector_instance_id == connector_id
+        assert result.waiting_frontier == ["after"]
+        assert result.waiting_variables["trigger"] == {"from": "15551234567"}
+        assert result.waiting_variables["ask"] == {"asked": True}
+        assert result.waiting_expires_at is not None
+        # "after" never ran - the run paused right after "ask" executed.
+        assert [s.node_id for s in session.added] == ["trigger", "ask"]
+        ask_step = next(s for s in session.added if s.node_id == "ask")
+        assert ask_step.status == StepStatus.SUCCEEDED
+        assert ask_step.output == {"asked": True}
+    finally:
+        del node_executor_registry._executors["test.ask_question"]
+
+
+async def test_resume_run_continues_from_exact_frontier_with_reply_merged() -> None:
+    node_executor_registry.register(_make_ask_executor("test.ask_question"))
+    try:
+        graph = _ask_graph()
+        run = _run()
+        session = FakeSession()
+        suspended = await execute_run(session, run, graph, trigger_payload={"from": "15551234567"})
+        assert suspended.status == RunStatus.WAITING
+
+        resumed = await resume_run(session, run, graph, reply_payload={"text": "Large"})
+
+        assert resumed.status == RunStatus.COMPLETED
+        assert resumed.waiting_node_id is None
+        assert resumed.waiting_correlation_key is None
+        assert resumed.waiting_frontier is None
+        assert resumed.waiting_variables is None
+        assert resumed.waiting_expires_at is None
+        assert [s.node_id for s in session.added] == ["trigger", "ask", "after"]
+        after_step = next(s for s in session.added if s.node_id == "after")
+        assert after_step.output["context"]["ask"] == {"reply": "Large"}
+        assert after_step.output["context"]["trigger"] == {"from": "15551234567"}
+    finally:
+        del node_executor_registry._executors["test.ask_question"]
+
+
+async def test_a_second_suspend_further_down_the_resumed_chain_also_works() -> None:
+    node_executor_registry.register(_make_ask_executor("test.ask_question"))
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [
+                    _node("trigger", "manual.test_trigger"),
+                    _node("ask1", "test.ask_question"),
+                    _node("ask2", "test.ask_question"),
+                    _node("after", "log.noop"),
+                ],
+                "edges": [
+                    _edge("e1", "trigger", "ask1"),
+                    _edge("e2", "ask1", "ask2"),
+                    _edge("e3", "ask2", "after"),
+                ],
+            }
+        )
+        run = _run()
+        session = FakeSession()
+
+        first = await execute_run(session, run, graph, trigger_payload={"from": "15551234567"})
+        assert first.status == RunStatus.WAITING
+        assert first.waiting_node_id == "ask1"
+        assert first.waiting_frontier == ["ask2"]
+
+        second = await resume_run(session, run, graph, reply_payload={"text": "Large"})
+        assert second.status == RunStatus.WAITING
+        assert second.waiting_node_id == "ask2"
+        assert second.waiting_frontier == ["after"]
+        assert second.waiting_variables["ask1"] == {"reply": "Large"}
+
+        third = await resume_run(session, run, graph, reply_payload={"text": "Blue"})
+        assert third.status == RunStatus.COMPLETED
+        after_step = next(s for s in session.added if s.node_id == "after")
+        assert after_step.output["context"]["ask1"] == {"reply": "Large"}
+        assert after_step.output["context"]["ask2"] == {"reply": "Blue"}
+    finally:
+        del node_executor_registry._executors["test.ask_question"]
+
+
+async def test_suspend_node_inside_a_container_is_a_hard_error() -> None:
+    node_executor_registry.register(_make_ask_executor("test.suspend_node"))
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [
+                    _node("trigger", "manual.test_trigger"),
+                    _node("loop", "flow.loop", {"items_path": "{{trigger.items}}"}),
+                    _node("ask", "test.suspend_node", parent_id="loop"),
+                ],
+                "edges": [_edge("e1", "trigger", "loop")],
+            }
+        )
+        result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+        assert any(
+            i.rule == "suspend_not_in_container" and i.node_id == "ask" for i in result.issues
+        )
+    finally:
+        del node_executor_registry._executors["test.suspend_node"]
+
+
+async def test_suspend_node_at_top_level_is_allowed() -> None:
+    node_executor_registry.register(_make_ask_executor("test.suspend_node"))
+    try:
+        graph = WorkflowGraph.from_json(
+            {
+                "nodes": [
+                    _node("trigger", "manual.test_trigger"),
+                    _node("ask", "test.suspend_node"),
+                ],
+                "edges": [_edge("e1", "trigger", "ask")],
+            }
+        )
+        result = await validation.validate_for_publish(FakeSession(), tenant_id=uuid.uuid4(), graph=graph)
+        assert not any(i.rule == "suspend_not_in_container" for i in result.issues)
+    finally:
+        del node_executor_registry._executors["test.suspend_node"]
 
 
 async def test_edge_filter_applies_in_addition_to_branch_handle_matching() -> None:

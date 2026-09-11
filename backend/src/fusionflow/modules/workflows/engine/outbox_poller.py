@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from fusionflow.db.session import async_session_factory, set_tenant_context
 from fusionflow.modules.tenancy.models import Business
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
-from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run
+from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run, resume_run
 from fusionflow.modules.workflows.models import (
     RunStatus,
     Workflow,
@@ -104,7 +104,45 @@ async def poll_once(
             if has_pending is None:
                 continue
             processed += await _process_tenant_inbox(session, tenant_id)
+
+    for tenant_id in tenant_ids:
+        async with session_factory() as session:
+            await set_tenant_context(session, tenant_id)
+            await _expire_stale_waits(session, tenant_id)
+
     return processed
+
+
+async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Force-fail any run that has been `WAITING` past its
+    `waiting_expires_at` (fixed 24h from suspend, see run_loop.py's
+    `_persist_suspension`) - a customer who never replies must not leave a
+    run paused forever. No configurable "on timeout" branch in this v1
+    (see Phase 8's plan section) - a plain, clearly-logged force-fail.
+    Waiting runs are rare compared to inbox rows, so a straightforward
+    loop (not the `FOR UPDATE SKIP LOCKED` batching the inbox path uses)
+    is fine here."""
+    stale_runs = (
+        await session.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.tenant_id == tenant_id,
+                WorkflowRun.status == RunStatus.WAITING,
+                WorkflowRun.waiting_expires_at < _now(),
+            )
+        )
+    ).scalars().all()
+    if not stale_runs:
+        return
+    for run in stale_runs:
+        run.status = RunStatus.FAILED
+        run.completed_at = _now()
+        logger.warning(
+            "workflow run %s timed out waiting for a reply after 24h (node=%s, correlation_key=%s)",
+            run.id,
+            run.waiting_node_id,
+            run.waiting_correlation_key,
+        )
+    await session.commit()
 
 
 async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> int:
@@ -125,6 +163,11 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
     ).scalars().all()
 
     for inbox_row in rows:
+        if inbox_row.event_type == "workflow.resume":
+            await _resume_run_for_inbox_row(session, inbox_row)
+            inbox_row.processed_at = _now()
+            continue
+
         matching = (
             await session.execute(
                 select(WorkflowTrigger).where(
@@ -150,6 +193,36 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
     if rows:
         await session.commit()
     return len(rows)
+
+
+async def _resume_run_for_inbox_row(session: AsyncSession, inbox_row: WorkflowTriggerInbox) -> None:
+    """Handle a `workflow.resume`-typed inbox row (written by
+    `event_bus.publish_resume_event`): re-verify the referenced run is
+    still `WAITING` (defensive, in case of a race - e.g. it already timed
+    out via `poll_once`'s expiry sweep) and, if so, continue it via
+    `run_loop.resume_run` instead of starting a new run."""
+    run_id = uuid.UUID(inbox_row.payload["run_id"])
+    run = await session.get(WorkflowRun, run_id)
+    if run is None or run.status != RunStatus.WAITING:
+        logger.info(
+            "workflow.resume inbox row %s references run %s which is no longer waiting - skipping",
+            inbox_row.id,
+            run_id,
+        )
+        return
+
+    version = await session.get(WorkflowVersion, run.workflow_version_id)
+    if version is None:
+        logger.warning("workflow run %s references missing workflow version %s", run.id, run.workflow_version_id)
+        return
+
+    graph = WorkflowGraph.from_json(version.compiled_graph or version.graph)
+    try:
+        await resume_run(session, run, graph, reply_payload=inbox_row.payload["reply"])
+    except RunLoopError as exc:
+        run.status = RunStatus.FAILED
+        run.completed_at = _now()
+        logger.warning("workflow run %s could not resume: %s", run.id, exc)
 
 
 async def _start_run_for_trigger(
