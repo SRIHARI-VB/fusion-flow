@@ -1,9 +1,9 @@
-"""`order.created` — fires when `modules/orders/service.py::create_order`
-calls `event_bus.publish_trigger_event` right after inserting the new
-`Order` row.
+"""`payment.captured` — fires when `RazorpayAdapter.handle_webhook` upserts a
+`Payment` row whose mapped status is `PaymentStatus.SUCCEEDED` and calls
+`event_bus.publish_trigger_event` (see `modules/connectors/razorpay/adapter.py`).
 
 Registered in both registries, same "pass through the triggering payload"
-shape as `manual_test_trigger.py` / `whatsapp_message_received.py`.
+shape as `order_created.py` / `whatsapp_message_received.py`.
 """
 
 from __future__ import annotations
@@ -20,47 +20,48 @@ from fusionflow.modules.workflows.engine.registry import (
     trigger_registry,
 )
 
-NODE_TYPE = "order.created"
+NODE_TYPE = "payment.captured"
 
 _OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
+        "payment_id": {"type": "string"},
         "order_id": {"type": "string"},
         "customer_id": {"type": "string"},
-        "total_amount": {"type": "string"},
+        "amount": {"type": "string"},
         "currency": {"type": "string"},
         "status": {"type": "string"},
     },
 }
 
 
-class OrderCreatedConfig(BaseModel):
-    """No required fields — this trigger fires for any order created in the
-    tenant, not scoped to a particular customer/product at the node level."""
+class PaymentCapturedConfig(BaseModel):
+    """No required fields — this trigger fires for any captured payment in
+    the tenant, not scoped to a particular order/customer at the node level."""
 
     description: str | None = Field(default=None, max_length=200)
 
 
-class OrderCreatedExecutor(NodeExecutor):
+class PaymentCapturedExecutor(NodeExecutor):
     node_type = NODE_TYPE
     kind = "trigger"
     category = "Ecommerce"
-    label = "Order Created"
+    label = "Payment Captured"
     description = (
-        "Fires when a new order is created for this business. Run context is "
-        "seeded with order_id, customer_id, total_amount, currency, and status."
+        "Fires when a payment is successfully captured for this business. Run context is "
+        "seeded with payment_id, order_id, customer_id, amount, currency, and status."
     )
-    config_model = OrderCreatedConfig
-    required_connector_type_key = "orders"
+    config_model = PaymentCapturedConfig
+    required_connector_type_key = "payments"
     output_schema = _OUTPUT_SCHEMA
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         # `variables["trigger"]` was seeded by run_loop.execute_run from the
-        # payload `publish_trigger_event` wrote (see orders/service.py).
+        # payload `publish_trigger_event` wrote (see razorpay/adapter.py).
         return Success(output=dict(context.variables.get("trigger", {})))
 
 
-_executor = OrderCreatedExecutor()
+_executor = PaymentCapturedExecutor()
 node_executor_registry.register(_executor)
 trigger_registry.register(
     TriggerDefinition(

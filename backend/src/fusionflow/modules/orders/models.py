@@ -55,3 +55,18 @@ class Order(Base, TenantScopedMixin, TimestampMixin):
     line_items: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
+    # Phase 8 Part C: "checkout" (default, real checkout flow) or "workflow"
+    # (created by `orders_service.create_order_from_workflow`, e.g. a
+    # conversational WhatsApp ordering flow). Plain string, not an enum,
+    # kept deliberately loose since it's informational/audit, not branched
+    # on anywhere in the engine.
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="checkout", server_default="checkout")
+    # FK to workflow_runs.id, deliberately omitted - mirrors
+    # `payments.connector_instance_id`'s established "no FK across
+    # parallel-wave modules" convention: the workflows module may not exist
+    # in every build. Only ever set when `source == "workflow"`.
+    created_by_workflow_run_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # "cod" or "prepaid" by convention - only ever set for workflow-created
+    # orders; a checkout-created order's payment method lives elsewhere
+    # (the payments module), so this stays NULL for those.
+    payment_method: Mapped[str | None] = mapped_column(String(20), nullable=True)

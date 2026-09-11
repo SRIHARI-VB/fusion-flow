@@ -38,7 +38,7 @@ from fusionflow.modules.connectors.models import (
     HealthStatus,
 )
 from fusionflow.modules.payments import service as payments_service
-from fusionflow.modules.payments.models import PaymentStatus
+from fusionflow.modules.payments.models import Payment, PaymentStatus
 
 logger = logging.getLogger(__name__)
 settings = get_connector_settings()
@@ -159,6 +159,85 @@ class RazorpayAdapter(base.ConnectorAdapter):
         if is_stub:
             return base.HealthResult(health_status=HealthStatus.HEALTHY, detail=f"stub: assumed healthy ({detail})")
         return base.HealthResult(health_status=HealthStatus.HEALTHY)
+
+    async def create_payment_link(
+        self,
+        *,
+        instance: ConnectorInstance,
+        amount: Decimal,
+        currency: str,
+        order_id: uuid.UUID,
+        customer_contact: str,
+        session: AsyncSession,
+    ) -> dict[str, Any]:
+        """`connector.action`'s `create_payment_link` - calls Razorpay's real
+        `POST /payment_links` endpoint. `notes.internal_order_id` is our own
+        convention (see `_parse_uuid`'s docstring) - it's what lets
+        `_upsert_payment_from_entity` resolve the eventual webhook back to
+        this order automatically, with no separate lookup step needed."""
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise ValueError("No credential stored for this Razorpay instance")
+
+        # Razorpay amounts are integers in the currency's smallest unit -
+        # the exact inverse of `_upsert_payment_from_entity`'s `/ Decimal(100)`.
+        amount_minor = int(amount * 100)
+        body = {
+            "amount": amount_minor,
+            "currency": currency,
+            "notes": {"internal_order_id": str(order_id)},
+            "customer": {"contact": customer_contact},
+            "reference_id": str(order_id),
+        }
+        try:
+            async with httpx.AsyncClient(base_url=settings.RAZORPAY_API_BASE_URL, timeout=10.0) as client:
+                response = await client.post(
+                    "/payment_links", json=body, auth=(secret["key_id"], secret["key_secret"])
+                )
+            response.raise_for_status()
+            return response.json()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[razorpay] could not reach %s (%s) - stub mode: returning a fake payment link so the "
+                "connector.action call stays testable offline.",
+                settings.RAZORPAY_API_BASE_URL,
+                exc,
+            )
+            return {"short_url": "https://rzp.io/stub-link", "id": f"stub-plink-{uuid.uuid4().hex[:8]}"}
+
+    async def perform_action(
+        self, *, action: str, params: dict[str, Any], instance: ConnectorInstance, session: AsyncSession
+    ) -> dict[str, Any]:
+        """Dispatch for the generic `connector.action` workflow node type
+        (see `base.ConnectorAdapter.perform_action`'s docstring) - Razorpay's
+        first capability exposed this way."""
+        if action == "create_payment_link":
+            amount_raw = params.get("amount")
+            currency = params.get("currency")
+            order_id_raw = params.get("order_id")
+            customer_contact = params.get("customer_contact")
+            if not amount_raw or not currency or not order_id_raw or not customer_contact:
+                raise ValueError(
+                    "create_payment_link requires non-empty 'amount', 'currency', 'order_id', and "
+                    "'customer_contact' params"
+                )
+            try:
+                amount = Decimal(str(amount_raw))
+            except InvalidOperation as exc:
+                raise ValueError(f"create_payment_link 'amount' is not a valid decimal: {amount_raw!r}") from exc
+            try:
+                order_id = uuid.UUID(str(order_id_raw))
+            except ValueError as exc:
+                raise ValueError(f"create_payment_link 'order_id' is not a valid UUID: {order_id_raw!r}") from exc
+            return await self.create_payment_link(
+                instance=instance,
+                amount=amount,
+                currency=currency,
+                order_id=order_id,
+                customer_contact=customer_contact,
+                session=session,
+            )
+        raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
     async def disconnect(self, *, instance: ConnectorInstance, session: AsyncSession) -> None:
         # Razorpay has no revoke-by-API for a key pair a merchant generated
@@ -286,11 +365,11 @@ class RazorpayAdapter(base.ConnectorAdapter):
         instance: ConnectorInstance,
         entity: dict[str, Any],
         connector_event_id: uuid.UUID,
-    ) -> None:
+    ) -> Payment | None:
         provider_ref = entity.get("id")
         if not provider_ref:
             logger.warning("[razorpay] payment webhook entity has no id, skipping payments row")
-            return
+            return None
 
         razorpay_status = entity.get("status", "")
         status = _RAZORPAY_PAYMENT_STATUS_MAP.get(razorpay_status)
@@ -300,7 +379,7 @@ class RazorpayAdapter(base.ConnectorAdapter):
                 razorpay_status,
                 provider_ref,
             )
-            return
+            return None
 
         # Razorpay amounts are integers in the currency's smallest unit
         # (paise for INR, cents for USD, ...) - our `payments.amount` is a
@@ -318,7 +397,7 @@ class RazorpayAdapter(base.ConnectorAdapter):
         customer_id = _parse_uuid(notes.get("internal_customer_id"))
         order_id = _parse_uuid(notes.get("internal_order_id"))
 
-        await payments_service.upsert_payment_from_provider(
+        payment = await payments_service.upsert_payment_from_provider(
             session,
             tenant_id=instance.tenant_id,
             connector_instance_id=instance.id,
@@ -330,6 +409,35 @@ class RazorpayAdapter(base.ConnectorAdapter):
             order_id=order_id,
             raw_event_ref=str(connector_event_id),
         )
+
+        # Deferred import: same circular-import dodge as
+        # whatsapp/adapter.py::handle_webhook (`modules.workflows`'s
+        # __init__ imports built-in nodes, one of which imports this
+        # module for the `adapter` singleton).
+        from fusionflow.modules.workflows.engine import event_bus
+
+        trigger_event_type = {
+            PaymentStatus.SUCCEEDED: "payment.captured",
+            PaymentStatus.FAILED: "payment.failed",
+        }.get(status)
+        if trigger_event_type is not None:
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type=trigger_event_type,
+                payload={
+                    "payment_id": str(payment.id),
+                    "order_id": str(order_id) if order_id else None,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "amount": str(amount),
+                    "currency": currency,
+                    "status": razorpay_status,
+                },
+                connector_instance_id=instance.id,
+                dedupe_key=provider_ref,
+            )
+
+        return payment
 
 
 adapter = RazorpayAdapter()

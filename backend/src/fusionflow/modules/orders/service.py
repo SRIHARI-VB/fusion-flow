@@ -8,12 +8,13 @@ Queries filter explicitly on `tenant_id` as defense-in-depth on top of RLS
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.customers.models import Customer
-from fusionflow.modules.orders.models import Order
+from fusionflow.modules.orders.models import Order, OrderStatus
 from fusionflow.modules.orders.schemas import OrderCreate, OrderOut, OrderUpdate
 from fusionflow.modules.workflows.engine import event_bus
 
@@ -32,13 +33,33 @@ def to_order_out(order: Order, customer_name: str | None = None) -> OrderOut:
     )
 
 
-async def list_orders(session: AsyncSession, tenant_id: uuid.UUID) -> list[OrderOut]:
-    rows = await session.execute(
+async def list_orders(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: OrderStatus | None = None,
+    customer_id: uuid.UUID | None = None,
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    limit: int | None = None,
+) -> list[OrderOut]:
+    stmt = (
         select(Order, Customer.name)
         .join(Customer, Customer.id == Order.customer_id)
         .where(Order.tenant_id == tenant_id)
-        .order_by(Order.created_at.desc())
     )
+    if status is not None:
+        stmt = stmt.where(Order.status == status)
+    if customer_id is not None:
+        stmt = stmt.where(Order.customer_id == customer_id)
+    if created_after is not None:
+        stmt = stmt.where(Order.created_at >= created_after)
+    if created_before is not None:
+        stmt = stmt.where(Order.created_at <= created_before)
+    stmt = stmt.order_by(Order.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
     return [to_order_out(order, customer_name) for order, customer_name in rows.all()]
 
 
@@ -78,6 +99,53 @@ async def create_order(session: AsyncSession, tenant_id: uuid.UUID, payload: Ord
 
     # Same transaction as the insert above - transactional outbox, see
     # event_bus.py's module docstring. The router owns the commit.
+    await event_bus.publish_trigger_event(
+        session,
+        tenant_id=tenant_id,
+        event_type="order.created",
+        payload={
+            "order_id": str(order.id),
+            "customer_id": str(order.customer_id),
+            "total_amount": str(order.total_amount),
+            "currency": order.currency,
+            "status": order.status.value,
+        },
+    )
+    return order
+
+
+async def create_order_from_workflow(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    payload: OrderCreate,
+    *,
+    workflow_run_id: uuid.UUID,
+    payment_method: str | None = None,
+) -> Order:
+    """Sibling of `create_order` for the conversational-ordering path
+    (`orders.create_from_conversation` node) — see that module's docstring
+    for why this is a deliberately separate, narrower path rather than a
+    `module.create` adapter for orders. Same construction/event-publish as
+    `create_order`, plus the `source`/`created_by_workflow_run_id`/
+    `payment_method` stamps that mark this row as workflow-originated.
+    `create_order` itself is untouched and keeps defaulting to
+    `source="checkout"` — checkout is unaffected by this function existing.
+    """
+    order = Order(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        customer_id=payload.customer_id,
+        status=payload.status,
+        total_amount=payload.total_amount,
+        currency=payload.currency,
+        line_items=payload.line_items,
+        source="workflow",
+        created_by_workflow_run_id=workflow_run_id,
+        payment_method=payment_method,
+    )
+    session.add(order)
+    await session.flush()
+
     await event_bus.publish_trigger_event(
         session,
         tenant_id=tenant_id,

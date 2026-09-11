@@ -29,6 +29,8 @@ from fusionflow.modules.workflows.engine.registry import (
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
 
+_OUTPUT_SCHEMA = {"type": "object", "properties": {"ticket_id": {"type": "string"}}}
+
 
 def _resolve_path(data: dict[str, Any], path: str) -> Any:
     current: Any = data
@@ -70,6 +72,8 @@ class CreateTicketExecutor(NodeExecutor):
     label = "Create Ticket"
     description = "Creates a support ticket for this business, optionally linked to an existing customer."
     config_model = CreateTicketConfig
+    required_connector_type_key = "tickets"
+    output_schema = _OUTPUT_SCHEMA
     # A transient DB hiccup during the insert is the retry target here -
     # see send_whatsapp_message.py's matching comment for why the service
     # call below is deliberately left un-caught rather than turned into an
