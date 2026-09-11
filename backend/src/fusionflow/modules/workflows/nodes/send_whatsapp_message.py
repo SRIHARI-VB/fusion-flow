@@ -62,19 +62,21 @@ class SendWhatsAppMessageConfig(BaseModel):
     body: str = Field(
         min_length=1,
         description="Message text. May reference the run context, e.g. 'Thanks {{trigger.from}}!'.",
+        json_schema_extra={"format": "textarea"},
     )
 
 
 class SendWhatsAppMessageExecutor(NodeExecutor):
     node_type = "send_whatsapp_message"
     kind = "action"
-    category = "Messaging"
+    category = "Messages"
     label = "Send WhatsApp Message"
     description = (
         "Sends an outbound WhatsApp text message through a connected WhatsApp "
         "connector instance."
     )
     config_model = SendWhatsAppMessageConfig
+    required_connector_type_key = "whatsapp"
     # This node makes a real outbound network call (the WhatsApp Cloud
     # API) - a flaky/slow response is exactly the transient-failure class
     # run_loop.py's retry-with-backoff exists for. The adapter call below

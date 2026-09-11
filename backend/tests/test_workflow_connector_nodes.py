@@ -22,6 +22,7 @@ from fusionflow.modules.tickets.models import Ticket, TicketStatus
 from fusionflow.modules.workflows.engine.registry import ExecutionContext, Failure, Success
 from fusionflow.modules.workflows.nodes import create_ticket as create_ticket_node
 from fusionflow.modules.workflows.nodes import order_created as order_created_node
+from fusionflow.modules.workflows.nodes import payment_captured as payment_captured_node
 from fusionflow.modules.workflows.nodes import send_whatsapp_message as send_whatsapp_node
 from fusionflow.modules.workflows.nodes import whatsapp_message_received as whatsapp_trigger_node
 
@@ -78,6 +79,29 @@ async def test_order_created_execute_echoes_trigger_payload() -> None:
 
     assert isinstance(result, Success)
     assert result.output == payload
+
+
+async def test_payment_captured_config_accepts_empty() -> None:
+    executor = payment_captured_node.PaymentCapturedExecutor()
+    executor.validate_config({})
+    executor.validate_config({"description": "captured payment"})
+
+
+async def test_payment_captured_execute_echoes_trigger_payload() -> None:
+    executor = payment_captured_node.PaymentCapturedExecutor()
+    payload = {"payment_id": str(uuid.uuid4()), "order_id": str(uuid.uuid4()), "status": "captured"}
+    context = _context({}, {"trigger": payload})
+
+    result = await executor.execute(context)
+
+    assert isinstance(result, Success)
+    assert result.output == payload
+
+
+async def test_payment_captured_registered_with_required_connector_type() -> None:
+    executor = payment_captured_node.PaymentCapturedExecutor()
+    assert executor.required_connector_type_key == "payments"
+    assert executor.node_type == "payment.captured"
 
 
 # --------------------------------------------------------------------------

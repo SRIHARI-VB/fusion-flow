@@ -56,6 +56,27 @@ class NodeTypeMeta:
     loop_safety_field: str | None = None
     can_contain_children: bool = False
     child_role: str | None = None
+    # Entitlement gate (Phase 7 Part A): the `connector_types.key` a tenant
+    # must have "granted" access to for this node type to appear in the
+    # palette. None means "no requirement" - every pre-Phase-7 node type.
+    required_connector_type_key: str | None = None
+    # Declared shape of this node type's `Success.output` (Phase 7 Part B),
+    # same JSON-Schema-lite shape `config_schema` already uses. None means
+    # "not statically knowable" (e.g. manual.test_trigger's author-defined
+    # payload) or simply not yet catalogued.
+    output_schema: dict[str, Any] | None = None
+    # Composable-builder redesign: a `lucide-react` icon key for the
+    # palette card (None falls back to the frontend's existing 3-icon
+    # kind badge — Zap/PlayCircle/GitBranch — unchanged for every
+    # pre-redesign node type). And the task-oriented palette bucket this
+    # node shows under by default ("Talk to Customer" / "Records" /
+    # "Payments" / "Flow Control" / "Advanced" / "Triggers") — additive,
+    # layered above `category`/`subcategory` (still used by
+    # `ChannelFilterBar`), not a replacement for them. `service.py`'s
+    # `_default_palette_group` fills this in for any node type that
+    # doesn't set one explicitly, so every entry always has a bucket.
+    icon: str | None = None
+    palette_group: str | None = None
 
 
 #: Signature of `ExecutionContext.run_children` - see its docstring below.
@@ -127,7 +148,20 @@ class Branch:
     output: dict[str, Any] = field(default_factory=dict)
 
 
-NodeResult = Success | Failure | Branch
+@dataclass(frozen=True)
+class Suspend:
+    """A `can_suspend` node's result: the node has done its (one-shot) job
+    for this pass — typically sending an outbound message — and the run
+    should now pause until a matching reply arrives. `correlation_key`
+    (e.g. a customer's phone number) is what a later inbound event must
+    match, on the same connector instance, to resume this exact run (see
+    `run_loop.RunSuspended`/`resume_run` and `engine.event_bus.
+    find_pending_wait`)."""
+
+    correlation_key: str
+
+
+NodeResult = Success | Failure | Branch | Suspend
 
 
 class NodeExecutor(abc.ABC):
@@ -182,6 +216,28 @@ class NodeExecutor(abc.ABC):
     # engine itself does not branch on its value.
     can_contain_children: bool = False
     child_role: str | None = None
+    # Opt-in pause/resume (Phase 8 Part A, run_loop.py): only a node type
+    # whose `execute()` may return `Suspend` sets this. Gates validation
+    # rule 7 (`validation.py::_check_no_suspend_in_container`) - a
+    # suspending node cannot be embedded inside a container.
+    can_suspend: bool = False
+    # Entitlement gate (Phase 7 Part A) - see NodeTypeMeta's field docstring.
+    required_connector_type_key: str | None = None
+    # Declared output shape (Phase 7 Part B) - see NodeTypeMeta's field docstring.
+    output_schema: dict[str, Any] | None = None
+    # Composable-builder redesign - see NodeTypeMeta's field docstrings.
+    icon: str | None = None
+    palette_group: str | None = None
+
+    async def extract_resume_value(self, config: dict[str, Any], resume_payload: dict[str, Any]) -> Any:
+        """Only overridden by a `can_suspend = True` executor: turn the
+        inbound event payload that resumed the run (the same shape
+        `WhatsAppAdapter._extract_inbound_message` produces) into the
+        actual "answer" value this node asked for - e.g. free text, or
+        whichever button/list row id the customer tapped. Mirrors
+        `ConnectorAdapter.perform_action`'s "opt-in capability method"
+        shape: the default raises since most node types never suspend."""
+        raise NotImplementedError
 
     @classmethod
     def meta(cls) -> NodeTypeMeta:
@@ -199,6 +255,10 @@ class NodeExecutor(abc.ABC):
             loop_safety_field=cls.loop_safety_field,
             can_contain_children=cls.can_contain_children,
             child_role=cls.child_role,
+            required_connector_type_key=cls.required_connector_type_key,
+            output_schema=cls.output_schema,
+            icon=cls.icon,
+            palette_group=cls.palette_group,
         )
 
     def validate_config(self, config: dict[str, Any]) -> None:
@@ -218,6 +278,19 @@ class NodeExecutor(abc.ABC):
         attribute, so both the static and dynamic cases go through one
         code path."""
         return self.output_handles
+
+    def declared_optional_output_handles(self, config: dict[str, Any]) -> list[str] | None:
+        """Which output handles MAY be wired at most once each but don't
+        have to be, for *this specific node instance* — mirrors
+        `declared_output_handles`'s config-dependent pattern but for the
+        optional side. Default just returns the static
+        `optional_output_handles` class attribute (every pre-existing node
+        type, e.g. `flow.try_catch`'s fixed `["success", "error"]`);
+        overridden only by a node type whose optional handle set is
+        config-dependent (today: `condition.multi_branch`, whose
+        "no case matched" default handle name is itself configurable —
+        see that node's override)."""
+        return self.optional_output_handles
 
     @abc.abstractmethod
     async def execute(self, context: ExecutionContext) -> NodeResult: ...
@@ -251,6 +324,10 @@ class TriggerDefinition:
     description: str
     config_model: type[BaseModel] | None = None
     subcategory: str | None = None
+    required_connector_type_key: str | None = None
+    output_schema: dict[str, Any] | None = None
+    icon: str | None = None
+    palette_group: str | None = None
 
     def meta(self) -> NodeTypeMeta:
         schema = self.config_model.model_json_schema() if self.config_model else {}
@@ -262,6 +339,10 @@ class TriggerDefinition:
             label=self.label,
             description=self.description,
             config_schema=schema,
+            required_connector_type_key=self.required_connector_type_key,
+            output_schema=self.output_schema,
+            icon=self.icon,
+            palette_group=self.palette_group or "Triggers",
         )
 
 

@@ -45,6 +45,7 @@ class SendContactExecutor(NodeExecutor):
     label = "Send WhatsApp Contact"
     description = "Sends an outbound contact card through a connected WhatsApp connector instance."
     config_model = SendContactConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 

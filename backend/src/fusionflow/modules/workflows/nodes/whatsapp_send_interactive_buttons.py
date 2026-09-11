@@ -34,7 +34,7 @@ class ButtonEntry(BaseModel):
 class SendInteractiveButtonsConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(min_length=1, description="Recipient wa_id. May reference the run context.")
-    body_text: str = Field(min_length=1)
+    body_text: str = Field(min_length=1, json_schema_extra={"format": "textarea"})
     buttons: list[ButtonEntry] = Field(min_length=1, max_length=3, description="Meta allows at most 3 quick-reply buttons.")
 
 
@@ -46,6 +46,7 @@ class SendInteractiveButtonsExecutor(NodeExecutor):
     label = "Send WhatsApp Quick Reply Buttons"
     description = "Sends up to 3 quick-reply buttons; a tap fires whatsapp.interactive_reply_received."
     config_model = SendInteractiveButtonsConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 

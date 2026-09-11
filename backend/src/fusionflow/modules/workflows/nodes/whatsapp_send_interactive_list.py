@@ -38,7 +38,7 @@ class ListSection(BaseModel):
 class SendInteractiveListConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(min_length=1, description="Recipient wa_id. May reference the run context.")
-    body_text: str = Field(min_length=1)
+    body_text: str = Field(min_length=1, json_schema_extra={"format": "textarea"})
     list_button_label: str = Field(min_length=1, max_length=20, default="Choose")
     sections: list[ListSection] = Field(min_length=1)
 
@@ -58,6 +58,7 @@ class SendInteractiveListExecutor(NodeExecutor):
     label = "Send WhatsApp List"
     description = "Sends a tap-to-open list of up to 10 rows; a selection fires whatsapp.interactive_reply_received."
     config_model = SendInteractiveListConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 

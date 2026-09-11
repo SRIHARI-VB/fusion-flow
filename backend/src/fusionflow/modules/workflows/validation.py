@@ -70,6 +70,7 @@ async def validate_for_publish(
     _check_invalid_branches(graph, result)
     _check_unsafe_loops(graph, result)
     _check_containment_validity(graph, result)
+    _check_no_suspend_in_container(graph, result)
     return result
 
 
@@ -235,7 +236,7 @@ def _check_invalid_branches(graph: WorkflowGraph, result: ValidationResult) -> N
         if executor is None:
             continue
         required = executor.declared_output_handles(node.data.config) or []
-        optional = executor.optional_output_handles or []
+        optional = executor.declared_optional_output_handles(node.data.config) or []
         if not required and not optional:
             continue
         declared = set(required) | set(optional)
@@ -439,3 +440,27 @@ def _check_containment_validity(graph: WorkflowGraph, result: ValidationResult) 
                     ),
                 )
             )
+
+
+# --- Rule 7: no pause/resume node inside a container (Phase 8 Part A) -------
+
+
+def _check_no_suspend_in_container(graph: WorkflowGraph, result: ValidationResult) -> None:
+    """A `can_suspend` node (e.g. `whatsapp.ask_question`) cannot be
+    embedded inside a container (Loop/TryCatch/Parallel) - resuming
+    mid-container would require modeling nested scoped state, an honest
+    v1 scope cut (see Phase 8's plan section)."""
+    for node in graph.nodes:
+        if node.parent_id is None:
+            continue
+        executor = node_executor_registry.get(node.data.node_type)
+        if executor is None or not executor.can_suspend:
+            continue
+        result.issues.append(
+            ValidationIssue(
+                rule="suspend_not_in_container",
+                severity="error",
+                node_id=node.id,
+                message="a node that waits for a reply cannot be embedded inside a container (Loop/Try-Catch/Parallel)",
+            )
+        )

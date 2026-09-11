@@ -55,6 +55,7 @@ class SendTemplateExecutor(NodeExecutor):
     label = "Send WhatsApp Template"
     description = "Sends a pre-approved marketing/utility/authentication template message, deliverable even outside the 24-hour session window."
     config_model = SendTemplateConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 

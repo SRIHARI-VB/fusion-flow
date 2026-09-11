@@ -28,6 +28,8 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 from fusionflow.modules.workflows.engine.templating import resolve_path
 
+_OUTPUT_SCHEMA = {"type": "object", "properties": {"matched_case": {"type": "string"}}}
+
 
 class MultiBranchCase(BaseModel):
     label: str = Field(
@@ -53,6 +55,7 @@ class MultiBranchExecutor(NodeExecutor):
         "match. Add or remove cases in this node's config instead of adding new condition nodes."
     )
     config_model = MultiBranchConfig
+    output_schema = _OUTPUT_SCHEMA
 
     def declared_output_handles(self, config: dict[str, Any]) -> list[str] | None:
         try:
@@ -62,7 +65,23 @@ class MultiBranchExecutor(NodeExecutor):
             # (missing_required_fields) - returning None here just avoids
             # this rule piling on a second, less useful error about it.
             return None
-        return [case.label for case in parsed.cases] + [parsed.default_label]
+        return [case.label for case in parsed.cases]
+
+    def declared_optional_output_handles(self, config: dict[str, Any]) -> list[str] | None:
+        """The "no case matched" handle is wireable but not required — an
+        author may legitimately want "just stop" as the no-match outcome
+        instead of routing it anywhere (see `NodeExecutor.
+        declared_optional_output_handles`'s docstring). Also what lets a
+        compile-time-synthesized multi_branch node (see
+        `engine/composite_branching.py`, whose cases come from a
+        `whatsapp.ask_choice`/`flow.confirm` node's own options — a set
+        the canvas never exposes a "no match" port for) still pass
+        publish validation without the author ever wiring `default`."""
+        try:
+            parsed = MultiBranchConfig.model_validate(config)
+        except Exception:
+            return None
+        return [parsed.default_label]
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         config = MultiBranchConfig.model_validate(context.config)

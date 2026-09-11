@@ -25,6 +25,16 @@ from fusionflow.modules.workflows.engine.registry import (
 
 NODE_TYPE = "whatsapp.message_received"
 
+_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "from": {"type": "string"},
+        "message_id": {"type": "string"},
+        "type": {"type": "string"},
+        "text": {"type": "object", "properties": {"body": {"type": "string"}}},
+    },
+}
+
 
 class WhatsAppMessageReceivedConfig(BaseModel):
     """No required fields — which connector instance fired is implicit in
@@ -37,7 +47,7 @@ class WhatsAppMessageReceivedConfig(BaseModel):
 class WhatsAppMessageReceivedExecutor(NodeExecutor):
     node_type = NODE_TYPE
     kind = "trigger"
-    category = "Messaging"
+    category = "Messages"
     label = "WhatsApp Message Received"
     description = (
         "Fires when a WhatsApp number connected to this business receives an "
@@ -45,6 +55,8 @@ class WhatsAppMessageReceivedExecutor(NodeExecutor):
         "('from'), message id, type, and text body."
     )
     config_model = WhatsAppMessageReceivedConfig
+    required_connector_type_key = "whatsapp"
+    output_schema = _OUTPUT_SCHEMA
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         # `variables["trigger"]` was seeded by run_loop.execute_run from the
@@ -61,5 +73,7 @@ trigger_registry.register(
         label=_executor.label,
         description=_executor.description,
         config_model=_executor.config_model,
+        required_connector_type_key=_executor.required_connector_type_key,
+        output_schema=_executor.output_schema,
     )
 )

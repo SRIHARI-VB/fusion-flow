@@ -33,6 +33,22 @@ from fusionflow.modules.workflows.engine.registry import (
 
 NODE_TYPE = "whatsapp.interactive_reply_received"
 
+_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "from": {"type": "string"},
+        "message_id": {"type": "string"},
+        "interactive": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string"},
+                "id": {"type": "string"},
+                "title": {"type": "string"},
+            },
+        },
+    },
+}
+
 
 class WhatsAppInteractiveReplyReceivedConfig(BaseModel):
     description: str | None = Field(default=None, max_length=200)
@@ -41,13 +57,15 @@ class WhatsAppInteractiveReplyReceivedConfig(BaseModel):
 class WhatsAppInteractiveReplyReceivedExecutor(NodeExecutor):
     node_type = NODE_TYPE
     kind = "trigger"
-    category = "Messaging"
+    category = "Messages"
     label = "WhatsApp Button/List Reply Received"
     description = (
         "Fires when a customer taps a quick-reply button or selects a list item from a message "
         "this business sent. Run context includes interactive.id/title for the tapped option."
     )
     config_model = WhatsAppInteractiveReplyReceivedConfig
+    required_connector_type_key = "whatsapp"
+    output_schema = _OUTPUT_SCHEMA
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         return Success(output=dict(context.variables.get("trigger", {})))
@@ -62,5 +80,7 @@ trigger_registry.register(
         label=_executor.label,
         description=_executor.description,
         config_model=_executor.config_model,
+        required_connector_type_key=_executor.required_connector_type_key,
+        output_schema=_executor.output_schema,
     )
 )

@@ -424,6 +424,65 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             },
         )
 
+    async def send_product_list_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        to: str,
+        catalog_id: str,
+        body_text: str,
+        sections: list[dict[str, Any]],
+        footer_text: str | None = None,
+        header_text: str | None = None,
+        session: AsyncSession,
+    ) -> None:
+        """Session message: WhatsApp's Commerce Catalog "product list"
+        interactive message - shows the customer a curated set of items
+        from a Meta Commerce Catalog already connected to this WABA (that
+        connection is made entirely on Meta's side via Commerce Manager /
+        Embedded Signup; this codebase has no catalog-management surface
+        of its own and never will for v1). The customer can add any number
+        of the listed items to a cart and submit it as a single message -
+        the genuine multi-select capability `whatsapp.ask_choice`'s
+        button/list messages cannot offer (those are always single-tap,
+        single-select). `sections`: up to 10 sections, 30 `product_items`
+        total across all of them - Meta's own hard limits, not this
+        adapter's.
+
+        Cart-to-catalog matching convention (deliberate MVP scope
+        boundary, not an oversight): each `product_retailer_id` sent here
+        must equal the corresponding `ProductService.id` (its UUID, as a
+        string) as configured on the Meta Commerce Catalog side. No
+        separate id-mapping table exists or is planned - the tenant is
+        responsible for setting each catalog product's retailer id to
+        match its id in this system when they build/sync their Meta
+        catalog feed.
+        """
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping product list send (instance=%s, to=%s, catalog=%s)",
+                instance.id, to, catalog_id,
+            )
+            return
+
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"type":"interactive","interactive":{"type":"product_list",
+        #    "header":{"type":"text","text":..}?, "body":{"text":..}, "footer":{"text":..}?,
+        #    "action":{"catalog_id":.., "sections":[{"title":..,"product_items":[{"product_retailer_id":..}]}]}}}
+        interactive: dict[str, Any] = {
+            "type": "product_list",
+            "body": {"text": body_text},
+            "action": {"catalog_id": catalog_id, "sections": sections},
+        }
+        if header_text:
+            interactive["header"] = {"type": "text", "text": header_text}
+        if footer_text:
+            interactive["footer"] = {"text": footer_text}
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={"to": to, "type": "interactive", "interactive": interactive},
+        )
+
     async def send_template_message(
         self,
         *,
@@ -514,6 +573,94 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             response.raise_for_status()
             return response.json().get("data", [])
 
+    async def mark_message_as_read(
+        self, *, instance: ConnectorInstance, message_id: str, session: AsyncSession
+    ) -> None:
+        """Mark an inbound message as read (blue ticks) - `whatsapp.mark_as_read`
+        workflow node, typically called with `{{trigger.message_id}}`."""
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping mark-as-read (instance=%s, message_id=%s)",
+                instance.id, message_id,
+            )
+            return
+        # TODO(meta-graph-api): POST /{phone_number_id}/messages
+        #   {"messaging_product":"whatsapp","status":"read","message_id":"{message_id}"}
+        await self._post_message(
+            instance=instance, session=session,
+            message_payload={"status": "read", "message_id": message_id},
+        )
+
+    async def get_business_profile(
+        self, *, instance: ConnectorInstance, session: AsyncSession
+    ) -> dict[str, Any]:
+        """`whatsapp.get_business_profile` workflow node. Stub mode returns a
+        small canned profile so the node is testable without real credentials,
+        matching `sync_templates`'s convention."""
+        if not settings.whatsapp_configured:
+            logger.warning("[whatsapp] stub mode - returning canned business profile")
+            return {
+                "about": "stub business profile",
+                "address": "",
+                "description": "",
+                "email": "",
+                "profile_picture_url": "",
+                "websites": [],
+                "vertical": "OTHER",
+            }
+
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+        phone_number_id = (instance.provider_ref_ids or {}).get("phone_number_id")
+        if not phone_number_id:
+            raise RuntimeError(f"connector instance {instance.id} has no phone_number_id on record")
+
+        # TODO(meta-graph-api): GET /{phone_number_id}/whatsapp_business_profile
+        #   ?fields=about,address,description,email,profile_picture_url,websites,vertical
+        async with httpx.AsyncClient(base_url=settings.WHATSAPP_GRAPH_API_BASE_URL, timeout=15.0) as client:
+            response = await client.get(
+                f"/{phone_number_id}/whatsapp_business_profile",
+                params={
+                    "fields": "about,address,description,email,profile_picture_url,websites,vertical",
+                    "access_token": secret["access_token"],
+                },
+            )
+            response.raise_for_status()
+            data = response.json().get("data", [])
+            return data[0] if data else {}
+
+    async def update_business_profile(
+        self, *, instance: ConnectorInstance, profile_fields: dict[str, Any], session: AsyncSession
+    ) -> dict[str, Any]:
+        """`whatsapp.update_business_profile` workflow node. `profile_fields`
+        may set any of `about`/`address`/`description`/`email`/`websites`/
+        `vertical` - passed through as-is, Meta validates the shape."""
+        if not settings.whatsapp_configured:
+            logger.warning(
+                "[whatsapp] stub mode - skipping business profile update (instance=%s, fields=%s)",
+                instance.id, sorted(profile_fields),
+            )
+            return {**profile_fields}
+
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+        phone_number_id = (instance.provider_ref_ids or {}).get("phone_number_id")
+        if not phone_number_id:
+            raise RuntimeError(f"connector instance {instance.id} has no phone_number_id on record")
+
+        # TODO(meta-graph-api): POST /{phone_number_id}/whatsapp_business_profile
+        #   {"messaging_product":"whatsapp", ...profile_fields}
+        async with httpx.AsyncClient(base_url=settings.WHATSAPP_GRAPH_API_BASE_URL, timeout=15.0) as client:
+            response = await client.post(
+                f"/{phone_number_id}/whatsapp_business_profile",
+                headers={"Authorization": f"Bearer {secret['access_token']}"},
+                json={"messaging_product": "whatsapp", **profile_fields},
+            )
+            response.raise_for_status()
+        return profile_fields
+
     async def perform_action(
         self, *, action: str, params: dict[str, Any], instance: ConnectorInstance, session: AsyncSession
     ) -> dict[str, Any]:
@@ -582,6 +729,18 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                 session=session,
             )
             return {"to": params["to"], "template_name": params["template_name"]}
+        if action == "mark_message_as_read":
+            message_id = params.get("message_id")
+            if not message_id:
+                raise ValueError("mark_message_as_read requires a non-empty 'message_id' param")
+            await self.mark_message_as_read(instance=instance, message_id=message_id, session=session)
+            return {"message_id": message_id}
+        if action == "get_business_profile":
+            return await self.get_business_profile(instance=instance, session=session)
+        if action == "update_business_profile":
+            return await self.update_business_profile(
+                instance=instance, profile_fields=params.get("profile_fields", {}), session=session
+            )
         raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
     def verify_webhook_signature(self, *, raw_payload: bytes, headers: Mapping[str, str]) -> bool:
@@ -657,6 +816,18 @@ class WhatsAppAdapter(base.ConnectorAdapter):
             `{"id","mime_type","caption"?,"filename"?}`.
           - `location`: `message.location` = `{"latitude","longitude","name"?,"address"?}`.
           - `contacts`: `message.contacts` (Meta's own list-of-vCard-like shape, passed through as-is).
+          - `order`: a submitted WhatsApp Commerce Catalog cart (sent in
+            reply to a `whatsapp.ask_for_cart` product-list message, never
+            spontaneously) - `message.order` = `{"catalog_id", "product_items":
+            [{"product_retailer_id","quantity","item_price","currency"}, ...],
+            "text"?}`. Surfaced as `message.order.{catalog_id,product_items,note}`
+            (renaming Meta's own optional cart-note field `text` to `note`
+            here, since `extracted["text"]` above is already reserved for a
+            plain text message body and would otherwise collide in meaning).
+            No dedicated trigger type - resuming a suspended `whatsapp.
+            ask_for_cart` run is `handle_webhook`'s only consumer of this,
+            via the same `find_pending_wait` correlation every other reply
+            type already uses.
         """
         entries = body.get("entry") or []
         for entry in entries:
@@ -695,6 +866,13 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                     extracted["location"] = message.get("location")
                 elif message_type == "contacts":
                     extracted["contacts"] = message.get("contacts")
+                elif message_type == "order":
+                    order = message.get("order") or {}
+                    extracted["order"] = {
+                        "catalog_id": order.get("catalog_id"),
+                        "product_items": order.get("product_items") or [],
+                        "note": order.get("text"),
+                    }
                 return extracted
         return None
 
@@ -762,33 +940,53 @@ class WhatsAppAdapter(base.ConnectorAdapter):
 
         inbound_message = self._extract_inbound_message(body)
         if inbound_message is not None:
-            # An interactive reply (button/list tap) gets its own dedicated
-            # trigger type rather than the generic `whatsapp.message_received`
-            # - exclusive routing, not additive, since this payload shape
-            # (`message_type == "interactive"`) was never populated before
-            # this phase, so no existing workflow depends on seeing it via
-            # the generic trigger.
-            event_type = (
-                "whatsapp.interactive_reply_received"
-                if inbound_message.get("message_type") == "interactive"
-                else "whatsapp.message_received"
-            )
-            # Same transaction/session as the ConnectorEvent write above -
-            # the outbox row and the audit row commit together or not at
-            # all (transactional outbox, see event_bus.py). The caller
-            # (webhooks.py) commits once after this returns.
-            # `message_id` is WhatsApp's own delivery id - Meta redelivers
-            # webhooks on a missed/slow ack, and this dedupe_key is what
-            # stops a redelivery from firing the workflow a second time
-            # (see event_bus.publish_trigger_event's docstring).
-            await event_bus.publish_trigger_event(
+            # Phase 8 Part A: if this customer already has a run paused
+            # waiting for exactly their next reply (on this connector
+            # instance), this message resumes that run instead of firing a
+            # brand-new trigger - a second inbound message from the same
+            # customer while a run is waiting always continues that same
+            # conversation, never starts a parallel one.
+            pending_run = await event_bus.find_pending_wait(
                 session,
                 tenant_id=instance.tenant_id,
-                event_type=event_type,
-                payload=inbound_message,
                 connector_instance_id=instance.id,
-                dedupe_key=inbound_message.get("message_id"),
+                correlation_key=inbound_message.get("from"),
             )
+            if pending_run is not None:
+                await event_bus.publish_resume_event(
+                    session,
+                    run=pending_run,
+                    reply_payload=inbound_message,
+                    dedupe_key=inbound_message.get("message_id"),
+                )
+            else:
+                # An interactive reply (button/list tap) gets its own dedicated
+                # trigger type rather than the generic `whatsapp.message_received`
+                # - exclusive routing, not additive, since this payload shape
+                # (`message_type == "interactive"`) was never populated before
+                # this phase, so no existing workflow depends on seeing it via
+                # the generic trigger.
+                event_type = (
+                    "whatsapp.interactive_reply_received"
+                    if inbound_message.get("message_type") == "interactive"
+                    else "whatsapp.message_received"
+                )
+                # Same transaction/session as the ConnectorEvent write above -
+                # the outbox row and the audit row commit together or not at
+                # all (transactional outbox, see event_bus.py). The caller
+                # (webhooks.py) commits once after this returns.
+                # `message_id` is WhatsApp's own delivery id - Meta redelivers
+                # webhooks on a missed/slow ack, and this dedupe_key is what
+                # stops a redelivery from firing the workflow a second time
+                # (see event_bus.publish_trigger_event's docstring).
+                await event_bus.publish_trigger_event(
+                    session,
+                    tenant_id=instance.tenant_id,
+                    event_type=event_type,
+                    payload=inbound_message,
+                    connector_instance_id=instance.id,
+                    dedupe_key=inbound_message.get("message_id"),
+                )
 
         status_update = self._extract_status_update(body)
         if status_update is not None:

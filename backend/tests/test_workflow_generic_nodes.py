@@ -220,6 +220,12 @@ async def test_multi_branch_config_requires_at_least_one_case() -> None:
 
 
 async def test_multi_branch_declared_output_handles_reflects_config() -> None:
+    # `default` moved to `declared_optional_output_handles` (see that
+    # method's docstring) - required, exactly-once wiring now only applies
+    # to the author's own declared cases; the "no case matched" handle is
+    # wireable-but-optional, which is also what lets a compile-time
+    # composite-branch expansion (whatsapp.ask_choice/flow.confirm) publish
+    # without ever wiring a "no match" port the canvas never exposes for it.
     executor = multi_branch_node.MultiBranchExecutor()
     config = {
         "cases": [
@@ -227,7 +233,8 @@ async def test_multi_branch_declared_output_handles_reflects_config() -> None:
             {"label": "cancel", "field_path": "trigger.keyword", "value": "cancel"},
         ]
     }
-    assert executor.declared_output_handles(config) == ["refund", "cancel", "default"]
+    assert executor.declared_output_handles(config) == ["refund", "cancel"]
+    assert executor.declared_optional_output_handles(config) == ["default"]
 
 
 async def test_multi_branch_selects_first_matching_case_in_order() -> None:

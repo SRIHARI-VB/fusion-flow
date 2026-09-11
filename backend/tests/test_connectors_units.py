@@ -15,6 +15,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -25,6 +27,7 @@ from fusionflow.modules.connectors.models import ConnectorState, HealthStatus
 from fusionflow.modules.connectors.razorpay.adapter import RazorpayAdapter
 from fusionflow.modules.connectors.service import ConnectorError, _RECONNECTABLE_STATES
 from fusionflow.modules.connectors.whatsapp.adapter import WhatsAppAdapter
+from fusionflow.modules.payments.models import Payment
 
 # --------------------------------------------------------------------------
 # base.ConnectorRegistry
@@ -313,6 +316,30 @@ def test_extract_inbound_message_parses_location() -> None:
     assert extracted["location"] == {"latitude": 1.0, "longitude": 2.0}
 
 
+def test_extract_inbound_message_parses_order() -> None:
+    body = _webhook_body(
+        messages=[
+            {
+                "from": "1", "id": "wamid.5", "type": "order", "timestamp": "1",
+                "order": {
+                    "catalog_id": "cat_123",
+                    "product_items": [
+                        {"product_retailer_id": "p1", "quantity": "2", "item_price": "9.99", "currency": "INR"}
+                    ],
+                    "text": "please deliver fast",
+                },
+            }
+        ]
+    )
+    extracted = WhatsAppAdapter._extract_inbound_message(body)
+    assert extracted["message_type"] == "order"
+    assert extracted["order"] == {
+        "catalog_id": "cat_123",
+        "product_items": [{"product_retailer_id": "p1", "quantity": "2", "item_price": "9.99", "currency": "INR"}],
+        "note": "please deliver fast",
+    }
+
+
 def test_extract_status_update_parses_delivered_status() -> None:
     body = _webhook_body(statuses=[{"id": "wamid.1", "status": "delivered", "recipient_id": "1", "timestamp": "1"}])
     extracted = WhatsAppAdapter._extract_status_update(body)
@@ -340,8 +367,14 @@ async def test_handle_webhook_routes_interactive_reply_to_dedicated_event_type(m
         published.append(kwargs)
         return object()
 
+    async def fake_find_pending_wait(session, **kwargs):
+        return None
+
     monkeypatch.setattr(
         "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.find_pending_wait", fake_find_pending_wait
     )
 
     class _FakeSession:
@@ -374,8 +407,14 @@ async def test_handle_webhook_routes_plain_text_to_message_received(monkeypatch)
         published.append(kwargs)
         return object()
 
+    async def fake_find_pending_wait(session, **kwargs):
+        return None
+
     monkeypatch.setattr(
         "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.find_pending_wait", fake_find_pending_wait
     )
 
     class _FakeSession:
@@ -393,6 +432,54 @@ async def test_handle_webhook_routes_plain_text_to_message_received(monkeypatch)
 
     assert len(published) == 1
     assert published[0]["event_type"] == "whatsapp.message_received"
+
+
+async def test_handle_webhook_resumes_a_pending_wait_instead_of_publishing_a_new_trigger(monkeypatch) -> None:
+    """Phase 8 Part A: a reply from a customer with an already-`WAITING`
+    run resumes that run (`event_bus.publish_resume_event`) instead of
+    firing a normal `whatsapp.message_received` trigger."""
+    resumed: list[dict] = []
+    published: list[dict] = []
+    sentinel_run = object()
+
+    async def fake_find_pending_wait(session, **kwargs):
+        return sentinel_run
+
+    async def fake_publish_resume_event(session, **kwargs):
+        resumed.append(kwargs)
+        return object()
+
+    async def fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.find_pending_wait", fake_find_pending_wait
+    )
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_resume_event", fake_publish_resume_event
+    )
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", fake_publish_trigger_event
+    )
+
+    class _FakeSession:
+        def add(self, obj: object) -> None:
+            pass
+
+        async def flush(self) -> None:
+            return None
+
+    adapter = WhatsAppAdapter()
+    body = _webhook_body(messages=[{"from": "1", "id": "wamid.4", "type": "text", "text": {"body": "M"}}])
+    await adapter.handle_webhook(
+        instance=_FakeWhatsAppInstance(), raw_payload=json.dumps(body).encode(), headers={}, session=_FakeSession()
+    )
+
+    assert len(resumed) == 1
+    assert resumed[0]["run"] is sentinel_run
+    assert resumed[0]["reply_payload"]["text"] == "M"
+    assert not published
 
 
 async def test_handle_webhook_publishes_status_update_event(monkeypatch) -> None:
@@ -516,6 +603,304 @@ async def test_razorpay_validate_key_pair_accepts_real_200(monkeypatch) -> None:
     is_stub, detail = await adapter._validate_key_pair("rzp_test_x", "correct-secret")
     assert is_stub is False
     assert detail is None
+
+
+# --------------------------------------------------------------------------
+# Razorpay: create_payment_link + perform_action + webhook -> payment
+# trigger (Phase 8 Part D)
+# --------------------------------------------------------------------------
+
+
+class _FakeRazorpayInstance:
+    id = "33333333-3333-3333-3333-333333333333"
+    tenant_id = "22222222-2222-2222-2222-222222222222"
+
+
+async def test_razorpay_create_payment_link_stub_mode_when_network_unreachable(monkeypatch) -> None:
+    adapter = RazorpayAdapter()
+
+    async def _fake_get_credential_secret(session, *, instance):
+        return {"key_id": "rzp_test_x", "key_secret": "secret"}
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.razorpay.adapter.connector_service.get_credential_secret",
+        _fake_get_credential_secret,
+    )
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_RaisingTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.razorpay.adapter.httpx.AsyncClient", _fake_async_client)
+
+    result = await adapter.create_payment_link(
+        instance=_FakeRazorpayInstance(),
+        amount=Decimal("499.00"),
+        currency="INR",
+        order_id=uuid.uuid4(),
+        customer_contact="+911234567890",
+        session=None,
+    )
+    assert result["short_url"] == "https://rzp.io/stub-link"
+    assert result["id"].startswith("stub-plink-")
+
+
+async def test_razorpay_create_payment_link_raises_when_no_credential_stored(monkeypatch) -> None:
+    adapter = RazorpayAdapter()
+
+    async def _fake_get_credential_secret(session, *, instance):
+        return None
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.razorpay.adapter.connector_service.get_credential_secret",
+        _fake_get_credential_secret,
+    )
+
+    with pytest.raises(ValueError, match="No credential"):
+        await adapter.create_payment_link(
+            instance=_FakeRazorpayInstance(),
+            amount=Decimal("499.00"),
+            currency="INR",
+            order_id=uuid.uuid4(),
+            customer_contact="+911234567890",
+            session=None,
+        )
+
+
+async def test_razorpay_perform_action_dispatches_create_payment_link(monkeypatch) -> None:
+    adapter = RazorpayAdapter()
+    captured: dict = {}
+
+    async def _fake_create_payment_link(*, instance, amount, currency, order_id, customer_contact, session):
+        captured.update(amount=amount, currency=currency, order_id=order_id, customer_contact=customer_contact)
+        return {"short_url": "https://rzp.io/x", "id": "plink_1"}
+
+    monkeypatch.setattr(adapter, "create_payment_link", _fake_create_payment_link)
+
+    order_id = uuid.uuid4()
+    result = await adapter.perform_action(
+        action="create_payment_link",
+        params={
+            "amount": "499.00",
+            "currency": "INR",
+            "order_id": str(order_id),
+            "customer_contact": "+911234567890",
+        },
+        instance=_FakeRazorpayInstance(),
+        session=None,
+    )
+
+    assert result == {"short_url": "https://rzp.io/x", "id": "plink_1"}
+    assert captured["amount"] == Decimal("499.00")
+    assert captured["order_id"] == order_id
+    assert captured["customer_contact"] == "+911234567890"
+
+
+@pytest.mark.parametrize("missing_key", ["amount", "currency", "order_id", "customer_contact"])
+async def test_razorpay_perform_action_create_payment_link_requires_all_params(missing_key) -> None:
+    adapter = RazorpayAdapter()
+    params = {
+        "amount": "499.00", "currency": "INR", "order_id": str(uuid.uuid4()), "customer_contact": "+911234567890",
+    }
+    params.pop(missing_key)
+    with pytest.raises(ValueError, match="requires non-empty"):
+        await adapter.perform_action(
+            action="create_payment_link", params=params, instance=_FakeRazorpayInstance(), session=None
+        )
+
+
+async def test_razorpay_perform_action_create_payment_link_rejects_invalid_order_id() -> None:
+    adapter = RazorpayAdapter()
+    params = {
+        "amount": "499.00", "currency": "INR", "order_id": "not-a-uuid", "customer_contact": "+911234567890",
+    }
+    with pytest.raises(ValueError, match="not a valid UUID"):
+        await adapter.perform_action(
+            action="create_payment_link", params=params, instance=_FakeRazorpayInstance(), session=None
+        )
+
+
+async def test_razorpay_perform_action_create_payment_link_rejects_invalid_amount() -> None:
+    adapter = RazorpayAdapter()
+    params = {
+        "amount": "not-a-number", "currency": "INR", "order_id": str(uuid.uuid4()),
+        "customer_contact": "+911234567890",
+    }
+    with pytest.raises(ValueError, match="not a valid decimal"):
+        await adapter.perform_action(
+            action="create_payment_link", params=params, instance=_FakeRazorpayInstance(), session=None
+        )
+
+
+async def test_razorpay_perform_action_unknown_action_raises_not_implemented() -> None:
+    adapter = RazorpayAdapter()
+    with pytest.raises(NotImplementedError):
+        await adapter.perform_action(action="bogus_action", params={}, instance=_FakeRazorpayInstance(), session=None)
+
+
+class _FakeConnectorEventSession:
+    def __init__(self) -> None:
+        self.added: list[object] = []
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+
+def _razorpay_payment_webhook_body(
+    *, event: str, payment_id: str, status: str, amount: int = 49900, currency: str = "INR",
+    order_id: str | None = None, customer_id: str | None = None,
+) -> dict:
+    notes: dict = {}
+    if order_id:
+        notes["internal_order_id"] = order_id
+    if customer_id:
+        notes["internal_customer_id"] = customer_id
+    return {
+        "event": event,
+        "payload": {
+            "payment": {
+                "entity": {"id": payment_id, "status": status, "amount": amount, "currency": currency, "notes": notes}
+            }
+        },
+    }
+
+
+def _fake_upsert_payment_from_provider(monkeypatch) -> None:
+    """Stands in for `payments_service.upsert_payment_from_provider` -
+    returns a real (unpersisted) `Payment` row, same shape the real
+    function returns, so `handle_webhook` has an id to publish."""
+
+    async def _fake(session, **kwargs):
+        return Payment(
+            id=uuid.uuid4(),
+            tenant_id=kwargs["tenant_id"],
+            order_id=kwargs.get("order_id"),
+            customer_id=kwargs.get("customer_id"),
+            connector_instance_id=kwargs["connector_instance_id"],
+            provider_ref=kwargs["provider_ref"],
+            amount=kwargs["amount"],
+            currency=kwargs["currency"],
+            status=kwargs["status"],
+        )
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.razorpay.adapter.payments_service.upsert_payment_from_provider", _fake
+    )
+
+
+async def test_razorpay_handle_webhook_publishes_payment_captured_trigger(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def _fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", _fake_publish_trigger_event
+    )
+    _fake_upsert_payment_from_provider(monkeypatch)
+
+    adapter = RazorpayAdapter()
+    order_id = str(uuid.uuid4())
+    body = _razorpay_payment_webhook_body(event="payment.captured", payment_id="pay_1", status="captured", order_id=order_id)
+    await adapter.handle_webhook(
+        instance=_FakeRazorpayInstance(), raw_payload=json.dumps(body).encode(), headers={},
+        session=_FakeConnectorEventSession(),
+    )
+
+    assert len(published) == 1
+    assert published[0]["event_type"] == "payment.captured"
+    assert published[0]["dedupe_key"] == "pay_1"
+    assert published[0]["payload"]["order_id"] == order_id
+    assert published[0]["payload"]["status"] == "captured"
+
+
+async def test_razorpay_handle_webhook_publishes_payment_failed_trigger(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def _fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", _fake_publish_trigger_event
+    )
+    _fake_upsert_payment_from_provider(monkeypatch)
+
+    adapter = RazorpayAdapter()
+    body = _razorpay_payment_webhook_body(event="payment.failed", payment_id="pay_2", status="failed")
+    await adapter.handle_webhook(
+        instance=_FakeRazorpayInstance(), raw_payload=json.dumps(body).encode(), headers={},
+        session=_FakeConnectorEventSession(),
+    )
+
+    assert len(published) == 1
+    assert published[0]["event_type"] == "payment.failed"
+    assert published[0]["dedupe_key"] == "pay_2"
+
+
+async def test_razorpay_handle_webhook_skips_publish_for_pending_authorized_status(monkeypatch) -> None:
+    published: list[dict] = []
+
+    async def _fake_publish_trigger_event(session, **kwargs):
+        published.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", _fake_publish_trigger_event
+    )
+    _fake_upsert_payment_from_provider(monkeypatch)
+
+    adapter = RazorpayAdapter()
+    body = _razorpay_payment_webhook_body(event="payment.authorized", payment_id="pay_3", status="authorized")
+    await adapter.handle_webhook(
+        instance=_FakeRazorpayInstance(), raw_payload=json.dumps(body).encode(), headers={},
+        session=_FakeConnectorEventSession(),
+    )
+
+    assert published == []
+
+
+async def test_razorpay_handle_webhook_redelivered_webhook_does_not_double_publish(monkeypatch) -> None:
+    """A redelivered webhook (same Razorpay payment id => same `provider_ref`
+    => same `dedupe_key`) must not fire the workflow twice. The real
+    dedupe-by-`(tenant_id, dedupe_key)` uniqueness lives inside
+    `event_bus.publish_trigger_event` itself (see its docstring) and needs a
+    real Postgres session to exercise for real - no DB-backed connector
+    fixture exists in this suite yet (see this file's module docstring), so
+    this in-memory fake reproduces that exact documented contract to prove
+    `handle_webhook` always passes the same `dedupe_key` on redelivery,
+    which is what makes the real dedupe effective."""
+    inbox: dict[str, dict] = {}
+
+    async def _fake_publish_trigger_event(session, *, tenant_id, event_type, payload, connector_instance_id=None, dedupe_key=None):
+        if dedupe_key is not None and dedupe_key in inbox:
+            return inbox[dedupe_key]
+        row = {"event_type": event_type, "payload": payload, "dedupe_key": dedupe_key}
+        if dedupe_key is not None:
+            inbox[dedupe_key] = row
+        return row
+
+    monkeypatch.setattr(
+        "fusionflow.modules.workflows.engine.event_bus.publish_trigger_event", _fake_publish_trigger_event
+    )
+    _fake_upsert_payment_from_provider(monkeypatch)
+
+    adapter = RazorpayAdapter()
+    body = _razorpay_payment_webhook_body(event="payment.captured", payment_id="pay_redelivered", status="captured")
+    raw_payload = json.dumps(body).encode()
+
+    await adapter.handle_webhook(
+        instance=_FakeRazorpayInstance(), raw_payload=raw_payload, headers={}, session=_FakeConnectorEventSession()
+    )
+    await adapter.handle_webhook(
+        instance=_FakeRazorpayInstance(), raw_payload=raw_payload, headers={}, session=_FakeConnectorEventSession()
+    )
+
+    assert len(inbox) == 1
 
 
 # --------------------------------------------------------------------------

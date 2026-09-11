@@ -37,6 +37,7 @@ class SendLocationExecutor(NodeExecutor):
     label = "Send WhatsApp Location"
     description = "Sends an outbound location message through a connected WhatsApp connector instance."
     config_model = SendLocationConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 

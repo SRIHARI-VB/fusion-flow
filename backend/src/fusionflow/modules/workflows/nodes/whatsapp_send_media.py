@@ -35,7 +35,9 @@ class SendMediaConfig(BaseModel):
     media_type: Literal["image", "video", "audio", "document"]
     media_url: str | None = Field(default=None, description="Publicly reachable URL - required unless media_id is set.")
     media_id: str | None = Field(default=None, description="A media id already uploaded to WhatsApp - alternative to media_url.")
-    caption: str | None = Field(default=None, description="Not supported for audio.")
+    caption: str | None = Field(
+        default=None, description="Not supported for audio.", json_schema_extra={"format": "textarea"}
+    )
     filename: str | None = Field(default=None, description="Document filename shown to the recipient.")
 
     @model_validator(mode="after")
@@ -53,6 +55,7 @@ class SendMediaExecutor(NodeExecutor):
     label = "Send WhatsApp Media"
     description = "Sends an outbound image/video/audio/document message through a connected WhatsApp connector instance."
     config_model = SendMediaConfig
+    required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2
 
