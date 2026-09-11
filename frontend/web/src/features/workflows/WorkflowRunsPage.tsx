@@ -22,9 +22,16 @@ import { RunStepTrace } from "./components/RunStepTrace";
 
 const statusVariant: Record<RunStatus, BadgeVariant> = {
   running: "default",
+  waiting: "outline",
   completed: "success",
   failed: "destructive",
   cancelled: "secondary",
+};
+
+// Only "waiting" needs a friendlier label than its raw status string - a
+// paused run is otherwise indistinguishable from "running" at a glance.
+const statusLabel: Partial<Record<RunStatus, string>> = {
+  waiting: "Waiting for reply",
 };
 
 export function WorkflowRunsPage() {
@@ -116,7 +123,7 @@ export function WorkflowRunsPage() {
                       {new Date(run.started_at).toLocaleString()}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant[run.status]}>{run.status}</Badge>
+                      <Badge variant={statusVariant[run.status]}>{statusLabel[run.status] ?? run.status}</Badge>
                     </TableCell>
                     <TableCell className="max-w-[10rem] truncate font-mono text-xs text-muted-foreground">
                       {run.trigger_event_ref ?? "-"}
