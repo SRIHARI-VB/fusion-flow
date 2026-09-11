@@ -31,7 +31,9 @@ from fusionflow.modules.admin.models import (
     PlanFeatureFlag,
     PlanResourceLimit,
     ResourceLimitOverride,
+    WorkflowComponent,
     WorkflowNodeTemplate,
+    WorkflowStarterTemplate,
 )
 from fusionflow.modules.admin.schemas import (
     ConnectorHealthItemOut,
@@ -1429,6 +1431,7 @@ async def create_workflow_node_template(
     default_config: dict[str, Any],
     config_schema_overrides: dict[str, Any] | None,
     is_active: bool,
+    required_connector_type_key: str | None,
 ) -> WorkflowNodeTemplate:
     existing = (
         await session.execute(select(WorkflowNodeTemplate).where(WorkflowNodeTemplate.key == key))
@@ -1447,6 +1450,7 @@ async def create_workflow_node_template(
         default_config=default_config,
         config_schema_overrides=config_schema_overrides,
         is_active=is_active,
+        required_connector_type_key=required_connector_type_key,
     )
     session.add(template)
     await session.flush()
@@ -1464,6 +1468,7 @@ async def update_workflow_node_template(
     default_config: dict[str, Any] | None,
     config_schema_overrides: dict[str, Any] | None,
     is_active: bool | None,
+    required_connector_type_key: str | None = None,
 ) -> WorkflowNodeTemplate:
     """`base_node_type` is deliberately not editable after creation - it
     determines which executor's config schema this template narrows,
@@ -1487,6 +1492,8 @@ async def update_workflow_node_template(
         template.config_schema_overrides = config_schema_overrides
     if is_active is not None:
         template.is_active = is_active
+    if required_connector_type_key is not None:
+        template.required_connector_type_key = required_connector_type_key
     await session.flush()
     return template
 
@@ -1496,4 +1503,200 @@ async def delete_workflow_node_template(session: AsyncSession, template_id: uuid
     if template is None:
         raise AdminError("Workflow node template not found", status_code=404)
     await session.delete(template)
+    await session.flush()
+
+
+# --- Workflow starter templates (composable-builder redesign, Phase 6) ------
+
+
+async def list_workflow_starter_templates(
+    session: AsyncSession, *, active_only: bool = False
+) -> list[WorkflowStarterTemplate]:
+    query = select(WorkflowStarterTemplate).order_by(WorkflowStarterTemplate.name)
+    if active_only:
+        query = query.where(WorkflowStarterTemplate.is_active.is_(True))
+    return list((await session.execute(query)).scalars().all())
+
+
+async def get_workflow_starter_template(
+    session: AsyncSession, template_id: uuid.UUID
+) -> WorkflowStarterTemplate | None:
+    return await session.get(WorkflowStarterTemplate, template_id)
+
+
+async def get_workflow_starter_template_by_key(
+    session: AsyncSession, key: str
+) -> WorkflowStarterTemplate | None:
+    return (
+        await session.execute(select(WorkflowStarterTemplate).where(WorkflowStarterTemplate.key == key))
+    ).scalar_one_or_none()
+
+
+async def create_workflow_starter_template(
+    session: AsyncSession,
+    *,
+    key: str,
+    name: str,
+    description: str | None,
+    category: str,
+    icon: str | None,
+    graph_json: dict[str, Any],
+    required_object_types: list[dict[str, Any]] | None,
+    is_active: bool,
+) -> WorkflowStarterTemplate:
+    existing = (
+        await session.execute(select(WorkflowStarterTemplate).where(WorkflowStarterTemplate.key == key))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise AdminError(f"Workflow starter template '{key}' already exists", status_code=409)
+
+    template = WorkflowStarterTemplate(
+        id=uuid.uuid4(),
+        key=key,
+        name=name,
+        description=description,
+        category=category,
+        icon=icon,
+        graph_json=graph_json,
+        required_object_types=required_object_types,
+        is_active=is_active,
+    )
+    session.add(template)
+    await session.flush()
+    return template
+
+
+async def update_workflow_starter_template(
+    session: AsyncSession,
+    template_id: uuid.UUID,
+    *,
+    name: str | None,
+    description: str | None,
+    category: str | None,
+    icon: str | None,
+    graph_json: dict[str, Any] | None,
+    required_object_types: list[dict[str, Any]] | None,
+    is_active: bool | None,
+) -> WorkflowStarterTemplate:
+    template = await get_workflow_starter_template(session, template_id)
+    if template is None:
+        raise AdminError("Workflow starter template not found", status_code=404)
+    if name is not None:
+        template.name = name
+    if description is not None:
+        template.description = description
+    if category is not None:
+        template.category = category
+    if icon is not None:
+        template.icon = icon
+    if graph_json is not None:
+        template.graph_json = graph_json
+    if required_object_types is not None:
+        template.required_object_types = required_object_types
+    if is_active is not None:
+        template.is_active = is_active
+    await session.flush()
+    return template
+
+
+async def delete_workflow_starter_template(session: AsyncSession, template_id: uuid.UUID) -> None:
+    template = await get_workflow_starter_template(session, template_id)
+    if template is None:
+        raise AdminError("Workflow starter template not found", status_code=404)
+    await session.delete(template)
+    await session.flush()
+
+
+# --- Workflow components (insertable fragments, composable-builder redesign) -
+
+
+async def list_workflow_components(session: AsyncSession, *, active_only: bool = False) -> list[WorkflowComponent]:
+    query = select(WorkflowComponent).order_by(WorkflowComponent.name)
+    if active_only:
+        query = query.where(WorkflowComponent.is_active.is_(True))
+    return list((await session.execute(query)).scalars().all())
+
+
+async def get_workflow_component(session: AsyncSession, component_id: uuid.UUID) -> WorkflowComponent | None:
+    return await session.get(WorkflowComponent, component_id)
+
+
+async def get_workflow_component_by_key(session: AsyncSession, key: str) -> WorkflowComponent | None:
+    return (
+        await session.execute(select(WorkflowComponent).where(WorkflowComponent.key == key))
+    ).scalar_one_or_none()
+
+
+async def create_workflow_component(
+    session: AsyncSession,
+    *,
+    key: str,
+    name: str,
+    description: str | None,
+    category: str,
+    icon: str | None,
+    graph_fragment: dict[str, Any],
+    required_object_types: list[dict[str, Any]] | None,
+    is_active: bool,
+) -> WorkflowComponent:
+    existing = (
+        await session.execute(select(WorkflowComponent).where(WorkflowComponent.key == key))
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise AdminError(f"Workflow component '{key}' already exists", status_code=409)
+
+    component = WorkflowComponent(
+        id=uuid.uuid4(),
+        key=key,
+        name=name,
+        description=description,
+        category=category,
+        icon=icon,
+        graph_fragment=graph_fragment,
+        required_object_types=required_object_types,
+        is_active=is_active,
+    )
+    session.add(component)
+    await session.flush()
+    return component
+
+
+async def update_workflow_component(
+    session: AsyncSession,
+    component_id: uuid.UUID,
+    *,
+    name: str | None,
+    description: str | None,
+    category: str | None,
+    icon: str | None,
+    graph_fragment: dict[str, Any] | None,
+    required_object_types: list[dict[str, Any]] | None,
+    is_active: bool | None,
+) -> WorkflowComponent:
+    component = await get_workflow_component(session, component_id)
+    if component is None:
+        raise AdminError("Workflow component not found", status_code=404)
+    if name is not None:
+        component.name = name
+    if description is not None:
+        component.description = description
+    if category is not None:
+        component.category = category
+    if icon is not None:
+        component.icon = icon
+    if graph_fragment is not None:
+        component.graph_fragment = graph_fragment
+    if required_object_types is not None:
+        component.required_object_types = required_object_types
+    if is_active is not None:
+        component.is_active = is_active
+    await session.flush()
+    return component
+
+
+async def delete_workflow_component(session: AsyncSession, component_id: uuid.UUID) -> None:
+    component = await get_workflow_component(session, component_id)
+    if component is None:
+        raise AdminError("Workflow component not found", status_code=404)
+    await session.delete(component)
     await session.flush()

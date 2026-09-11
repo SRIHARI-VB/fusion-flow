@@ -19,9 +19,16 @@ from fusionflow.modules.admin.models import (
     PlanFeatureFlag,
     PlanResourceLimit,
     ResourceLimitOverride,
+    WorkflowComponent,
     WorkflowNodeTemplate,
+    WorkflowStarterTemplate,
 )
 from fusionflow.modules.auth.models import RefreshToken, User
+from fusionflow.modules.business_objects.models import (
+    ObjectFieldDefinition,
+    ObjectRecord,
+    ObjectTypeDefinition,
+)
 from fusionflow.modules.catalog.models import (
     Coupon,
     DiscountType,
@@ -80,6 +87,7 @@ from fusionflow.modules.workflows.models import (
     WorkflowStatus,
     WorkflowTrigger,
     WorkflowTriggerInbox,
+    WorkflowUserComponent,
     WorkflowVersion,
 )
 
@@ -116,6 +124,9 @@ __all__ = [
     "KbArticleStatus",
     "Membership",
     "MembershipRole",
+    "ObjectFieldDefinition",
+    "ObjectRecord",
+    "ObjectTypeDefinition",
     "Offer",
     "Order",
     "OrderStatus",
@@ -140,11 +151,14 @@ __all__ = [
     "WhatsAppTemplateCategory",
     "WhatsAppTemplateStatus",
     "Workflow",
+    "WorkflowComponent",
     "WorkflowNodeTemplate",
     "WorkflowRun",
     "WorkflowRunStep",
+    "WorkflowStarterTemplate",
     "WorkflowStatus",
     "WorkflowTrigger",
     "WorkflowTriggerInbox",
+    "WorkflowUserComponent",
     "WorkflowVersion",
 ]

@@ -310,10 +310,106 @@ class WorkflowNodeTemplate(Base, TimestampMixin):
     # a template whose `base_node_type` isn't currently registered.
     base_node_type: Mapped[str] = mapped_column(String(150), nullable=False)
     icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Phase 7 Part A: entitlement gate this template inherits/narrows - see
+    # `engine.registry.NodeExecutor.required_connector_type_key`'s docstring.
+    # Nullable: `None` means "inherit the base executor's own requirement"
+    # (service.list_node_types_with_templates falls back to the base
+    # executor's value when this column is unset), not "no requirement at
+    # all" - an admin who wants to explicitly lift a requirement must still
+    # set this column, there is no separate sentinel for that today.
+    required_connector_type_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     default_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # Optionally narrows/relabels fields from the base executor's JSON
     # schema (e.g. hiding "action" behind a friendly pre-filled label) -
     # shallow-merged over the base schema by the palette endpoint, never
     # mutating the base executor's own schema.
     config_schema_overrides: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+
+class WorkflowStarterTemplate(Base, TimestampMixin):
+    """Admin-managed, ready-to-use example workflow a tenant can start a new
+    workflow from (composable-workflow-builder redesign, Phase 6) - the
+    proof that the new composable node types (`whatsapp.ask_choice`,
+    `flow.confirm`, `records.query`/`records.upsert`, `payments.send_razorpay_link`,
+    ...) can actually assemble a real guided flow, not just exist in
+    isolation. Global/platform-managed, not tenant-scoped - same pattern as
+    `WorkflowNodeTemplate`/`BusinessTemplate`: every tenant sees the same
+    active templates, and starting from one is a one-time copy (see
+    `workflows.service.create_workflow_from_starter_template`), not a live
+    link - editing the resulting workflow never touches this row.
+
+    `graph_json` is a full authored `{"nodes": [...], "edges": [...]}`
+    graph built entirely from real, registered node types (see
+    `scripts/seed_workflow_starter_templates.py`) - nothing about a
+    template's graph is special-cased at execution time; it publishes and
+    runs exactly like a hand-built graph, and every node in it can be
+    freely edited, removed, or added to afterward.
+
+    `required_object_types`, when set, lists the tenant-defined "custom
+    business object" types (see `modules.business_objects`) this template's
+    graph assumes exist (e.g. an "Appointment" object for a booking flow) -
+    each spec shaped `{"key", "name", "icon"?, "fields": [{"key", "label",
+    "field_type", "options"?, "required"?, "sort_order"?}, ...]}`.
+    `create_workflow_from_starter_template` auto-provisions any of these
+    the tenant doesn't already have (by `key`) before seeding the graph, so
+    picking this template "just works" with zero manual setup - but never
+    overwrites/upgrades one the tenant already has under that key (a
+    deliberately simple idempotency rule, not a merge/migration mechanism -
+    see that function's docstring).
+    """
+
+    __tablename__ = "workflow_starter_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="General")
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    graph_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    required_object_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+
+class WorkflowComponent(Base, TimestampMixin):
+    """Admin-managed, ready-to-use *fragment* of a workflow - a handful of
+    nodes+edges (e.g. "ask for a coupon code, validate it, branch") a
+    tenant inserts into a workflow they're already editing, as opposed to
+    `WorkflowStarterTemplate`'s whole-new-workflow shape. Global/platform-
+    managed, same pattern as that table - every tenant sees the same
+    active components. See `modules.workflows.models.WorkflowUserComponent`
+    for the tenant-saved-their-own-selection sibling of this table; both
+    are merged into one list by `workflows.service.list_components`.
+
+    `graph_fragment` is a `{"nodes": [...], "edges": [...]}` fragment, the
+    same React-Flow JSON shape a full workflow graph uses - deliberately
+    small and usually left with some wiring dangling on purpose (e.g. a
+    `flow.confirm`'s "no" handle unwired, or a node referencing a
+    placeholder token like `"{{YOUR_ORDER_NODE_ID.order_id}}"`) for the
+    author to wire into their own workflow after inserting it - the exact
+    same "placeholder the author fills in" mental model
+    `WorkflowStarterTemplate`'s placeholder `connector_instance_id`s
+    already use, so no new validation concept is needed: the existing
+    unconnected-handle canvas styling and publish-time validation panel
+    already surface exactly what's still dangling.
+
+    `required_object_types` - same shape/semantics as
+    `WorkflowStarterTemplate.required_object_types` - is auto-provisioned
+    for the tenant (see `workflows.service.provision_required_object_types`)
+    before a component is inserted, in case its nodes reference a custom
+    business object (e.g. the "Post-Purchase Rating Request" component
+    needs a "feedback" object type).
+    """
+
+    __tablename__ = "workflow_components"
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(80), nullable=False, default="General")
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    graph_fragment: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    required_object_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

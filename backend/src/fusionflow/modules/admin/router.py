@@ -58,9 +58,15 @@ from fusionflow.modules.admin.schemas import (
     TenantListItemOut,
     TenantModuleAccessOut,
     TenantResourceLimitOut,
+    WorkflowComponentCreateRequest,
+    WorkflowComponentOut,
+    WorkflowComponentUpdateRequest,
     WorkflowNodeTemplateCreateRequest,
     WorkflowNodeTemplateOut,
     WorkflowNodeTemplateUpdateRequest,
+    WorkflowStarterTemplateCreateRequest,
+    WorkflowStarterTemplateOut,
+    WorkflowStarterTemplateUpdateRequest,
 )
 from fusionflow.modules.admin.service import AdminError
 
@@ -777,6 +783,7 @@ async def create_workflow_node_template(
             default_config=payload.default_config,
             config_schema_overrides=payload.config_schema_overrides,
             is_active=payload.is_active,
+            required_connector_type_key=payload.required_connector_type_key,
         )
     except AdminError as exc:
         raise _http(exc) from exc
@@ -802,6 +809,7 @@ async def update_workflow_node_template(
             default_config=payload.default_config,
             config_schema_overrides=payload.config_schema_overrides,
             is_active=payload.is_active,
+            required_connector_type_key=payload.required_connector_type_key,
         )
     except AdminError as exc:
         raise _http(exc) from exc
@@ -815,6 +823,146 @@ async def delete_workflow_node_template(
 ) -> None:
     try:
         await admin_service.delete_workflow_node_template(session, template_id)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+
+
+# --- Workflow starter templates (composable-builder redesign, Phase 6) ------
+
+
+@router.get("/workflow-starter-templates", response_model=list[WorkflowStarterTemplateOut])
+async def list_workflow_starter_templates(
+    _admin: PlatformAdminDep, session: SessionDep
+) -> list[WorkflowStarterTemplateOut]:
+    templates = await admin_service.list_workflow_starter_templates(session)
+    return [WorkflowStarterTemplateOut.model_validate(t) for t in templates]
+
+
+@router.post(
+    "/workflow-starter-templates",
+    response_model=WorkflowStarterTemplateOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_workflow_starter_template(
+    payload: WorkflowStarterTemplateCreateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> WorkflowStarterTemplateOut:
+    try:
+        template = await admin_service.create_workflow_starter_template(
+            session,
+            key=payload.key,
+            name=payload.name,
+            description=payload.description,
+            category=payload.category,
+            icon=payload.icon,
+            graph_json=payload.graph_json,
+            required_object_types=payload.required_object_types,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowStarterTemplateOut.model_validate(template)
+
+
+@router.patch("/workflow-starter-templates/{template_id}", response_model=WorkflowStarterTemplateOut)
+async def update_workflow_starter_template(
+    template_id: uuid.UUID,
+    payload: WorkflowStarterTemplateUpdateRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> WorkflowStarterTemplateOut:
+    try:
+        template = await admin_service.update_workflow_starter_template(
+            session,
+            template_id,
+            name=payload.name,
+            description=payload.description,
+            category=payload.category,
+            icon=payload.icon,
+            graph_json=payload.graph_json,
+            required_object_types=payload.required_object_types,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowStarterTemplateOut.model_validate(template)
+
+
+@router.delete("/workflow-starter-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow_starter_template(
+    template_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> None:
+    try:
+        await admin_service.delete_workflow_starter_template(session, template_id)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+
+
+# --- Workflow components (insertable fragments, composable-builder redesign) -
+
+
+@router.get("/workflow-components", response_model=list[WorkflowComponentOut])
+async def list_workflow_components(_admin: PlatformAdminDep, session: SessionDep) -> list[WorkflowComponentOut]:
+    components = await admin_service.list_workflow_components(session)
+    return [WorkflowComponentOut.model_validate(c) for c in components]
+
+
+@router.post("/workflow-components", response_model=WorkflowComponentOut, status_code=status.HTTP_201_CREATED)
+async def create_workflow_component(
+    payload: WorkflowComponentCreateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> WorkflowComponentOut:
+    try:
+        component = await admin_service.create_workflow_component(
+            session,
+            key=payload.key,
+            name=payload.name,
+            description=payload.description,
+            category=payload.category,
+            icon=payload.icon,
+            graph_fragment=payload.graph_fragment,
+            required_object_types=payload.required_object_types,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowComponentOut.model_validate(component)
+
+
+@router.patch("/workflow-components/{component_id}", response_model=WorkflowComponentOut)
+async def update_workflow_component(
+    component_id: uuid.UUID,
+    payload: WorkflowComponentUpdateRequest,
+    _admin: PlatformAdminDep,
+    session: SessionDep,
+) -> WorkflowComponentOut:
+    try:
+        component = await admin_service.update_workflow_component(
+            session,
+            component_id,
+            name=payload.name,
+            description=payload.description,
+            category=payload.category,
+            icon=payload.icon,
+            graph_fragment=payload.graph_fragment,
+            required_object_types=payload.required_object_types,
+            is_active=payload.is_active,
+        )
+    except AdminError as exc:
+        raise _http(exc) from exc
+    await session.commit()
+    return WorkflowComponentOut.model_validate(component)
+
+
+@router.delete("/workflow-components/{component_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow_component(
+    component_id: uuid.UUID, _admin: PlatformAdminDep, session: SessionDep
+) -> None:
+    try:
+        await admin_service.delete_workflow_component(session, component_id)
     except AdminError as exc:
         raise _http(exc) from exc
     await session.commit()

@@ -406,6 +406,7 @@ class WorkflowNodeTemplateOut(BaseModel):
     default_config: dict[str, Any] = Field(default_factory=dict)
     config_schema_overrides: dict[str, Any] | None = None
     is_active: bool
+    required_connector_type_key: str | None = None
     created_at: datetime
 
 
@@ -419,6 +420,7 @@ class WorkflowNodeTemplateCreateRequest(BaseModel):
     default_config: dict[str, Any] = Field(default_factory=dict)
     config_schema_overrides: dict[str, Any] | None = None
     is_active: bool = True
+    required_connector_type_key: str | None = Field(default=None, max_length=80)
 
 
 class WorkflowNodeTemplateUpdateRequest(BaseModel):
@@ -428,4 +430,94 @@ class WorkflowNodeTemplateUpdateRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=80)
     default_config: dict[str, Any] | None = None
     config_schema_overrides: dict[str, Any] | None = None
+    is_active: bool | None = None
+    required_connector_type_key: str | None = Field(default=None, max_length=80)
+
+
+class WorkflowStarterTemplateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    name: str
+    description: str | None = None
+    category: str
+    icon: str | None = None
+    graph_json: dict[str, Any]
+    required_object_types: list[dict[str, Any]] | None = None
+    is_active: bool
+    created_at: datetime
+
+
+class WorkflowStarterTemplateSummaryOut(BaseModel):
+    """The tenant-facing subset (`GET /workflows/starter-templates`) - just
+    enough for a "start from a template" picker card. `graph_json`/
+    `required_object_types` are instantiation details a tenant never needs
+    to see directly (see `workflows.service.create_workflow_from_starter_template`,
+    which reads the full row server-side)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    name: str
+    description: str | None = None
+    category: str
+    icon: str | None = None
+
+
+class WorkflowStarterTemplateCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str = Field(default="General", max_length=80)
+    icon: str | None = Field(default=None, max_length=80)
+    graph_json: dict[str, Any]
+    required_object_types: list[dict[str, Any]] | None = None
+    is_active: bool = True
+
+
+class WorkflowStarterTemplateUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=80)
+    icon: str | None = Field(default=None, max_length=80)
+    graph_json: dict[str, Any] | None = None
+    required_object_types: list[dict[str, Any]] | None = None
+    is_active: bool | None = None
+
+
+class WorkflowComponentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    key: str
+    name: str
+    description: str | None = None
+    category: str
+    icon: str | None = None
+    graph_fragment: dict[str, Any]
+    required_object_types: list[dict[str, Any]] | None = None
+    is_active: bool
+    created_at: datetime
+
+
+class WorkflowComponentCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str = Field(default="General", max_length=80)
+    icon: str | None = Field(default=None, max_length=80)
+    graph_fragment: dict[str, Any]
+    required_object_types: list[dict[str, Any]] | None = None
+    is_active: bool = True
+
+
+class WorkflowComponentUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    category: str | None = Field(default=None, max_length=80)
+    icon: str | None = Field(default=None, max_length=80)
+    graph_fragment: dict[str, Any] | None = None
+    required_object_types: list[dict[str, Any]] | None = None
     is_active: bool | None = None
