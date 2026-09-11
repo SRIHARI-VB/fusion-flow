@@ -30,7 +30,7 @@ import logging
 import os
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ from fusionflow.modules.workflows.engine.registry import (
     Failure,
     NodeResult,
     Success,
+    Suspend,
     node_executor_registry,
 )
 from fusionflow.modules.workflows.engine.templating import resolve_path
@@ -110,6 +111,36 @@ class LoopGuardExceeded(Exception):
     """
 
 
+class RunSuspended(Exception):
+    """A `can_suspend` node (`whatsapp.ask_question` today) returned
+    `Suspend` — the run must pause, not fail or complete. Raised by
+    `_execute_single_node`, deliberately left uncaught by `_run_frontier`
+    (unlike `ChildExecutionError`/`LoopGuardExceeded`, which it never
+    catches either — see that function's docstring) so it propagates all
+    the way to `execute_run`/`resume_run`, the only two places that know
+    how to turn it into persisted `waiting_*` state on the run.
+
+    A suspending node is never embedded inside a container (validation
+    rule 7, `_check_no_suspend_in_container`), so this is only ever
+    raised at the top level — a container's own `run_children` call never
+    needs to special-case it.
+    """
+
+    def __init__(
+        self,
+        node_id: str,
+        correlation_key: str,
+        *,
+        remaining_frontier: list[str],
+        variables_snapshot: dict[str, Any],
+    ) -> None:
+        self.node_id = node_id
+        self.correlation_key = correlation_key
+        self.remaining_frontier = remaining_frontier
+        self.variables_snapshot = variables_snapshot
+        super().__init__(f"node {node_id} suspended, waiting for a reply (correlation_key={correlation_key!r})")
+
+
 async def execute_run(
     session: AsyncSession,
     run: WorkflowRun,
@@ -138,6 +169,9 @@ async def execute_run(
 
     try:
         await _run_frontier(session, run, graph, [node.id for node in trigger_nodes], variables)
+    except RunSuspended as exc:
+        _persist_suspension(run, graph, exc)
+        return run
     except (ChildExecutionError, LoopGuardExceeded) as exc:
         await _fail_run(run, str(exc))
         return run
@@ -145,6 +179,101 @@ async def execute_run(
     run.status = RunStatus.COMPLETED
     run.completed_at = _now()
     return run
+
+
+async def resume_run(
+    session: AsyncSession,
+    run: WorkflowRun,
+    graph: WorkflowGraph,
+    *,
+    reply_payload: dict[str, Any],
+) -> WorkflowRun:
+    """Continue `run` from wherever it was suspended (`run.waiting_*`),
+    with `reply_payload` (the same inbound-message shape `WhatsAppAdapter.
+    _extract_inbound_message` produces) supplying the answer to whatever
+    the waiting node asked.
+
+    Same contract as `execute_run`: does not commit, force-fails `run` in
+    place on any node error instead of raising, and may suspend *again*
+    (a second ask node further down the resumed chain) exactly like a
+    fresh run can. Raises `RunLoopError` only if the waiting node itself
+    no longer exists/resolves — a caller bug (the compiled graph must not
+    have changed under a run that's still waiting), not a normal runtime
+    outcome.
+    """
+    node = graph.node_by_id(run.waiting_node_id)
+    if node is None:
+        raise RunLoopError(f"waiting node {run.waiting_node_id!r} not found in graph")
+    executor = node_executor_registry.get(node.data.node_type)
+    if executor is None:
+        raise RunLoopError(f"no executor registered for node type {node.data.node_type!r}")
+
+    answer = await executor.extract_resume_value(node.data.config, reply_payload)
+
+    variables = dict(run.waiting_variables or {})
+    variables[run.waiting_node_id] = {"reply": answer}
+    frontier = list(run.waiting_frontier or [])
+
+    run.waiting_node_id = None
+    run.waiting_connector_instance_id = None
+    run.waiting_correlation_key = None
+    run.waiting_frontier = None
+    run.waiting_variables = None
+    run.waiting_expires_at = None
+    run.status = RunStatus.RUNNING
+
+    try:
+        await _run_frontier(session, run, graph, frontier, variables)
+    except RunSuspended as exc:
+        _persist_suspension(run, graph, exc)
+        return run
+    except (ChildExecutionError, LoopGuardExceeded) as exc:
+        await _fail_run(run, str(exc))
+        return run
+
+    run.status = RunStatus.COMPLETED
+    run.completed_at = _now()
+    return run
+
+
+def _persist_suspension(run: WorkflowRun, graph: WorkflowGraph, exc: RunSuspended) -> None:
+    """Shared by `execute_run` and `resume_run`: turn a caught
+    `RunSuspended` into persisted `waiting_*` state on `run`. Fixed 24h
+    expiry (confirmed decision — not configurable per node)."""
+    run.status = RunStatus.WAITING
+    run.waiting_node_id = exc.node_id
+    run.waiting_connector_instance_id = _connector_instance_id_for_node(graph, exc.node_id)
+    run.waiting_correlation_key = exc.correlation_key
+    run.waiting_frontier = exc.remaining_frontier
+    run.waiting_variables = exc.variables_snapshot
+    run.waiting_expires_at = _now() + timedelta(hours=24)
+
+
+def _connector_instance_id_for_node(graph: WorkflowGraph, node_id: str) -> uuid.UUID | None:
+    """Best-effort: this is bookkeeping (which channel instance a paused
+    run is waiting on), not a user-facing operation, so a missing/invalid
+    `connector_instance_id` on the waiting node just leaves this `None`
+    instead of crashing the suspend."""
+    node = graph.node_by_id(node_id)
+    if node is None:
+        return None
+    raw = node.data.config.get("connector_instance_id")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _next_node_ids(graph: WorkflowGraph, node_id: str, variables: dict[str, Any]) -> list[str]:
+    """All of `node_id`'s outgoing edges whose own optional `EdgeFilter`
+    passes, with no source-handle restriction — what a plain `Success`
+    result's frontier-advance follows (`_run_frontier`), and also what a
+    `Suspend` result's `remaining_frontier` is captured as
+    (`_execute_single_node`), since neither carries a handle selection the
+    way `Branch` does."""
+    return [e.target for e in graph.outgoing_edges(node_id) if _edge_passes_filter(e, variables)]
 
 
 async def _run_frontier(
@@ -185,6 +314,9 @@ async def _run_frontier(
         if node is None:
             continue
 
+        # _execute_single_node raises instead of returning for both a
+        # Failure result and a Suspend result (as RunSuspended) - by the
+        # time control reaches here, `result` is always Success or Branch.
         result = await _execute_single_node(session, run, graph, node, variables)
 
         if isinstance(result, Branch):
@@ -192,18 +324,17 @@ async def _run_frontier(
             next_edges = [
                 e for e in graph.outgoing_edges(node.id) if (e.source_handle or "default") in selected
             ]
-        else:  # Success — _execute_single_node never returns Failure (it raises instead)
-            next_edges = graph.outgoing_edges(node.id)
+            # An edge's own optional filter (engine.graph.EdgeFilter)
+            # applies in addition to (not instead of) handle-matching
+            # above - both must pass for the edge to be followed.
+            next_ids = [e.target for e in next_edges if _edge_passes_filter(e, variables)]
+        else:  # Success
+            next_ids = _next_node_ids(graph, node.id, variables)
 
         if allowed_ids is not None:
-            next_edges = [e for e in next_edges if e.target in allowed_ids]
+            next_ids = [nid for nid in next_ids if nid in allowed_ids]
 
-        # An edge's own optional filter (engine.graph.EdgeFilter) applies
-        # in addition to (not instead of) handle-matching above - both
-        # must pass for the edge to be followed.
-        next_edges = [e for e in next_edges if _edge_passes_filter(e, variables)]
-
-        frontier.extend(edge.target for edge in next_edges)
+        frontier.extend(next_ids)
 
 
 def _edge_passes_filter(edge: GraphEdge, variables: dict[str, Any]) -> bool:
@@ -323,6 +454,20 @@ async def _execute_single_node(
         step.output = result.output
         variables[node.id] = result.output
         return result
+    elif isinstance(result, Suspend):
+        # The node's own job (typically: sending an outbound message) is
+        # done - it "succeeded" in the sense that this step is over, but
+        # the run itself pauses here rather than following its outgoing
+        # edges immediately (see RunSuspended's docstring).
+        step.status = StepStatus.SUCCEEDED
+        step.output = {"asked": True}
+        variables[node.id] = step.output
+        raise RunSuspended(
+            node.id,
+            result.correlation_key,
+            remaining_frontier=_next_node_ids(graph, node.id, variables),
+            variables_snapshot=dict(variables),
+        )
     elif isinstance(result, Failure):
         step.status = StepStatus.FAILED
         step.error = result.error
