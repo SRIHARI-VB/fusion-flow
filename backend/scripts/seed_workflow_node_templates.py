@@ -29,14 +29,20 @@ from fusionflow.modules.admin import service as admin_service
 TEMPLATES: list[dict] = [
     {
         "key": "send_whatsapp_template_message",
-        "label": "Send WhatsApp Message",
+        # Distinct from the bespoke `send_whatsapp_message` node's own
+        # "Send WhatsApp Message" label (Phase 5 palette-cleanup fix) - this
+        # entry wraps the generic `connector.action` executor instead, and
+        # the two rendering with the literal same label made them
+        # indistinguishable in the palette.
+        "label": "Send WhatsApp Message (Generic Action)",
         "description": "Sends an outbound WhatsApp text message through a connected WhatsApp connector instance.",
-        "category": "Messaging",
+        "category": "Messages",
         "base_node_type": "connector.action",
         "icon": "message-circle",
         "default_config": {"action": "send_text_message"},
         "config_schema_overrides": None,
         "is_active": True,
+        "required_connector_type_key": "whatsapp",
     },
     {
         "key": "http_get_test_endpoint",
@@ -48,6 +54,7 @@ TEMPLATES: list[dict] = [
         "default_config": {"method": "GET", "url": "https://httpbin.org/get"},
         "config_schema_overrides": None,
         "is_active": True,
+        "required_connector_type_key": None,
     },
 ]
 
@@ -68,6 +75,7 @@ async def seed() -> None:
                     default_config=spec["default_config"],
                     config_schema_overrides=spec["config_schema_overrides"],
                     is_active=spec["is_active"],
+                    required_connector_type_key=spec["required_connector_type_key"],
                 )
                 print(f"updated: {spec['key']}")
                 continue
@@ -82,6 +90,7 @@ async def seed() -> None:
                 default_config=spec["default_config"],
                 config_schema_overrides=spec["config_schema_overrides"],
                 is_active=spec["is_active"],
+                required_connector_type_key=spec["required_connector_type_key"],
             )
             print(f"created: {spec['key']}")
         await session.commit()
