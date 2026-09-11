@@ -9,17 +9,50 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fusionflow.modules.kb.models import KbArticle
+from fusionflow.modules.kb.models import KbArticle, KbArticleStatus
 from fusionflow.modules.kb.schemas import KbArticleCreate, KbArticleUpdate
 
 
-async def list_articles(session: AsyncSession, tenant_id: uuid.UUID) -> list[KbArticle]:
-    rows = await session.execute(
-        select(KbArticle).where(KbArticle.tenant_id == tenant_id).order_by(KbArticle.created_at.desc())
+async def list_articles(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: KbArticleStatus | None = None,
+    tag: str | None = None,
+    limit: int | None = None,
+) -> list[KbArticle]:
+    stmt = select(KbArticle).where(KbArticle.tenant_id == tenant_id)
+    if status is not None:
+        stmt = stmt.where(KbArticle.status == status)
+    if tag is not None:
+        stmt = stmt.where(KbArticle.tags.any(tag))
+    stmt = stmt.order_by(KbArticle.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
+    return list(rows.scalars().all())
+
+
+async def search_articles(
+    session: AsyncSession, tenant_id: uuid.UUID, query: str, *, limit: int = 20
+) -> list[KbArticle]:
+    """Simple `ILIKE` keyword search over title/body - sufficient for "does
+    this workflow's question match a KB article" without adding a
+    full-text-search dependency (see this phase's plan)."""
+    pattern = f"%{query}%"
+    stmt = (
+        select(KbArticle)
+        .where(
+            KbArticle.tenant_id == tenant_id,
+            or_(KbArticle.title.ilike(pattern), KbArticle.body.ilike(pattern)),
+        )
+        .order_by(KbArticle.created_at.desc())
+        .limit(limit)
     )
+    rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
 

@@ -20,10 +20,29 @@ from fusionflow.modules.customers.models import Customer
 from fusionflow.modules.customers.schemas import CustomerCreate, CustomerUpdate
 
 
-async def list_customers(session: AsyncSession, tenant_id: uuid.UUID) -> list[Customer]:
-    rows = await session.execute(
-        select(Customer).where(Customer.tenant_id == tenant_id).order_by(Customer.created_at.desc())
-    )
+async def list_customers(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    name_search: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    external_ref: str | None = None,
+    limit: int | None = None,
+) -> list[Customer]:
+    stmt = select(Customer).where(Customer.tenant_id == tenant_id)
+    if name_search is not None:
+        stmt = stmt.where(Customer.name.ilike(f"%{name_search}%"))
+    if email is not None:
+        stmt = stmt.where(Customer.email == email)
+    if phone is not None:
+        stmt = stmt.where(Customer.phone == phone)
+    if external_ref is not None:
+        stmt = stmt.where(Customer.external_ref == external_ref)
+    stmt = stmt.order_by(Customer.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
 
@@ -38,6 +57,22 @@ async def get_customer(
     return (
         await session.execute(
             select(Customer).where(Customer.id == customer_id, Customer.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def get_customer_by_phone(
+    session: AsyncSession, tenant_id: uuid.UUID, phone: str
+) -> Customer | None:
+    """Exact-match lookup by phone number.
+
+    Used by the `customers.find_by_phone` workflow query node and by
+    `whatsapp.find_or_create_customer` (a WhatsApp payload's `from` field is
+    the natural bridge between an inbound message and a `Customer` row).
+    """
+    return (
+        await session.execute(
+            select(Customer).where(Customer.phone == phone, Customer.tenant_id == tenant_id)
         )
     ).scalar_one_or_none()
 

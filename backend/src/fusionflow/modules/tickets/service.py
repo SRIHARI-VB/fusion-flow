@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.customers.models import Customer
-from fusionflow.modules.tickets.models import Ticket, TicketMessage
+from fusionflow.modules.tickets.models import Ticket, TicketMessage, TicketStatus
 from fusionflow.modules.tickets.schemas import TicketCreate, TicketMessageCreate, TicketOut, TicketUpdate
 
 
@@ -32,16 +32,36 @@ def to_ticket_out(ticket: Ticket, customer_name: str | None = None) -> TicketOut
     )
 
 
-async def list_tickets(session: AsyncSession, tenant_id: uuid.UUID) -> list[TicketOut]:
+async def list_tickets(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: TicketStatus | None = None,
+    priority: str | None = None,
+    assigned_user_id: uuid.UUID | None = None,
+    customer_id: uuid.UUID | None = None,
+    limit: int | None = None,
+) -> list[TicketOut]:
     # outerjoin: `customer_id` is nullable (e.g. a ticket raised before the
     # customer record is matched), so an inner join would silently drop
     # those tickets from the list.
-    rows = await session.execute(
+    stmt = (
         select(Ticket, Customer.name)
         .outerjoin(Customer, Customer.id == Ticket.customer_id)
         .where(Ticket.tenant_id == tenant_id)
-        .order_by(Ticket.created_at.desc())
     )
+    if status is not None:
+        stmt = stmt.where(Ticket.status == status)
+    if priority is not None:
+        stmt = stmt.where(Ticket.priority == priority)
+    if assigned_user_id is not None:
+        stmt = stmt.where(Ticket.assigned_user_id == assigned_user_id)
+    if customer_id is not None:
+        stmt = stmt.where(Ticket.customer_id == customer_id)
+    stmt = stmt.order_by(Ticket.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
     return [to_ticket_out(ticket, customer_name) for ticket, customer_name in rows.all()]
 
 
@@ -96,13 +116,16 @@ async def update_ticket(session: AsyncSession, ticket: Ticket, payload: TicketUp
 
 
 async def list_messages(
-    session: AsyncSession, tenant_id: uuid.UUID, ticket_id: uuid.UUID
+    session: AsyncSession, tenant_id: uuid.UUID, ticket_id: uuid.UUID, *, limit: int | None = None
 ) -> list[TicketMessage]:
-    rows = await session.execute(
+    stmt = (
         select(TicketMessage)
         .where(TicketMessage.ticket_id == ticket_id, TicketMessage.tenant_id == tenant_id)
         .order_by(TicketMessage.created_at)
     )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
 

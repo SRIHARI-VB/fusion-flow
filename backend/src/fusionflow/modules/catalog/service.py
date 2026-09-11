@@ -7,10 +7,11 @@ convention as `modules/tenancy/service.py` and `modules/custom_fields/service.py
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Any, Sequence
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.catalog.models import Coupon, Offer, ProductService, ProductServiceType
@@ -59,12 +60,31 @@ async def validate_entity_custom_fields(
 
 
 async def list_products_services(
-    session: AsyncSession, *, tenant_id: uuid.UUID, entity_type: ProductServiceType | None = None
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    entity_type: ProductServiceType | None = None,
+    name_search: str | None = None,
+    is_active: bool | None = None,
+    min_price: Decimal | None = None,
+    max_price: Decimal | None = None,
+    limit: int | None = None,
 ) -> Sequence[ProductService]:
     stmt = select(ProductService).where(ProductService.tenant_id == tenant_id)
     if entity_type is not None:
         stmt = stmt.where(ProductService.entity_type == entity_type)
-    return (await session.execute(stmt.order_by(ProductService.created_at.desc()))).scalars().all()
+    if name_search is not None:
+        stmt = stmt.where(ProductService.name.ilike(f"%{name_search}%"))
+    if is_active is not None:
+        stmt = stmt.where(ProductService.is_active == is_active)
+    if min_price is not None:
+        stmt = stmt.where(ProductService.base_price >= min_price)
+    if max_price is not None:
+        stmt = stmt.where(ProductService.base_price <= max_price)
+    stmt = stmt.order_by(ProductService.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return (await session.execute(stmt)).scalars().all()
 
 
 async def count_products_services(
@@ -138,8 +158,27 @@ async def delete_product_service(session: AsyncSession, item: ProductService) ->
 # ---------------------------------------------------------------------------
 
 
-async def list_coupons(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequence[Coupon]:
-    stmt = select(Coupon).where(Coupon.tenant_id == tenant_id).order_by(Coupon.created_at.desc())
+async def list_coupons(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    code_search: str | None = None,
+    valid_now: bool | None = None,
+    limit: int | None = None,
+) -> Sequence[Coupon]:
+    stmt = select(Coupon).where(Coupon.tenant_id == tenant_id)
+    if code_search is not None:
+        stmt = stmt.where(Coupon.code.ilike(f"%{code_search}%"))
+    if valid_now is not None:
+        now = func.now()
+        currently_valid = and_(
+            or_(Coupon.valid_from.is_(None), Coupon.valid_from <= now),
+            or_(Coupon.valid_to.is_(None), Coupon.valid_to >= now),
+        )
+        stmt = stmt.where(currently_valid if valid_now else ~currently_valid)
+    stmt = stmt.order_by(Coupon.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return (await session.execute(stmt)).scalars().all()
 
 
@@ -202,8 +241,24 @@ async def delete_coupon(session: AsyncSession, coupon: Coupon) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def list_offers(session: AsyncSession, *, tenant_id: uuid.UUID) -> Sequence[Offer]:
-    stmt = select(Offer).where(Offer.tenant_id == tenant_id).order_by(Offer.created_at.desc())
+async def list_offers(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    valid_now: bool | None = None,
+    limit: int | None = None,
+) -> Sequence[Offer]:
+    stmt = select(Offer).where(Offer.tenant_id == tenant_id)
+    if valid_now is not None:
+        now = func.now()
+        currently_valid = and_(
+            or_(Offer.active_from.is_(None), Offer.active_from <= now),
+            or_(Offer.active_to.is_(None), Offer.active_to >= now),
+        )
+        stmt = stmt.where(currently_valid if valid_now else ~currently_valid)
+    stmt = stmt.order_by(Offer.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return (await session.execute(stmt)).scalars().all()
 
 

@@ -17,10 +17,26 @@ from fusionflow.modules.payments.models import Payment, PaymentStatus
 from fusionflow.modules.payments.schemas import PaymentCreate
 
 
-async def list_payments(session: AsyncSession, tenant_id: uuid.UUID) -> list[Payment]:
-    rows = await session.execute(
-        select(Payment).where(Payment.tenant_id == tenant_id).order_by(Payment.created_at.desc())
-    )
+async def list_payments(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    status: PaymentStatus | None = None,
+    order_id: uuid.UUID | None = None,
+    customer_id: uuid.UUID | None = None,
+    limit: int | None = None,
+) -> list[Payment]:
+    stmt = select(Payment).where(Payment.tenant_id == tenant_id)
+    if status is not None:
+        stmt = stmt.where(Payment.status == status)
+    if order_id is not None:
+        stmt = stmt.where(Payment.order_id == order_id)
+    if customer_id is not None:
+        stmt = stmt.where(Payment.customer_id == customer_id)
+    stmt = stmt.order_by(Payment.created_at.desc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = await session.execute(stmt)
     return list(rows.scalars().all())
 
 
