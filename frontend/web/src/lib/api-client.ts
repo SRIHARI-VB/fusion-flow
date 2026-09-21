@@ -23,7 +23,13 @@ declare module "axios" {
 
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+/** Exchanges the httpOnly refresh cookie for a fresh access token (and,
+ * via `setSession`, repopulates `user`/`business` in the store) - used
+ * reactively below on any 401, and proactively by `RequireAuth` on a
+ * fresh page load, when the in-memory store is empty by design but the
+ * cookie may still be valid. Concurrent callers share one in-flight
+ * request (`refreshPromise`) rather than each firing their own. */
+export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = apiClient
       .post<AuthTokens>("/api/v1/auth/refresh", {}, { _retried: true } as InternalAxiosRequestConfig)

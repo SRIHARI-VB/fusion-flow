@@ -9,6 +9,7 @@ Postgres needed.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -32,15 +33,26 @@ class _Result:
 
 
 class _FakeSession:
-    def __init__(self, execute_results: list, get_result=None):
+    def __init__(self, execute_results: list, get_result=None, get_results: list | None = None):
         self._execute_results = list(execute_results)
         self._get_result = get_result
+        # Some flows call `session.get` more than once for different rows
+        # (e.g. `refresh()`: the user, then - after this fix - the
+        # business) - `get_results`, when given, is popped in order instead
+        # of always returning the same single `get_result`.
+        self._get_results = list(get_results) if get_results is not None else None
+        self.added: list[object] = []
 
     async def execute(self, *_args, **_kwargs):
         return _Result(self._execute_results.pop(0))
 
     async def get(self, *_args, **_kwargs):
+        if self._get_results is not None:
+            return self._get_results.pop(0)
         return self._get_result
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
 
     async def flush(self):
         return None
@@ -155,6 +167,54 @@ async def test_login_not_blocked_when_at_least_one_business_is_active(monkeypatc
 
     issued = await auth_service.login(session, email=user.email, password=_PASSWORD)
     assert issued.user is user
+
+
+# ---------------------------------------------------------------------------
+# refresh() - tenant-scoped session must keep returning its business
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_of_tenant_scoped_session_still_returns_the_business(monkeypatch) -> None:
+    """Regression test: refresh()'s tenant-scoped branch (row.business_id
+    is not None - by far the common case, since it covers every already-
+    logged-in user's session refresh) used to leave `memberships` as its
+    initial empty list, so `to_token_response`'s `businesses` came back
+    empty and the frontend could never match one against the token's
+    `tenant_id` claim - `business` silently went `null` on every refresh."""
+    from fusionflow.modules.auth.http import to_token_response
+    from fusionflow.modules.auth.models import RefreshToken
+
+    user = _user()
+    user.created_at = datetime.now(timezone.utc)  # required by UserOut, not set by the _user() helper
+    business = _business(BusinessStatus.ACTIVE, messaging_paused=False)
+    membership = _membership(business)
+    refresh_row = RefreshToken(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token_hash="irrelevant-fake-session-ignores-the-actual-query",
+        family_id=uuid.uuid4(),
+        business_id=business.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+        revoked_at=None,
+    )
+    session = _FakeSession(
+        execute_results=[refresh_row],
+        get_results=[user, business],
+    )
+
+    async def _fake_get_membership(_session, *, user_id, business_id):
+        return membership
+
+    monkeypatch.setattr(auth_service.tenancy_service, "get_membership", _fake_get_membership)
+
+    issued = await auth_service.refresh(session, raw_token="whatever-raw-token")
+
+    assert issued.requires_business_selection is False
+    assert issued.memberships == [(membership, business)]
+
+    token_response = to_token_response(issued)
+    assert len(token_response.businesses) == 1
+    assert token_response.businesses[0].id == business.id
 
 
 # ---------------------------------------------------------------------------

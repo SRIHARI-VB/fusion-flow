@@ -367,6 +367,18 @@ async def refresh(session: AsyncSession, *, raw_token: str) -> IssuedSession:
             platform_admin=user.is_platform_admin,
         )
         requires_selection = False
+        # `membership`/`role` were already resolved above - fetch the
+        # matching `Business` row so `TokenResponse.businesses` isn't left
+        # empty here. Without this, `to_token_response` builds an empty
+        # `businesses` list for the single most common refresh case (an
+        # already-tenant-scoped session), and the frontend's `setSession`
+        # (matching `businesses` against the token's `tenant_id` claim) can
+        # never find a match - `business` silently becomes `null` on every
+        # refresh, exactly like `login()`/`select_business()` already
+        # populate `memberships` for their own tenant-scoped paths.
+        business = await tenancy_service.get_business(session, row.business_id)
+        if business is not None:
+            memberships = [(membership, business)]
     else:
         memberships = await tenancy_service.list_memberships_for_user(session, user.id)
         access_token = create_access_token(
