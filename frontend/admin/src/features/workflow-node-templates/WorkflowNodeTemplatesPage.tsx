@@ -21,11 +21,12 @@ import { Modal } from "../../components/Modal";
 import {
   createWorkflowNodeTemplate,
   deleteWorkflowNodeTemplate,
+  fetchAdminNodeTypes,
   fetchWorkflowNodeTemplates,
   updateWorkflowNodeTemplate,
   type WorkflowNodeTemplateInput,
 } from "../../lib/endpoints";
-import type { WorkflowNodeTemplate } from "../../lib/admin-types";
+import type { AdminNodeTypeSummary, WorkflowNodeTemplate } from "../../lib/admin-types";
 
 /**
  * `/workflow-node-templates` — CRUD for `WorkflowNodeTemplate`, the "new
@@ -44,19 +45,23 @@ import type { WorkflowNodeTemplate } from "../../lib/admin-types";
  * screen.
  */
 
-// Mirrors the workflow engine's generic, highly-parameterized executors
-// (backend/src/fusionflow/modules/workflows/nodes/{connector_action,
-// http_request, condition_multi_branch, data_transform}.py) - the only
-// node types a template makes sense wrapping. Containers (flow.loop, ...)
-// and connector-specific fixed nodes (send_whatsapp_message, ...) aren't
-// listed here since they're either not meant to be templated or are
-// themselves the thing a connector.action template can already express.
-const BASE_NODE_TYPES = [
-  { value: "connector.action", label: "Connector Action" },
-  { value: "http.request", label: "HTTP Request" },
-  { value: "condition.multi_branch", label: "Multi-Branch Condition" },
-  { value: "data.transform", label: "Transform Data" },
-];
+// Groups a live `GET /api/admin/node-types` result by category for the
+// base_node_type <select> below - was previously a hand-maintained list of
+// only 4 entries that had already drifted from reality (missing
+// module.list/get/create/update, which the real seed scripts use as a
+// base_node_type today) since nothing kept it in sync with the engine's
+// actual registry. Sourcing it live means it can never go stale again.
+function groupByCategory(nodeTypes: AdminNodeTypeSummary[]): [string, AdminNodeTypeSummary[]][] {
+  const byCategory = new Map<string, AdminNodeTypeSummary[]>();
+  for (const nt of nodeTypes) {
+    const list = byCategory.get(nt.category) ?? [];
+    list.push(nt);
+    byCategory.set(nt.category, list);
+  }
+  return [...byCategory.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([category, items]) => [category, [...items].sort((a, b) => a.label.localeCompare(b.label))]);
+}
 
 interface FormState {
   key: string;
@@ -74,7 +79,7 @@ const EMPTY_FORM: FormState = {
   label: "",
   description: "",
   category: "Integrations",
-  base_node_type: BASE_NODE_TYPES[0].value,
+  base_node_type: "",
   icon: "",
   default_config_json: "{}",
   is_active: true,
@@ -91,6 +96,19 @@ export function WorkflowNodeTemplatesPage() {
     queryKey: ["admin", "workflow-node-templates"],
     queryFn: fetchWorkflowNodeTemplates,
   });
+
+  const { data: nodeTypes = [], isLoading: nodeTypesLoading } = useQuery({
+    queryKey: ["admin", "node-types"],
+    queryFn: fetchAdminNodeTypes,
+  });
+  const nodeTypeGroups = groupByCategory(nodeTypes);
+  // While editing an existing template, its own base_node_type must always
+  // render as a real, selected option even before the live list has
+  // loaded (or on the off chance it's since been deregistered) - a
+  // disabled select showing nothing would look like data loss, not a
+  // permissions/loading state.
+  const knownNodeTypeValues = new Set(nodeTypes.map((nt) => nt.node_type));
+  const currentValueIsUnlisted = !!form.base_node_type && !knownNodeTypeValues.has(form.base_node_type);
 
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ["admin", "workflow-node-templates"] });
@@ -336,12 +354,26 @@ export function WorkflowNodeTemplatesPage() {
               className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm text-foreground disabled:opacity-60"
               value={form.base_node_type}
               disabled={!!editingId}
+              required
               onChange={(e) => setForm((f) => ({ ...f, base_node_type: e.target.value }))}
             >
-              {BASE_NODE_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label} ({t.value})
+              {!editingId && (
+                <option value="" disabled>
+                  {nodeTypesLoading ? "Loading node types…" : "Select a node type…"}
                 </option>
+              )}
+              {/* Editing an existing template whose base_node_type isn't (yet, or no
+                  longer) in the live list - keep showing its real value instead of a
+                  blank/mismatched select. */}
+              {currentValueIsUnlisted && <option value={form.base_node_type}>{form.base_node_type}</option>}
+              {nodeTypeGroups.map(([category, items]) => (
+                <optgroup key={category} label={category}>
+                  {items.map((nt) => (
+                    <option key={nt.node_type} value={nt.node_type}>
+                      {nt.label} ({nt.node_type})
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>

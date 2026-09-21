@@ -49,6 +49,52 @@ def test_seeded_component_fragment_uses_real_valid_node_types(spec: dict) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Offline: the "Validate" route (`POST /api/admin/workflow-components/validate`)
+# ---------------------------------------------------------------------------
+
+
+class _FakeValidateSession:
+    """`resolve_node_templates` (run before the per-node checks, same as
+    the starter-template validator) calls `.execute(select(WorkflowNodeTemplate)...)` -
+    empty catalog, so every fragment node keeps its own authored type."""
+
+    class _EmptyScalars:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    async def execute(self, *_args, **_kwargs):
+        return self._EmptyScalars()
+
+
+@pytest.mark.parametrize("spec", COMPONENTS, ids=[c["key"] for c in COMPONENTS])
+async def test_validate_component_graph_accepts_every_seeded_fragment(spec: dict) -> None:
+    from fusionflow.modules.admin import service as admin_service
+
+    issues, _required_keys = await admin_service.validate_component_graph(
+        _FakeValidateSession(), spec["graph_fragment"]
+    )
+    bad = [i for i in issues if i.rule in {"unknown_node_type", "missing_required_fields"}]
+    assert bad == [], f"component {spec['key']!r} failed validation: {[i.to_dict() for i in bad]}"
+
+
+async def test_validate_workflow_component_route_returns_shared_result_shape() -> None:
+    from fusionflow.modules.admin.router import validate_workflow_component
+    from fusionflow.modules.admin.schemas import GraphValidationResultOut, ValidateComponentRequest
+
+    coupon_fragment = next(c for c in COMPONENTS if c["key"] == "coupon_code_check")["graph_fragment"]
+    result = await validate_workflow_component(
+        ValidateComponentRequest(graph_fragment=coupon_fragment),
+        _admin=None,
+        session=_FakeValidateSession(),
+    )
+    assert isinstance(result, GraphValidationResultOut)
+    assert result.issues == []
+
+
+# ---------------------------------------------------------------------------
 # requires_postgres: list/create/delete + isolation + provisioning
 # ---------------------------------------------------------------------------
 

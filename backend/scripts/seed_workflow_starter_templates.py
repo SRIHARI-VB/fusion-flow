@@ -4,7 +4,7 @@ example flows, built entirely from the composable node types
 (`whatsapp.ask_choice`, `flow.confirm`, `whatsapp.collect_text`,
 `whatsapp.ask_for_cart`, `records.query`/`records.upsert`,
 `orders.create_from_cart`, `payments.send_razorpay_link`,
-`condition.field_compare`, `whatsapp.send_template`/`whatsapp.ask_via_template`),
+`condition.field_compare`, `whatsapp.send_message`/`whatsapp.ask_via_template`),
 proving the whole redesign rather than being a fixed, special-cased flow:
 every node here is a real, ordinary node type an author can freely delete,
 rewire, or add more of after starting from the template (see
@@ -14,9 +14,10 @@ rewire, or add more of after starting from the template (see
 Two templates (`order_confirmation_broadcast`, `post_purchase_feedback`)
 are triggered by `order.created`, not a WhatsApp message - there's no
 guaranteed open 24-hour session, so their first outbound message uses
-`whatsapp.send_template`/`whatsapp.ask_via_template` (a pre-approved
-template) instead of a plain session-message node. See each graph's own
-comment below for the full reasoning.
+`whatsapp.send_message` with `content.content_type = "template"` (or
+`whatsapp.ask_via_template`) - a pre-approved template - instead of a
+plain session-message node. See each graph's own comment below for the
+full reasoning.
 
 The `"whatsapp_ordering"` template's `ask_for_cart` node similarly leaves
 `catalog_id` as an obviously-fake placeholder string, not a real Meta
@@ -56,8 +57,9 @@ from fusionflow.modules.admin import service as admin_service
 #: Deliberately not a real connector - see module docstring.
 _PLACEHOLDER_CONNECTOR_ID = "00000000-0000-0000-0000-000000000000"
 
-#: Deliberately not a real template name - `whatsapp.send_template`/
-#: `whatsapp.ask_via_template`'s `template_name` has `min_length=1`, so an
+#: Deliberately not a real template name - `whatsapp.send_message`'s
+#: `TemplateContent.template_name`/`whatsapp.ask_via_template`'s
+#: `template_name` both have `min_length=1`, so an
 #: empty string would fail Pydantic validation before publish-time
 #: validation ever gets a chance to report the friendlier, more actionable
 #: "disconnected_connector_reference"-style placeholder story. This value
@@ -199,11 +201,11 @@ _ORDERING_GRAPH = {
         _node(
             "coupon_invalid",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "That coupon code isn't valid or has expired - continuing without a discount.",
+                "content": {"content_type": "text", "body": "That coupon code isn't valid or has expired - continuing without a discount."},
             },
             "Send: coupon not valid",
             3080,
@@ -225,11 +227,11 @@ _ORDERING_GRAPH = {
         _node(
             "declined_message",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "No problem - message me anytime to start a new order.",
+                "content": {"content_type": "text", "body": "No problem - message me anytime to start a new order."},
             },
             "Send: order declined",
             3640,
@@ -310,14 +312,14 @@ _ORDERING_GRAPH = {
         _node(
             "cod_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "Thanks! Your order ({{create_order_cod.item_count}} item(s)) is confirmed, paying cash "
                     "on delivery. We'll deliver to: {{collect_address.reply}}"
-                ),
+                )},
             },
             "Send: cash-on-delivery confirmation",
             4480,
@@ -358,11 +360,11 @@ _ORDERING_GRAPH = {
         _node(
             "payment_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{get_customer_for_payment.item.phone}}",
-                "body": "Payment received! Your order is confirmed.",
+                "content": {"content_type": "text", "body": "Payment received! Your order is confirmed."},
             },
             "Send: payment confirmation",
             5320,
@@ -485,14 +487,14 @@ _APPOINTMENT_GRAPH = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "You're booked for {{pick_service.reply.label}} on {{collect_time.reply}}. "
                     "We'll confirm shortly!"
-                ),
+                )},
             },
             "Send booking confirmation",
             1400,
@@ -568,14 +570,14 @@ _SUPPORT_TICKET_GRAPH = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "Thanks! We've logged your request (ticket {{log_ticket.ticket_id}}) and will get "
                     "back to you soon."
-                ),
+                )},
             },
             "Send ticket confirmation",
             1400,
@@ -600,12 +602,13 @@ _SUPPORT_TICKET_GRAPH = {
 # action, anything - not just one that started inside an active WhatsApp
 # conversation. That means there is no guaranteed open 24-hour session to
 # send a plain free-form message through (WhatsApp only allows session
-# messages - `send_whatsapp_message`, `whatsapp.ask_choice`, `whatsapp.
-# collect_text`, `whatsapp.send_media`, `whatsapp.send_interactive_*` -
-# within 24 hours of the customer's last inbound message; see `nodes/
-# whatsapp_send_media.py`'s docstring for this established rule). The first
-# outbound message on a non-WhatsApp-triggered path must be a pre-approved
-# template (`whatsapp.send_template`) instead.
+# messages - `whatsapp.send_message` (text/media/buttons/list content),
+# `whatsapp.ask_choice`, `whatsapp.collect_text` - within 24 hours of the
+# customer's last inbound message; see `nodes/whatsapp_send_message.py`'s
+# docstring for this established rule). The first outbound message on a
+# non-WhatsApp-triggered path must be a pre-approved template
+# (`whatsapp.send_message` with `content.content_type = "template"`)
+# instead.
 
 _ORDER_CONFIRMATION_GRAPH = {
     "nodes": [
@@ -621,17 +624,20 @@ _ORDER_CONFIRMATION_GRAPH = {
         _node(
             "send_confirmation",
             "action",
-            "whatsapp.send_template",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{get_customer.item.phone}}",
-                # Placeholder - the author must create/sync an approved
-                # Utility-category template (WhatsApp Settings) and put its
-                # real name/language here, matching `body_variables`' order
-                # and count to that template's actual {{1}}/{{2}} placeholders.
-                "template_name": _PLACEHOLDER_TEMPLATE_NAME,
-                "language_code": "en_US",
-                "body_variables": ["{{get_customer.item.name}}", "{{trigger.currency}} {{trigger.total_amount}}"],
+                "content": {
+                    "content_type": "template",
+                    # Placeholder - the author must create/sync an approved
+                    # Utility-category template (WhatsApp Settings) and put its
+                    # real name/language here, matching `body_variables`' order
+                    # and count to that template's actual {{1}}/{{2}} placeholders.
+                    "template_name": _PLACEHOLDER_TEMPLATE_NAME,
+                    "language_code": "en_US",
+                    "body_variables": ["{{get_customer.item.name}}", "{{trigger.currency}} {{trigger.total_amount}}"],
+                },
             },
             "Send order confirmation (template)",
             560,
@@ -737,11 +743,11 @@ _FEEDBACK_GRAPH = {
         _node(
             "thank_you",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{get_customer.item.phone}}",
-                "body": "Thank you for your feedback - we really appreciate it!",
+                "content": {"content_type": "text", "body": "Thank you for your feedback - we really appreciate it!"},
             },
             "Send a thank-you message",
             1400,
@@ -810,11 +816,11 @@ _ORDER_STATUS_GRAPH = {
         _node(
             "order_not_found",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Sorry, I couldn't find an order with that id - please double check and try again.",
+                "content": {"content_type": "text", "body": "Sorry, I couldn't find an order with that id - please double check and try again."},
             },
             "Send: order not found",
             1120,
@@ -823,15 +829,15 @@ _ORDER_STATUS_GRAPH = {
         _node(
             "send_order_status",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "Your order status: {{lookup_order_try.lookup_order.item.status}} - total "
                     "{{lookup_order_try.lookup_order.item.currency}} "
                     "{{lookup_order_try.lookup_order.item.total_amount}}."
-                ),
+                )},
             },
             "Send: order status",
             1120,
@@ -893,11 +899,11 @@ _PRODUCT_AVAILABILITY_GRAPH = {
         _node(
             "send_in_stock",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "{{get_product.item.name}} is in stock, priced at {{get_product.item.base_price}}.",
+                "content": {"content_type": "text", "body": "{{get_product.item.name}} is in stock, priced at {{get_product.item.base_price}}."},
             },
             "Send: in stock",
             1120,
@@ -906,11 +912,11 @@ _PRODUCT_AVAILABILITY_GRAPH = {
         _node(
             "send_out_of_stock",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Sorry, {{get_product.item.name}} is currently unavailable.",
+                "content": {"content_type": "text", "body": "Sorry, {{get_product.item.name}} is currently unavailable."},
             },
             "Send: out of stock",
             1120,
@@ -1013,11 +1019,11 @@ _LEAD_CAPTURE_GRAPH = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Thanks for reaching out! Someone from our team will get back to you soon.",
+                "content": {"content_type": "text", "body": "Thanks for reaching out! Someone from our team will get back to you soon."},
             },
             "Send confirmation",
             1400,
@@ -1085,11 +1091,11 @@ _MARKETING_OPTIN_GRAPH = {
         _node(
             "optin_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Great, you're subscribed! You can reply STOP any time to opt out.",
+                "content": {"content_type": "text", "body": "Great, you're subscribed! You can reply STOP any time to opt out."},
             },
             "Send: subscribed",
             1120,
@@ -1098,11 +1104,11 @@ _MARKETING_OPTIN_GRAPH = {
         _node(
             "optout_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "No problem, we won't send you promotional messages.",
+                "content": {"content_type": "text", "body": "No problem, we won't send you promotional messages."},
             },
             "Send: not subscribing",
             840,
@@ -1194,14 +1200,14 @@ _RETURN_REQUEST_GRAPH = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "Thanks! We've logged your return request (ticket {{log_ticket.ticket_id}}) and will "
                     "be in touch with next steps."
-                ),
+                )},
             },
             "Send confirmation",
             1680,
@@ -1297,11 +1303,11 @@ _APPOINTMENT_CANCELLATION_GRAPH = {
         _node(
             "cancel_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Done - your appointment has been cancelled.",
+                "content": {"content_type": "text", "body": "Done - your appointment has been cancelled."},
             },
             "Send: cancelled",
             1400,
@@ -1310,11 +1316,11 @@ _APPOINTMENT_CANCELLATION_GRAPH = {
         _node(
             "keep_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "No changes made - see you then!",
+                "content": {"content_type": "text", "body": "No changes made - see you then!"},
             },
             "Send: keeping it",
             1120,
@@ -1417,14 +1423,14 @@ _RESTAURANT_RESERVATION_GRAPH = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": (
+                "content": {"content_type": "text", "body": (
                     "Thanks! We've noted your table for {{collect_party_size.reply}} on "
                     "{{collect_time.reply}} - we'll confirm shortly."
-                ),
+                )},
             },
             "Send booking confirmation",
             1400,
@@ -1478,11 +1484,11 @@ _FAQ_AUTORESPONDER_GRAPH = {
         _node(
             "send_hours",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "We're open Monday-Saturday, 9 AM to 7 PM. Closed on Sundays and public holidays.",
+                "content": {"content_type": "text", "body": "We're open Monday-Saturday, 9 AM to 7 PM. Closed on Sundays and public holidays."},
             },
             "Send: business hours",
             840,
@@ -1491,11 +1497,11 @@ _FAQ_AUTORESPONDER_GRAPH = {
         _node(
             "send_location",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "You'll find us at [your address here] - reply for directions any time!",
+                "content": {"content_type": "text", "body": "You'll find us at [your address here] - reply for directions any time!"},
             },
             "Send: location",
             840,
@@ -1504,11 +1510,11 @@ _FAQ_AUTORESPONDER_GRAPH = {
         _node(
             "send_pricing",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "You can browse our full price list by replying MENU, or ask about a specific item.",
+                "content": {"content_type": "text", "body": "You can browse our full price list by replying MENU, or ask about a specific item."},
             },
             "Send: pricing",
             840,
@@ -1542,11 +1548,11 @@ _FAQ_AUTORESPONDER_GRAPH = {
         _node(
             "other_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Thanks - we've noted your question and will get back to you soon.",
+                "content": {"content_type": "text", "body": "Thanks - we've noted your question and will get back to you soon."},
             },
             "Send confirmation",
             1400,
@@ -1591,11 +1597,11 @@ _WELCOME_MENU_GRAPH = {
         _node(
             "send_welcome",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Welcome! We're glad you found us. Reply with ORDER to shop, or SUPPORT if you need help.",
+                "content": {"content_type": "text", "body": "Welcome! We're glad you found us. Reply with ORDER to shop, or SUPPORT if you need help."},
             },
             "Send: welcome (new)",
             840,
@@ -1604,11 +1610,11 @@ _WELCOME_MENU_GRAPH = {
         _node(
             "send_welcome_back",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Welcome back! Reply with ORDER to shop, or SUPPORT if you need help.",
+                "content": {"content_type": "text", "body": "Welcome back! Reply with ORDER to shop, or SUPPORT if you need help."},
             },
             "Send: welcome back (returning)",
             840,
@@ -1737,11 +1743,11 @@ _RESTAURANT_CART_ORDERING_GRAPH = {
         _node(
             "cod_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Thanks! Your order ({{create_order_cod.item_count}} item(s)) is confirmed, paying cash.",
+                "content": {"content_type": "text", "body": "Thanks! Your order ({{create_order_cod.item_count}} item(s)) is confirmed, paying cash."},
             },
             "Send: cash-on-delivery confirmation",
             1960,
@@ -1776,6 +1782,150 @@ _RESTAURANT_CART_ORDERING_GRAPH = {
         _edge("e7", "pick_payment", "create_order_prepaid", source_handle="prepaid"),
         _edge("e8", "create_order_cod", "cod_confirmation"),
         _edge("e9", "create_order_prepaid", "send_payment_link"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 16: Broadcast a message (recurring/scheduled bulk send)
+# ---------------------------------------------------------------------------
+#
+# Pairs with the `WorkflowSchedule` CRUD API (recurring/scheduled bulk-send
+# support for "Broadcast"-purpose workflows) - `broadcast.scheduled_send`
+# fires once per configured schedule run with `recipients: list[str]`
+# already resolved server-side (static phone list or a module lookup), so
+# this graph's only job is to fan that list out to one `whatsapp.
+# send_message` per recipient via an ordinary `flow.loop` - no per-recipient
+# branching or special-casing needed, same "container node does the
+# fan-out, the body is one plain node" shape `flow.loop`'s other templates
+# use for a dynamic-size list (e.g. `orders.create_from_cart`'s own cart
+# loop). The trigger itself has no meaningful author-facing config (see
+# its own `output_schema`), so its `config` stays `{}` like every other
+# trigger node in this file.
+_BROADCAST_MESSAGE_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "broadcast.scheduled_send", {}, "Scheduled broadcast", 0),
+        _node(
+            "loop",
+            "action",
+            "flow.loop",
+            {"items_path": "{{trigger.recipients}}"},
+            "For each recipient",
+            280,
+        ),
+        _node(
+            "send_message",
+            "action",
+            "whatsapp.send_message",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "to": "{{loop.item}}",
+                "content": {"content_type": "text", "body": "Hello {{loop.item}}!"},
+            },
+            "Send the message",
+            280,
+            100,
+            parent_id="loop",
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "loop"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Marketing template broadcast (approved WhatsApp template, image header + CTA
+# button) - sent to a recipient list drawn from `{{trigger.recipients}}`,
+# right now or on a schedule via `broadcast.scheduled_send`. WhatsApp policy
+# requires a pre-approved Marketing template (not a plain session message)
+# for any customer without an active 24-hour session, which a scheduled
+# broadcast to an arbitrary list can never assume - see
+# `whatsapp.send_message`'s `TemplateContent` for the full set of optional
+# template fields (`header_media_type`/`header_media_url`/`header_media_id`
+# for a media header, mutually exclusive with a text `header_variable`, plus
+# `button_url_params` to fill in a dynamic URL button already defined on the
+# approved template itself, not a way to author new buttons).
+# ---------------------------------------------------------------------------
+
+_MARKETING_TEMPLATE_BROADCAST_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "broadcast.scheduled_send", {}, "Scheduled broadcast", 0),
+        _node(
+            "loop",
+            "action",
+            "flow.loop",
+            {"items_path": "{{trigger.recipients}}"},
+            "For each recipient",
+            280,
+        ),
+        _node(
+            "send_broadcast",
+            "action",
+            "whatsapp.send_message",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "to": "{{loop.item}}",
+                "content": {
+                    "content_type": "template",
+                    "template_name": _PLACEHOLDER_TEMPLATE_NAME,
+                    "language_code": "en_US",
+                    "header_media_type": "image",
+                    "header_media_url": "https://example.com/promo-banner.jpg",
+                    "body_variables": [],
+                    "button_url_params": ["{{loop.item}}"],
+                },
+            },
+            "Send the marketing template",
+            280,
+            100,
+            parent_id="loop",
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "loop"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Re-engagement blast (plain session text) - sent to a recipient list drawn
+# from `{{trigger.recipients}}`, right now or on a schedule via
+# `broadcast.scheduled_send`. Unlike the Marketing Template Broadcast above,
+# this is a plain `content_type: "text"` message, which WhatsApp only
+# delivers inside an already-open 24-hour customer service session (e.g.
+# shortly after a support conversation) - it is NOT a substitute for an
+# approved template when reaching customers outside that window.
+# ---------------------------------------------------------------------------
+
+_REENGAGEMENT_BLAST_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "broadcast.scheduled_send", {}, "Scheduled broadcast", 0),
+        _node(
+            "loop",
+            "action",
+            "flow.loop",
+            {"items_path": "{{trigger.recipients}}"},
+            "For each recipient",
+            280,
+        ),
+        _node(
+            "send_broadcast",
+            "action",
+            "whatsapp.send_message",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "to": "{{loop.item}}",
+                "content": {
+                    "content_type": "text",
+                    "body": "Hi! We miss you - here's something special just for you. Reply STOP to opt out.",
+                },
+            },
+            "Send the re-engagement message",
+            280,
+            100,
+            parent_id="loop",
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "loop"),
     ],
 }
 
@@ -1913,6 +2063,32 @@ TEMPLATES: list[dict] = [
         "is_active": True,
     },
     {
+        "key": "marketing_template_broadcast",
+        "name": "Marketing Template Broadcast",
+        "description": (
+            "Send an approved WhatsApp marketing template - with an image header and a call-to-action "
+            "button - to a list of customers, right now or on a schedule."
+        ),
+        "category": "Marketing",
+        "icon": "megaphone",
+        "graph_json": _MARKETING_TEMPLATE_BROADCAST_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "reengagement_blast",
+        "name": "Re-engagement Blast",
+        "description": (
+            "Send a plain text message to a list of customers you've recently interacted with (within "
+            "WhatsApp's active session window), right now or on a schedule."
+        ),
+        "category": "Marketing",
+        "icon": "megaphone",
+        "graph_json": _REENGAGEMENT_BLAST_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
         "key": "return_request",
         "name": "Return / Warranty Request",
         "description": (
@@ -1989,6 +2165,16 @@ TEMPLATES: list[dict] = [
         "category": "Ecommerce",
         "icon": "shopping-cart",
         "graph_json": _RESTAURANT_CART_ORDERING_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "broadcast_message",
+        "name": "Broadcast a Message",
+        "description": "Send a message to a list of customers, right now or on a schedule.",
+        "category": "Marketing",
+        "icon": "megaphone",
+        "graph_json": _BROADCAST_MESSAGE_GRAPH,
         "required_object_types": None,
         "is_active": True,
     },

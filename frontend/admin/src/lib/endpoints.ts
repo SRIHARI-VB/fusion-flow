@@ -1,6 +1,7 @@
 import type { AuthTokens, LoginRequest } from "@fusion-flow/ts-types";
 import { apiClient } from "./api-client";
 import type {
+  AdminNodeTypeSummary,
   AuditLogFilters,
   AuditLogPage,
   BillingUsage,
@@ -12,6 +13,7 @@ import type {
   FeatureFlag,
   FeatureFlagCatalogItem,
   FeatureFlagOverride,
+  GraphValidationResult,
   ImpersonateResponse,
   Plan,
   PlanFeatureFlag,
@@ -21,7 +23,9 @@ import type {
   TenantListItem,
   TenantModuleAccess,
   TenantResourceLimit,
+  WorkflowComponent,
   WorkflowNodeTemplate,
+  WorkflowStarterTemplate,
 } from "./admin-types";
 
 export async function login(payload: LoginRequest): Promise<AuthTokens> {
@@ -323,6 +327,118 @@ export async function updateWorkflowNodeTemplate(
 
 export async function deleteWorkflowNodeTemplate(templateId: string): Promise<void> {
   await apiClient.delete(`/api/admin/workflow-node-templates/${templateId}`);
+}
+
+// --- Registered node types (admin-facing summary, drives the workflow
+// node template's base_node_type dropdown - never goes stale relative to
+// what's actually registered, unlike a hand-maintained list) -------------
+
+export async function fetchAdminNodeTypes(): Promise<AdminNodeTypeSummary[]> {
+  const { data } = await apiClient.get<AdminNodeTypeSummary[]>("/api/admin/node-types");
+  return data;
+}
+
+// --- Workflow starter templates (whole-new-workflow seeds) ---------------
+
+export async function fetchWorkflowStarterTemplates(): Promise<WorkflowStarterTemplate[]> {
+  const { data } = await apiClient.get<WorkflowStarterTemplate[]>("/api/admin/workflow-starter-templates");
+  return data;
+}
+
+export interface WorkflowStarterTemplateInput {
+  key: string;
+  name: string;
+  description?: string | null;
+  category: string;
+  icon?: string | null;
+  graph_json: Record<string, unknown>;
+  required_object_types?: Record<string, unknown>[] | null;
+  setup_notes?: string | null;
+  is_active: boolean;
+}
+
+export async function createWorkflowStarterTemplate(
+  payload: WorkflowStarterTemplateInput,
+): Promise<WorkflowStarterTemplate> {
+  const { data } = await apiClient.post<WorkflowStarterTemplate>(
+    "/api/admin/workflow-starter-templates",
+    payload,
+  );
+  return data;
+}
+
+export async function updateWorkflowStarterTemplate(
+  templateId: string,
+  payload: Partial<Omit<WorkflowStarterTemplateInput, "key">>,
+): Promise<WorkflowStarterTemplate> {
+  const { data } = await apiClient.patch<WorkflowStarterTemplate>(
+    `/api/admin/workflow-starter-templates/${templateId}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteWorkflowStarterTemplate(templateId: string): Promise<void> {
+  await apiClient.delete(`/api/admin/workflow-starter-templates/${templateId}`);
+}
+
+export async function validateWorkflowStarterTemplateGraph(
+  graphJson: Record<string, unknown>,
+): Promise<GraphValidationResult> {
+  const { data } = await apiClient.post<GraphValidationResult>(
+    "/api/admin/workflow-starter-templates/validate",
+    { graph_json: graphJson },
+  );
+  return data;
+}
+
+// --- Workflow components (insertable node/edge fragments) ----------------
+
+export async function fetchWorkflowComponents(): Promise<WorkflowComponent[]> {
+  const { data } = await apiClient.get<WorkflowComponent[]>("/api/admin/workflow-components");
+  return data;
+}
+
+export interface WorkflowComponentInput {
+  key: string;
+  name: string;
+  description?: string | null;
+  category: string;
+  icon?: string | null;
+  graph_fragment: Record<string, unknown>;
+  required_object_types?: Record<string, unknown>[] | null;
+  setup_notes?: string | null;
+  is_active: boolean;
+}
+
+export async function createWorkflowComponent(payload: WorkflowComponentInput): Promise<WorkflowComponent> {
+  const { data } = await apiClient.post<WorkflowComponent>("/api/admin/workflow-components", payload);
+  return data;
+}
+
+export async function updateWorkflowComponent(
+  componentId: string,
+  payload: Partial<Omit<WorkflowComponentInput, "key">>,
+): Promise<WorkflowComponent> {
+  const { data } = await apiClient.patch<WorkflowComponent>(
+    `/api/admin/workflow-components/${componentId}`,
+    payload,
+  );
+  return data;
+}
+
+export async function deleteWorkflowComponent(componentId: string): Promise<void> {
+  await apiClient.delete(`/api/admin/workflow-components/${componentId}`);
+}
+
+export async function validateWorkflowComponentGraph(
+  graphFragment: Record<string, unknown>,
+): Promise<GraphValidationResult> {
+  const { data } = await apiClient.post<GraphValidationResult>(
+    "/api/admin/workflow-components/validate",
+    { graph_fragment: graphFragment },
+  );
+  return data;
 }
 
 export async function fetchConnectorTypeCatalog(): Promise<ConnectorTypeCatalogItem[]> {

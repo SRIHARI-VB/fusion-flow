@@ -23,6 +23,7 @@ from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.admin.audit import AuditLoggingRoute
 from fusionflow.modules.admin.deps import PlatformAdminDep, SessionDep
 from fusionflow.modules.admin.schemas import (
+    AdminNodeTypeSummaryOut,
     AssignTenantPlanRequest,
     AuditLogOut,
     AuditLogPage,
@@ -44,6 +45,8 @@ from fusionflow.modules.admin.schemas import (
     FeatureFlagUpdateRequest,
     FieldTemplateOut,
     FieldTemplatesUnavailableOut,
+    GraphValidationIssueOut,
+    GraphValidationResultOut,
     ImpersonateRequest,
     ImpersonateResponse,
     PlanCreateRequest,
@@ -58,6 +61,8 @@ from fusionflow.modules.admin.schemas import (
     TenantListItemOut,
     TenantModuleAccessOut,
     TenantResourceLimitOut,
+    ValidateComponentRequest,
+    ValidateStarterTemplateRequest,
     WorkflowComponentCreateRequest,
     WorkflowComponentOut,
     WorkflowComponentUpdateRequest,
@@ -755,6 +760,27 @@ async def get_billing_usage(_admin: PlatformAdminDep, session: SessionDep) -> di
 # --- Workflow node templates (admin-managed palette entries, Part D) --------
 
 
+@router.get("/node-types", response_model=list[AdminNodeTypeSummaryOut])
+async def list_admin_node_types(_admin: PlatformAdminDep) -> list[AdminNodeTypeSummaryOut]:
+    """Every registered node/trigger type (the raw engine registry, not
+    tenant-filtered, not template rows) - lets the admin panel's
+    `base_node_type` picker (when authoring a `WorkflowNodeTemplate`) stay
+    accurate automatically instead of duplicating a hand-maintained list
+    that drifts out of sync with what the engine actually registers (e.g.
+    `module.list`/`module.get`/`module.create`/`module.update`, which the
+    seed scripts already use as `base_node_type` values today)."""
+    # Local import: `workflows.service` already imports FROM this module
+    # (`admin_service`) inside `list_node_types_with_templates` - importing
+    # it back at module level here would be a circular import.
+    from fusionflow.modules.workflows import service as workflows_service
+
+    metas = sorted(workflows_service.list_node_types(), key=lambda m: (m.category, m.label))
+    return [
+        AdminNodeTypeSummaryOut(node_type=m.node_type, kind=m.kind, label=m.label, category=m.category)
+        for m in metas
+    ]
+
+
 @router.get("/workflow-node-templates", response_model=list[WorkflowNodeTemplateOut])
 async def list_workflow_node_templates(
     _admin: PlatformAdminDep, session: SessionDep
@@ -857,12 +883,34 @@ async def create_workflow_starter_template(
             icon=payload.icon,
             graph_json=payload.graph_json,
             required_object_types=payload.required_object_types,
+            setup_notes=payload.setup_notes,
             is_active=payload.is_active,
         )
     except AdminError as exc:
         raise _http(exc) from exc
     await session.commit()
     return WorkflowStarterTemplateOut.model_validate(template)
+
+
+# Declared BEFORE `/{template_id}` below - a literal "/validate" segment
+# would otherwise be silently swallowed as a `template_id` path parameter
+# (FastAPI matches routes in declaration order - the same route-ordering
+# bug already hit once this session for `/starter-templates`/`/components`
+# on the tenant-facing `workflows/router.py`).
+@router.post("/workflow-starter-templates/validate", response_model=GraphValidationResultOut)
+async def validate_workflow_starter_template(
+    payload: ValidateStarterTemplateRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> GraphValidationResultOut:
+    """Compiles+validates `graph_json` exactly like publishing a real
+    workflow would (see `admin_service.validate_starter_template_graph`) -
+    every placeholder connector reference is expected to fail rule 2
+    (`disconnected_connector_reference`); that is the accepted passing bar
+    for a template, not a real failure."""
+    issues, required_keys = await admin_service.validate_starter_template_graph(session, payload.graph_json)
+    return GraphValidationResultOut(
+        issues=[GraphValidationIssueOut(**i.to_dict()) for i in issues],
+        required_connector_type_keys=required_keys,
+    )
 
 
 @router.patch("/workflow-starter-templates/{template_id}", response_model=WorkflowStarterTemplateOut)
@@ -882,6 +930,7 @@ async def update_workflow_starter_template(
             icon=payload.icon,
             graph_json=payload.graph_json,
             required_object_types=payload.required_object_types,
+            setup_notes=payload.setup_notes,
             is_active=payload.is_active,
         )
     except AdminError as exc:
@@ -924,12 +973,31 @@ async def create_workflow_component(
             icon=payload.icon,
             graph_fragment=payload.graph_fragment,
             required_object_types=payload.required_object_types,
+            setup_notes=payload.setup_notes,
             is_active=payload.is_active,
         )
     except AdminError as exc:
         raise _http(exc) from exc
     await session.commit()
     return WorkflowComponentOut.model_validate(component)
+
+
+# Declared BEFORE `/{component_id}` below - same route-ordering precaution
+# as `/workflow-starter-templates/validate` above.
+@router.post("/workflow-components/validate", response_model=GraphValidationResultOut)
+async def validate_workflow_component(
+    payload: ValidateComponentRequest, _admin: PlatformAdminDep, session: SessionDep
+) -> GraphValidationResultOut:
+    """Lighter check than the starter-template validator (see
+    `admin_service.validate_component_graph`'s docstring) - a component is
+    a deliberately partial fragment, so this only checks each node resolves
+    to a real registered type with a valid config, not whole-graph rules
+    like reachability that assume a complete, publishable workflow."""
+    issues, required_keys = await admin_service.validate_component_graph(session, payload.graph_fragment)
+    return GraphValidationResultOut(
+        issues=[GraphValidationIssueOut(**i.to_dict()) for i in issues],
+        required_connector_type_keys=required_keys,
+    )
 
 
 @router.patch("/workflow-components/{component_id}", response_model=WorkflowComponentOut)
@@ -949,6 +1017,7 @@ async def update_workflow_component(
             icon=payload.icon,
             graph_fragment=payload.graph_fragment,
             required_object_types=payload.required_object_types,
+            setup_notes=payload.setup_notes,
             is_active=payload.is_active,
         )
     except AdminError as exc:

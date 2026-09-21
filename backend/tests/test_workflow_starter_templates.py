@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.workflows import service as workflows_service
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 from fusionflow.modules.workflows.engine.template_resolution import resolve_composite_branches
@@ -34,14 +35,17 @@ from scripts.seed_workflow_starter_templates import (
     _APPOINTMENT_CANCELLATION_GRAPH,
     _APPOINTMENT_GRAPH,
     _APPOINTMENT_REQUIRED_OBJECT_TYPES,
+    _BROADCAST_MESSAGE_GRAPH,
     _FAQ_AUTORESPONDER_GRAPH,
     _FEEDBACK_GRAPH,
     _LEAD_CAPTURE_GRAPH,
     _MARKETING_OPTIN_GRAPH,
+    _MARKETING_TEMPLATE_BROADCAST_GRAPH,
     _ORDER_CONFIRMATION_GRAPH,
     _ORDER_STATUS_GRAPH,
     _ORDERING_GRAPH,
     _PRODUCT_AVAILABILITY_GRAPH,
+    _REENGAGEMENT_BLAST_GRAPH,
     _RESTAURANT_CART_ORDERING_GRAPH,
     _RESTAURANT_RESERVATION_GRAPH,
     _RETURN_REQUEST_GRAPH,
@@ -84,6 +88,9 @@ class _FakeSession:
         _FAQ_AUTORESPONDER_GRAPH,
         _WELCOME_MENU_GRAPH,
         _RESTAURANT_CART_ORDERING_GRAPH,
+        _BROADCAST_MESSAGE_GRAPH,
+        _MARKETING_TEMPLATE_BROADCAST_GRAPH,
+        _REENGAGEMENT_BLAST_GRAPH,
     ],
     ids=[
         "whatsapp_ordering",
@@ -101,6 +108,9 @@ class _FakeSession:
         "faq_autoresponder",
         "welcome_menu",
         "restaurant_cart_ordering",
+        "broadcast_message",
+        "marketing_template_broadcast",
+        "reengagement_blast",
     ],
 )
 async def test_seeded_template_graph_validates_cleanly_except_connector_references(graph_json: dict) -> None:
@@ -293,3 +303,173 @@ async def test_create_workflow_from_starter_template_isolates_object_types_per_t
         type_b = await business_objects_service.get_object_type_by_key(session, tenant_id=tenant_b, key="appointment")
         assert type_a is None  # RLS: tenant B's session can never see tenant A's row
         assert type_b is not None
+
+
+# ---------------------------------------------------------------------------
+# Offline: auto-derived `required_connector_type_keys` + the "Validate" route
+# ---------------------------------------------------------------------------
+
+
+class _FakeValidateSession:
+    """Stands in for an `AsyncSession` for the compile+validate pipeline:
+    `resolve_node_templates` calls `.execute(select(WorkflowNodeTemplate)...)`
+    (empty catalog - no active node templates to rewrite) and
+    `_check_connector_references` calls `.get(...)` (always `None` - no
+    real connector instance for any placeholder id, exactly what a
+    never-configured tenant would see)."""
+
+    class _EmptyScalars:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    async def execute(self, *_args, **_kwargs):
+        return self._EmptyScalars()
+
+    async def get(self, *_args, **_kwargs):
+        return None
+
+
+def test_compute_required_connector_type_keys_picks_up_whatsapp_trigger() -> None:
+    graph = {
+        "nodes": [
+            {"id": "n1", "data": {"nodeType": "whatsapp.message_received", "config": {}}},
+        ],
+        "edges": [],
+    }
+    assert admin_service.compute_required_connector_type_keys(graph) == ["whatsapp"]
+
+
+def test_compute_required_connector_type_keys_is_empty_for_a_graph_with_no_gated_nodes() -> None:
+    graph = {"nodes": [{"id": "n1", "data": {"nodeType": "condition.field_compare", "config": {}}}], "edges": []}
+    assert admin_service.compute_required_connector_type_keys(graph) == []
+
+
+async def test_validate_starter_template_graph_reports_only_connector_reference_issues() -> None:
+    """The real seeded ordering graph, run through `admin_service.validate_starter_template_graph`
+    (the same function the `POST /api/admin/workflow-starter-templates/validate`
+    route calls) - every placeholder connector reference is expected to
+    fail rule 2; that's the accepted passing bar for a template, matching
+    `test_seeded_template_graph_validates_cleanly_except_connector_references`
+    above."""
+    issues, required_keys = await admin_service.validate_starter_template_graph(
+        _FakeValidateSession(), _ORDERING_GRAPH
+    )
+    assert issues, "expected at least the placeholder connector-reference errors"
+    assert {i.rule for i in issues} == {"disconnected_connector_reference"}
+    assert "whatsapp" in required_keys
+
+
+async def test_validate_workflow_starter_template_route_returns_shared_result_shape() -> None:
+    from fusionflow.modules.admin.router import validate_workflow_starter_template
+    from fusionflow.modules.admin.schemas import GraphValidationResultOut, ValidateStarterTemplateRequest
+
+    result = await validate_workflow_starter_template(
+        ValidateStarterTemplateRequest(graph_json=_ORDERING_GRAPH),
+        _admin=None,
+        session=_FakeValidateSession(),
+    )
+    assert isinstance(result, GraphValidationResultOut)
+    assert {i.rule for i in result.issues} == {"disconnected_connector_reference"}
+    assert "whatsapp" in result.required_connector_type_keys
+
+
+# ---------------------------------------------------------------------------
+# compute_workflow_purpose: server-computed "automation"/"broadcast" tag,
+# derived straight from a template's own stored graph - no new DB column.
+# ---------------------------------------------------------------------------
+
+
+def _single_trigger_graph(node_type: str) -> dict:
+    return {
+        "nodes": [
+            {
+                "id": "trigger",
+                "type": "trigger",
+                "data": {"nodeType": node_type, "config": {}, "label": "Trigger"},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+
+
+def test_compute_workflow_purpose_automation_trigger_returns_automation() -> None:
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = _single_trigger_graph("whatsapp.message_received")
+    assert admin_service.compute_workflow_purpose(graph) == "automation"
+
+
+def test_compute_workflow_purpose_broadcast_trigger_returns_broadcast() -> None:
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = _single_trigger_graph("broadcast.scheduled_send")
+    assert admin_service.compute_workflow_purpose(graph) == "broadcast"
+
+
+class _FakeTriggerDefinition:
+    def __init__(self, applicable_purposes: list[str] | None) -> None:
+        self.applicable_purposes = applicable_purposes
+
+
+def test_compute_workflow_purpose_both_purposes_shape_returns_none(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Only the two single-purpose-exclusive shapes resolve to something -
+    a trigger tagged applicable to both shows for either purpose (`None`),
+    same as an untagged one."""
+    from fusionflow.modules.workflows.engine.registry import trigger_registry
+
+    monkeypatch.setattr(
+        trigger_registry, "get", lambda node_type: _FakeTriggerDefinition(["automation", "broadcast"])
+    )
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = _single_trigger_graph("some.trigger")
+    assert admin_service.compute_workflow_purpose(graph) is None
+
+
+def test_compute_workflow_purpose_manual_test_trigger_returns_none() -> None:
+    """`manual.test_trigger` declares no `applicable_purposes` - shown for
+    either purpose, not treated as an error."""
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = _single_trigger_graph("manual.test_trigger")
+    assert admin_service.compute_workflow_purpose(graph) is None
+
+
+def test_compute_workflow_purpose_unregistered_trigger_returns_none() -> None:
+    """A template referencing a since-deleted/unknown trigger node type
+    must not raise - it degrades to "shown for either purpose", same as
+    any other unresolvable case."""
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = _single_trigger_graph("some.trigger_type_that_was_removed")
+    assert admin_service.compute_workflow_purpose(graph) is None
+
+
+def test_compute_workflow_purpose_no_trigger_node_returns_none() -> None:
+    from fusionflow.modules.admin import service as admin_service
+
+    assert admin_service.compute_workflow_purpose({"nodes": [], "edges": []}) is None
+
+
+def test_compute_workflow_purpose_falls_back_to_trigger_typed_node_when_id_is_not_literally_trigger() -> None:
+    """A hand-authored graph that doesn't happen to name its trigger node
+    `"trigger"` (every seeded template does, by convention) still resolves
+    via the node's own `type: "trigger"`."""
+    from fusionflow.modules.admin import service as admin_service
+
+    graph = {
+        "nodes": [
+            {
+                "id": "start_here",
+                "type": "trigger",
+                "data": {"nodeType": "manual.test_trigger", "config": {}},
+                "position": {"x": 0, "y": 0},
+            }
+        ],
+        "edges": [],
+    }
+    assert admin_service.compute_workflow_purpose(graph) is None

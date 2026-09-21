@@ -234,6 +234,80 @@ export interface WorkflowNodeTemplate {
   created_at: string;
 }
 
+// Minimal admin-facing summary of a registered workflow node/trigger type
+// (the raw engine registry, not template rows) - drives the
+// WorkflowNodeTemplatesPage's base_node_type dropdown so it can never go
+// stale relative to what's actually registered. See
+// `GET /api/admin/node-types` / `AdminNodeTypeSummaryOut` on the backend.
+export interface AdminNodeTypeSummary {
+  node_type: string;
+  kind: string;
+  label: string;
+  category: string;
+}
+
+// Mirrors backend/src/fusionflow/modules/admin/schemas.py's
+// WorkflowStarterTemplate* DTOs - a full authored workflow graph a tenant
+// can start a brand-new workflow from (as opposed to WorkflowComponent
+// below, a smaller fragment inserted into a workflow already being
+// edited). `graph_json`/`required_object_types` are edited as raw JSON on
+// this admin screen, same convention as WorkflowNodeTemplate's
+// `default_config` above.
+export interface WorkflowStarterTemplate {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  icon: string | null;
+  graph_json: Record<string, unknown>;
+  required_object_types: Record<string, unknown>[] | null;
+  /** Free-text admin guidance for the tenant, e.g. "populate your product
+   * catalog first" - not a connector dependency (see
+   * `required_object_types`/graph validation for those). */
+  setup_notes: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+// Mirrors backend/src/fusionflow/modules/admin/schemas.py's
+// WorkflowComponent* DTOs - a smaller, insertable node/edge fragment for a
+// workflow already being edited (as opposed to WorkflowStarterTemplate
+// above, which seeds a whole new workflow).
+export interface WorkflowComponent {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  icon: string | null;
+  graph_fragment: Record<string, unknown>;
+  required_object_types: Record<string, unknown>[] | null;
+  /** Free-text admin guidance for the tenant, e.g. "populate your product
+   * catalog first" - not a connector dependency (see
+   * `required_object_types`/graph validation for those). */
+  setup_notes: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+// Mirrors backend/src/fusionflow/modules/admin/schemas.py's
+// GraphValidationIssue/GraphValidationResult DTOs - returned by the
+// `.../validate` endpoints on WorkflowStarterTemplate and WorkflowComponent,
+// which lint an authored graph (dangling references, disconnected
+// connectors, etc.) before it's saved.
+export interface GraphValidationIssue {
+  rule: string;
+  severity: string;
+  message: string;
+  node_id: string | null;
+}
+
+export interface GraphValidationResult {
+  issues: GraphValidationIssue[];
+  required_connector_type_keys: string[];
+}
+
 export interface ConnectorTypeCatalogItem {
   id: string;
   key: string;

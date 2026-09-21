@@ -120,11 +120,11 @@ _COUPON_CODE_CHECK_FRAGMENT = {
         _node(
             "coupon_invalid",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "That coupon code isn't valid or has expired — continuing without a discount.",
+                "content": {"content_type": "text", "body": "That coupon code isn't valid or has expired — continuing without a discount."},
             },
             "Send: coupon not valid",
             1120,
@@ -295,11 +295,11 @@ _SUPPORT_TICKET_INTAKE_FRAGMENT = {
         _node(
             "confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Thanks! We've logged your request (ticket {{log_ticket.ticket_id}}) and will get back to you soon.",
+                "content": {"content_type": "text", "body": "Thanks! We've logged your request (ticket {{log_ticket.ticket_id}}) and will get back to you soon."},
             },
             "Send confirmation",
             840,
@@ -393,11 +393,11 @@ _POST_PURCHASE_RATING_FRAGMENT = {
         _node(
             "thank_you",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{trigger.from}}",
-                "body": "Thank you for your feedback — we really appreciate it!",
+                "content": {"content_type": "text", "body": "Thank you for your feedback — we really appreciate it!"},
             },
             "Send thank-you",
             840,
@@ -465,11 +465,11 @@ _NOTIFY_ON_PAYMENT_RECEIVED_FRAGMENT = {
         _node(
             "payment_confirmation",
             "action",
-            "send_whatsapp_message",
+            "whatsapp.send_message",
             {
                 "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
                 "to": "{{get_customer_for_payment.item.phone}}",
-                "body": "Payment received! Your order is confirmed.",
+                "content": {"content_type": "text", "body": "Payment received! Your order is confirmed."},
             },
             "Send payment confirmation",
             560,

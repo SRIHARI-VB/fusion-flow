@@ -410,6 +410,21 @@ class WorkflowNodeTemplateOut(BaseModel):
     created_at: datetime
 
 
+class AdminNodeTypeSummaryOut(BaseModel):
+    """One registered workflow node/trigger type, for the admin panel's
+    `base_node_type` picker when authoring a `WorkflowNodeTemplate` -
+    deliberately minimal (no `config_schema`/`output_schema`/etc.) since
+    this is only ever used to populate a dropdown, not to render a config
+    form. Sourced live from `workflows.service.list_node_types()` (the raw
+    engine registry, not tenant-filtered) so it can never go stale the way
+    a hand-maintained list on the frontend would."""
+
+    node_type: str
+    kind: str
+    label: str
+    category: str
+
+
 class WorkflowNodeTemplateCreateRequest(BaseModel):
     key: str = Field(min_length=1, max_length=120)
     label: str = Field(min_length=1, max_length=200)
@@ -445,6 +460,7 @@ class WorkflowStarterTemplateOut(BaseModel):
     icon: str | None = None
     graph_json: dict[str, Any]
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = None
     is_active: bool
     created_at: datetime
 
@@ -474,6 +490,7 @@ class WorkflowStarterTemplateCreateRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=80)
     graph_json: dict[str, Any]
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = Field(default=None, max_length=4000)
     is_active: bool = True
 
 
@@ -484,6 +501,7 @@ class WorkflowStarterTemplateUpdateRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=80)
     graph_json: dict[str, Any] | None = None
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = Field(default=None, max_length=4000)
     is_active: bool | None = None
 
 
@@ -498,6 +516,7 @@ class WorkflowComponentOut(BaseModel):
     icon: str | None = None
     graph_fragment: dict[str, Any]
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = None
     is_active: bool
     created_at: datetime
 
@@ -510,6 +529,7 @@ class WorkflowComponentCreateRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=80)
     graph_fragment: dict[str, Any]
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = Field(default=None, max_length=4000)
     is_active: bool = True
 
 
@@ -520,4 +540,28 @@ class WorkflowComponentUpdateRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=80)
     graph_fragment: dict[str, Any] | None = None
     required_object_types: list[dict[str, Any]] | None = None
+    setup_notes: str | None = Field(default=None, max_length=4000)
     is_active: bool | None = None
+
+
+# --- Validate (Part C: reuse existing validation logic, admin-side) ---------
+
+
+class GraphValidationIssueOut(BaseModel):
+    rule: str
+    severity: str
+    message: str
+    node_id: str | None = None
+
+
+class GraphValidationResultOut(BaseModel):
+    issues: list[GraphValidationIssueOut] = Field(default_factory=list)
+    required_connector_type_keys: list[str] = Field(default_factory=list)
+
+
+class ValidateStarterTemplateRequest(BaseModel):
+    graph_json: dict[str, Any]
+
+
+class ValidateComponentRequest(BaseModel):
+    graph_fragment: dict[str, Any]

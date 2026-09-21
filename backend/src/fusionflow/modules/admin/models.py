@@ -369,6 +369,11 @@ class WorkflowStarterTemplate(Base, TimestampMixin):
     icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
     graph_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     required_object_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Free-text admin guidance for anything a tenant should do before using
+    # this template that ISN'T a connector dependency or a
+    # `required_object_types` entry (e.g. "populate your product catalog
+    # first") - optional, purely informational, never validated.
+    setup_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
 
@@ -412,4 +417,7 @@ class WorkflowComponent(Base, TimestampMixin):
     icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
     graph_fragment: Mapped[dict] = mapped_column(JSONB, nullable=False)
     required_object_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Same purpose as `WorkflowStarterTemplate.setup_notes` - optional,
+    # informational-only prerequisite guidance for this fragment.
+    setup_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

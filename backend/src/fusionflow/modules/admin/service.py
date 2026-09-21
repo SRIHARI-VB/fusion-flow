@@ -1543,6 +1543,7 @@ async def create_workflow_starter_template(
     graph_json: dict[str, Any],
     required_object_types: list[dict[str, Any]] | None,
     is_active: bool,
+    setup_notes: str | None = None,
 ) -> WorkflowStarterTemplate:
     existing = (
         await session.execute(select(WorkflowStarterTemplate).where(WorkflowStarterTemplate.key == key))
@@ -1559,6 +1560,7 @@ async def create_workflow_starter_template(
         icon=icon,
         graph_json=graph_json,
         required_object_types=required_object_types,
+        setup_notes=setup_notes,
         is_active=is_active,
     )
     session.add(template)
@@ -1577,6 +1579,7 @@ async def update_workflow_starter_template(
     graph_json: dict[str, Any] | None,
     required_object_types: list[dict[str, Any]] | None,
     is_active: bool | None,
+    setup_notes: str | None = None,
 ) -> WorkflowStarterTemplate:
     template = await get_workflow_starter_template(session, template_id)
     if template is None:
@@ -1593,6 +1596,8 @@ async def update_workflow_starter_template(
         template.graph_json = graph_json
     if required_object_types is not None:
         template.required_object_types = required_object_types
+    if setup_notes is not None:
+        template.setup_notes = setup_notes
     if is_active is not None:
         template.is_active = is_active
     await session.flush()
@@ -1605,6 +1610,62 @@ async def delete_workflow_starter_template(session: AsyncSession, template_id: u
         raise AdminError("Workflow starter template not found", status_code=404)
     await session.delete(template)
     await session.flush()
+
+
+def compute_workflow_purpose(graph: dict[str, Any]) -> str | None:
+    """Which "New Workflow" purpose (`"automation"` vs. `"broadcast"`) a
+    starter template's own stored `graph_json` belongs under - server-
+    computed from the template's root trigger node, not a stored column,
+    so the two never drift apart the way a hand-maintained `purpose`
+    field on `WorkflowStarterTemplate` could. Called by
+    `workflows.router.get_starter_templates` right next to where the
+    graph's other derived, informational fields would be computed (see
+    that route for the call site).
+
+    The root trigger node is the one whose own `id` is `"trigger"` — every
+    template in `scripts/seed_workflow_starter_templates.py` names its
+    trigger node that way by convention (see that module's `_node` calls) —
+    falling back to the first node whose `type` is `"trigger"` for a
+    hand-authored graph that doesn't happen to use that id.
+
+    That node's `data.nodeType` is looked up against `trigger_registry`
+    (`engine.registry`) to read the real registered `TriggerDefinition`'s
+    `applicable_purposes` — a list like `["automation"]`/`["broadcast"]`
+    a trigger type declares itself. `getattr(..., None)` (not direct
+    attribute access) is deliberate: `TriggerDefinition` is a separately-
+    owned dataclass this function does not define, so this stays safe
+    whether or not that field exists yet on a given trigger's definition.
+    Only the two single-purpose-exclusive shapes resolve to something -
+    `None` (unset, some other shape, an unregistered/deleted node type, or
+    no trigger node at all) means "shown for either purpose," never raises.
+    """
+    from fusionflow.modules.workflows.engine.registry import trigger_registry
+
+    nodes = graph.get("nodes") or []
+    trigger_node = next(
+        (n for n in nodes if isinstance(n, dict) and n.get("id") == "trigger"), None
+    )
+    if trigger_node is None:
+        trigger_node = next(
+            (n for n in nodes if isinstance(n, dict) and n.get("type") == "trigger"), None
+        )
+    if trigger_node is None:
+        return None
+
+    node_type = (trigger_node.get("data") or {}).get("nodeType")
+    if not node_type:
+        return None
+
+    definition = trigger_registry.get(node_type)
+    if definition is None:
+        return None
+
+    applicable_purposes = getattr(definition, "applicable_purposes", None)
+    if applicable_purposes == ["broadcast"]:
+        return "broadcast"
+    if applicable_purposes == ["automation"]:
+        return "automation"
+    return None
 
 
 # --- Workflow components (insertable fragments, composable-builder redesign) -
@@ -1638,6 +1699,7 @@ async def create_workflow_component(
     graph_fragment: dict[str, Any],
     required_object_types: list[dict[str, Any]] | None,
     is_active: bool,
+    setup_notes: str | None = None,
 ) -> WorkflowComponent:
     existing = (
         await session.execute(select(WorkflowComponent).where(WorkflowComponent.key == key))
@@ -1654,6 +1716,7 @@ async def create_workflow_component(
         icon=icon,
         graph_fragment=graph_fragment,
         required_object_types=required_object_types,
+        setup_notes=setup_notes,
         is_active=is_active,
     )
     session.add(component)
@@ -1672,6 +1735,7 @@ async def update_workflow_component(
     graph_fragment: dict[str, Any] | None,
     required_object_types: list[dict[str, Any]] | None,
     is_active: bool | None,
+    setup_notes: str | None = None,
 ) -> WorkflowComponent:
     component = await get_workflow_component(session, component_id)
     if component is None:
@@ -1688,6 +1752,8 @@ async def update_workflow_component(
         component.graph_fragment = graph_fragment
     if required_object_types is not None:
         component.required_object_types = required_object_types
+    if setup_notes is not None:
+        component.setup_notes = setup_notes
     if is_active is not None:
         component.is_active = is_active
     await session.flush()
@@ -1700,3 +1766,118 @@ async def delete_workflow_component(session: AsyncSession, component_id: uuid.UU
         raise AdminError("Workflow component not found", status_code=404)
     await session.delete(component)
     await session.flush()
+
+
+# --- Auto-derived connector requirements (never hand-maintained) -----------
+
+
+def compute_required_connector_type_keys(graph: dict[str, Any] | None) -> list[str]:
+    """Derives which connector types a starter template's/component's graph
+    needs, straight from its own nodes - never a hand-maintained list (which
+    would drift the moment an admin edits the graph without also updating
+    it). Purely informational for a tenant deciding whether to use a
+    template/component, unlike `WorkflowNodeTemplate.required_connector_type_key`
+    (which actually hides palette entries) - this never blocks anything.
+    """
+    # Local import: avoids a circular import - `workflows/service.py`
+    # already imports FROM `admin/service.py`, so the reverse (admin
+    # importing from workflows.engine) must stay function-scoped.
+    from fusionflow.modules.workflows.engine.registry import node_executor_registry, trigger_registry
+
+    keys: set[str] = set()
+    for node in (graph or {}).get("nodes", []):
+        node_type = (node.get("data") or {}).get("nodeType")
+        if not node_type:
+            continue
+        executor = node_executor_registry.get(node_type)
+        if executor is not None and executor.required_connector_type_key:
+            keys.add(executor.required_connector_type_key)
+            continue
+        trigger = trigger_registry.get(node_type)
+        if trigger is not None and trigger.required_connector_type_key:
+            keys.add(trigger.required_connector_type_key)
+    return sorted(keys)
+
+
+# --- Validate (Part C): reuse the existing publish-time validation logic ---
+
+
+async def validate_starter_template_graph(
+    session: AsyncSession, graph_json: dict[str, Any]
+) -> tuple[list["ValidationIssue"], list[str]]:
+    """Compiles `graph_json` exactly like `workflows.service.publish_workflow`
+    does (template resolution -> composite-branch expansion -> full
+    `validate_for_publish`), against a fresh random tenant id since this is
+    an admin authoring a global catalog row, not a real tenant - every
+    placeholder `connector_instance_id` in a template is expected to fail
+    rule 2 (`disconnected_connector_reference`); that is the accepted
+    passing bar, matching the seeded-template regression tests' own "zero
+    non-connector-reference issues" convention (see
+    `tests/test_workflow_starter_templates.py`)."""
+    # Local imports: same circular-import reason as
+    # `compute_required_connector_type_keys` above.
+    from fusionflow.modules.workflows.engine.graph import WorkflowGraph
+    from fusionflow.modules.workflows.engine.template_resolution import (
+        resolve_composite_branches,
+        resolve_node_templates,
+    )
+    from fusionflow.modules.workflows.validation import ValidationIssue, validate_for_publish
+
+    compiled = await resolve_node_templates(session, graph_json)
+    compiled = resolve_composite_branches(compiled)
+    graph = WorkflowGraph.from_json(compiled)
+    result = await validate_for_publish(session, tenant_id=uuid.uuid4(), graph=graph)
+    return result.issues, compute_required_connector_type_keys(compiled)
+
+
+async def validate_component_graph(
+    session: AsyncSession, graph_fragment: dict[str, Any]
+) -> tuple[list["ValidationIssue"], list[str]]:
+    """Lighter check than `validate_starter_template_graph`: a component is
+    a deliberately partial fragment (dangling handles, placeholder tokens
+    referencing a node id that doesn't exist in the fragment itself - see
+    `WorkflowComponent`'s docstring), so running the full
+    `validate_for_publish` (unreachable-node/no-trigger/containment rules)
+    against it would produce a wall of expected-but-meaningless errors.
+    Instead: for each node, resolve its (already-compiled, real) node type
+    against the registry and run just that executor's own `validate_config`
+    - the same per-node check `validation.py` rule 1 runs, without the
+    whole-graph rules that assume a complete, publishable workflow."""
+    # Local import: same circular-import reason as the functions above.
+    from pydantic import ValidationError
+
+    from fusionflow.modules.workflows.engine.registry import node_executor_registry
+    from fusionflow.modules.workflows.engine.template_resolution import resolve_node_templates
+    from fusionflow.modules.workflows.validation import ValidationIssue
+
+    compiled = await resolve_node_templates(session, graph_fragment)
+    issues: list[ValidationIssue] = []
+    for node in compiled.get("nodes", []):
+        node_id = node.get("id")
+        data = node.get("data") or {}
+        node_type = data.get("nodeType")
+        executor = node_executor_registry.get(node_type)
+        if executor is None:
+            issues.append(
+                ValidationIssue(
+                    rule="unknown_node_type",
+                    severity="error",
+                    node_id=node_id,
+                    message=f"unknown node type {node_type!r}",
+                )
+            )
+            continue
+        try:
+            executor.validate_config(data.get("config") or {})
+        except ValidationError as exc:
+            first = exc.errors()[0] if exc.errors() else None
+            detail = first["msg"] if first else str(exc)
+            issues.append(
+                ValidationIssue(
+                    rule="missing_required_fields",
+                    severity="error",
+                    node_id=node_id,
+                    message=f"invalid config for {node_type}: {detail}",
+                )
+            )
+    return issues, compute_required_connector_type_keys(compiled)

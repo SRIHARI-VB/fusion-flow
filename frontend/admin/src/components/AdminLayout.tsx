@@ -1,9 +1,11 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
+  Blocks,
   Building2,
   CreditCard,
   FileText,
   Flag,
+  Layers,
   LayoutTemplate,
   LogOut,
   Plug,
@@ -30,6 +32,8 @@ const navItems = [
   { label: "Feature flags", path: "/feature-flags", icon: Flag },
   { label: "Templates", path: "/templates", icon: LayoutTemplate },
   { label: "Workflow nodes", path: "/workflow-node-templates", icon: Workflow },
+  { label: "Starter Templates", path: "/workflow-starter-templates", icon: Layers },
+  { label: "Components", path: "/workflow-components", icon: Blocks },
   { label: "Plans", path: "/plans", icon: CreditCard },
   { label: "Connector requests", path: "/connector-requests", icon: Plug },
   { label: "Billing", path: "/billing", icon: Wallet },
