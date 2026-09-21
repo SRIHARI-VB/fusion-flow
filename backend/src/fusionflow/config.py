@@ -66,6 +66,32 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT.lower() in {"development", "dev", "local", "test"}
 
 
+_DEV_ONLY_JWT_SECRET = "dev-only-change-me-jwt-secret-0123456789abcdef"
+_DEV_ONLY_ENCRYPTION_KEY = "Ua2yuHtia0s-2FhOZ4pQmyoVoFYIP5wsE7mYNzOD3Vw="
+
+
+class InsecureProductionConfigError(RuntimeError):
+    """Raised at startup when a non-development deployment still has a
+    dev-only secret default in effect. Both `JWT_SECRET` and
+    `ENCRYPTION_KEY` were, until this check existed, silently usable in
+    production if an operator forgot to set the real env var - refusing to
+    boot is much safer than an admin/JWT-forging or credential-decryption
+    hole that only shows up in an audit."""
+
+
+def validate_secrets_for_environment(settings: Settings) -> None:
+    if settings.is_development:
+        return
+    if settings.JWT_SECRET == _DEV_ONLY_JWT_SECRET:
+        raise InsecureProductionConfigError(
+            "JWT_SECRET is still the dev-only default outside a development ENVIRONMENT - set a real secret."
+        )
+    if settings.ENCRYPTION_KEY == _DEV_ONLY_ENCRYPTION_KEY:
+        raise InsecureProductionConfigError(
+            "ENCRYPTION_KEY is still the dev-only default outside a development ENVIRONMENT - set a real secret."
+        )
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

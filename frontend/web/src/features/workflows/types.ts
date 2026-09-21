@@ -2,6 +2,13 @@
  * `engine.graph` on the backend. */
 
 export type WorkflowStatus = "draft" | "published" | "archived";
+/** Which broad shape of workflow this is (backend `purpose` concept) - an
+ * "automation" reacts to one event at a time (WhatsApp message, new order,
+ * payment, ...); a "broadcast" sends to many recipients at once, kicked off
+ * by `broadcast.scheduled_send`. Drives which triggers the node palette
+ * offers (see `WorkflowsListPage.tsx`'s new "purpose" step and the
+ * `purpose` param threaded into `listNodeTypes` below). */
+export type WorkflowPurpose = "automation" | "broadcast";
 export type ValidationStatus = "valid" | "invalid";
 export type RunStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "skipped";
@@ -20,6 +27,18 @@ export interface WorkflowStarterTemplate {
   description: string | null;
   category: string;
   icon?: string | null;
+  /** Connector types (e.g. "whatsapp", "razorpay") this template's graph
+   * actually uses, auto-derived server-side from its node types - shown as
+   * an informational hint, never a gate on picking the template. */
+  required_connector_type_keys?: string[];
+  /** Optional free-text admin guidance for anything else worth setting up
+   * before using this template (e.g. "populate your product catalog"). */
+  setup_notes?: string | null;
+  /** Server-computed from this template's own graph (its root trigger's
+   * registered `applicable_purposes`) - see `admin.service.
+   * compute_workflow_purpose`. `null`/absent means the template isn't tied
+   * to one purpose and should show for either. */
+  purpose?: WorkflowPurpose | null;
 }
 
 /** `GET /workflows/components` - a small, reusable fragment (a handful of
@@ -41,12 +60,19 @@ export interface WorkflowComponent {
   source: "admin" | "user";
   graph_fragment: WorkflowGraphJson;
   required_object_types?: Record<string, unknown>[] | null;
+  /** Connector types this component's fragment actually uses, auto-derived
+   * server-side - informational only, never a gate on inserting it. */
+  required_connector_type_keys?: string[];
+  /** Optional free-text admin guidance for anything else worth setting up
+   * before using this component. */
+  setup_notes?: string | null;
 }
 
 export interface Workflow {
   id: string;
   name: string;
   status: WorkflowStatus;
+  purpose: WorkflowPurpose;
   current_published_version_id: string | null;
   created_at: string;
   updated_at: string;
@@ -98,6 +124,11 @@ export interface JsonSchemaProperty {
    * string field as multi-line message/body content rather than a short
    * single-line value. */
   format?: string;
+  /** Companion to `format === "auto_ref"` - which upstream output leaf key
+   * (e.g. `"recipients"`, `"message_id"`) this field should auto-resolve
+   * to a reference for (see `jsonSchemaForm.ts`'s `"auto_ref"` field kind
+   * and `NodeInlineForm.tsx`'s render branch for it). */
+  ref_suffix?: string;
 }
 
 export interface NodeType {

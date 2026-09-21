@@ -27,10 +27,12 @@ from fusionflow.modules.workflows.models import (
     ValidationStatus,
     Workflow,
     WorkflowRun,
+    WorkflowSchedule,
     WorkflowStatus,
     WorkflowTrigger,
     WorkflowUserComponent,
     WorkflowVersion,
+    compute_next_run_at,
 )
 from fusionflow.modules.workflows.validation import ValidationResult, validate_for_publish
 
@@ -51,9 +53,17 @@ def _now() -> datetime:
 
 
 async def create_workflow(
-    session: AsyncSession, *, tenant_id: uuid.UUID, name: str, graph: dict, created_by: uuid.UUID
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    name: str,
+    graph: dict,
+    created_by: uuid.UUID,
+    purpose: str = "automation",
 ) -> Workflow:
-    workflow = Workflow(id=uuid.uuid4(), tenant_id=tenant_id, name=name, status=WorkflowStatus.DRAFT)
+    workflow = Workflow(
+        id=uuid.uuid4(), tenant_id=tenant_id, name=name, status=WorkflowStatus.DRAFT, purpose=purpose
+    )
     session.add(workflow)
     await session.flush()
 
@@ -130,6 +140,7 @@ async def create_workflow_from_starter_template(
     name: str,
     starter_template_id: uuid.UUID,
     created_by: uuid.UUID,
+    purpose: str = "automation",
 ) -> Workflow:
     """Seeds a new workflow's graph from a `WorkflowStarterTemplate`
     (composable-builder redesign, Phase 6), auto-provisioning any custom
@@ -147,7 +158,12 @@ async def create_workflow_from_starter_template(
     await provision_required_object_types(session, tenant_id=tenant_id, specs=template.required_object_types)
 
     return await create_workflow(
-        session, tenant_id=tenant_id, name=name, graph=template.graph_json, created_by=created_by
+        session,
+        tenant_id=tenant_id,
+        name=name,
+        graph=template.graph_json,
+        created_by=created_by,
+        purpose=purpose,
     )
 
 
@@ -384,6 +400,42 @@ _PALETTE_GROUP_BY_CATEGORY = {
 }
 
 
+_CONNECTOR_INSTANCE_ID_SUFFIX = "_connector_instance_id"
+
+
+def _connector_type_key_for_field(field_name: str, required_connector_type_key: str | None) -> str | None:
+    """Which connector type a `..._connector_instance_id`-shaped config field's
+    suggested options should be filtered to (Fix 1 for the connector-picker
+    auto-select UX gap - see `list_node_types_with_templates`'s `field_suggestions`
+    section below).
+
+    The bare `connector_instance_id` name (the original, single-connector-
+    per-node convention every `whatsapp.*`/`create_ticket`/etc. node uses)
+    keeps deferring to the node type's own `required_connector_type_key`
+    class attribute, exactly as before.
+
+    A *suffixed* field name - e.g. `razorpay_connector_instance_id` /
+    `whatsapp_connector_instance_id` on `payments.send_razorpay_link`, the
+    node this generalization exists for - can't be disambiguated that way:
+    that node has *two* connector-instance fields, and a single node-level
+    `required_connector_type_key` attribute has nowhere to put a second
+    answer. Instead, the prefix before the suffix IS the connector type key
+    to filter by. This is reliable rather than a convenient guess: it's
+    verified against `RazorpayAdapter.CONNECTOR_TYPE_KEY == "razorpay"` and
+    every `whatsapp.*` node's `required_connector_type_key == "whatsapp"` -
+    the field-name prefix and the connector type key are already the same
+    string everywhere in this codebase. It's also strictly more correct
+    than threading a second class-level mapping through every multi-
+    connector node, which would have nowhere to express "field X is type A,
+    field Y is type B" for more than one such field per node anyway.
+    """
+    if field_name == "connector_instance_id":
+        return required_connector_type_key
+    if field_name.endswith(_CONNECTOR_INSTANCE_ID_SUFFIX):
+        return field_name[: -len(_CONNECTOR_INSTANCE_ID_SUFFIX)]
+    return None
+
+
 def _default_palette_group(kind: str, category: str) -> str:
     """Best-effort task-oriented bucket for a node type that doesn't
     declare `palette_group` explicitly — every pre-redesign node type,
@@ -409,8 +461,22 @@ def list_node_types() -> list:
     return list(metas.values())
 
 
+def _matches_purpose(applicable_purposes: list[str] | None, purpose: str | None) -> bool:
+    """Recurring/bulk-messaging support's "workflow purpose" filter: an
+    entry whose `applicable_purposes` is `None` is always included
+    (every non-trigger node type, plus `manual.test_trigger`); when the
+    caller doesn't pass a `purpose` at all, no filtering happens either
+    (every entry included, matching this endpoint's pre-existing
+    behavior). Only when both are set does this actually exclude
+    anything - a trigger tagged for a different purpose than the one
+    requested."""
+    if applicable_purposes is None or purpose is None:
+        return True
+    return purpose in applicable_purposes
+
+
 async def list_node_types_with_templates(
-    session: AsyncSession, *, tenant_id: uuid.UUID
+    session: AsyncSession, *, tenant_id: uuid.UUID, purpose: str | None = None
 ) -> list["schemas.NodeTypeOut"]:
     """`list_node_types()`'s registry-only palette, plus one entry per
     active `WorkflowNodeTemplate` row (modules.admin.models.
@@ -452,6 +518,7 @@ async def list_node_types_with_templates(
             "base_node_type": None,
             "icon": m.icon,
             "palette_group": m.palette_group or _default_palette_group(m.kind, m.category),
+            "applicable_purposes": m.applicable_purposes,
         }
         for m in list_node_types()
     ]
@@ -491,6 +558,7 @@ async def list_node_types_with_templates(
                 # template could still override this via its base
                 # executor's own `palette_group`.
                 "palette_group": base_meta.palette_group or "Advanced",
+                "applicable_purposes": base_meta.applicable_purposes,
             }
         )
 
@@ -500,12 +568,26 @@ async def list_node_types_with_templates(
         e["required_connector_type_key"] for e in raw_entries if e["required_connector_type_key"]
     }
 
+    # Every `..._connector_instance_id`-suffixed config field's derived
+    # connector type key (Fix 1) needs its `ConnectorType` resolvable below
+    # too, same as a node-level `required_connector_type_key` - a suffixed
+    # field's connector type is never gated at the node level (that's the
+    # whole reason it needs its own field-level suggestion source), so it
+    # would otherwise never end up in `key_to_type` and every such field
+    # would silently get zero suggested options.
+    connector_field_keys = {
+        key
+        for e in raw_entries
+        for field_name in (e["config_schema"] or {}).get("properties", {})
+        if (key := _connector_type_key_for_field(field_name, e["required_connector_type_key"])) is not None
+    }
+
     all_connector_types = await connector_service.list_connector_types(session)
     feature_types = [t for t in all_connector_types if t.category == ConnectorCategory.FEATURE]
     feature_keys = {t.key for t in feature_types}
 
     key_to_type: dict[str, ConnectorType] = {t.key: t for t in feature_types}
-    for key in required_keys | feature_keys:
+    for key in required_keys | feature_keys | connector_field_keys:
         if key in key_to_type:
             continue
         connector_type = await connector_service.get_connector_type_by_key(session, key)
@@ -527,6 +609,7 @@ async def list_node_types_with_templates(
         for e in raw_entries
         if e["required_connector_type_key"] is None or _is_granted(e["required_connector_type_key"])
     ]
+    surviving = [e for e in surviving if _matches_purpose(e["applicable_purposes"], purpose)]
 
     instances = await connector_service.list_instances(session, tenant_id)
     connected_instances = [i for i in instances if i.state == ConnectorState.CONNECTED]
@@ -535,34 +618,56 @@ async def list_node_types_with_templates(
     entries: list["schemas.NodeTypeOut"] = []
     for e in surviving:
         properties = (e["config_schema"] or {}).get("properties", {})
-        field_suggestions: dict[str, list[dict[str, str]]] | None = None
+        suggestions: dict[str, list[dict[str, str]]] = {}
 
-        if "connector_instance_id" in properties:
-            required_key = e["required_connector_type_key"]
-            if required_key is not None:
-                target_type = key_to_type.get(required_key)
+        for field_name in properties:
+            if field_name == "connector_instance_id":
+                required_key = e["required_connector_type_key"]
+                if required_key is not None:
+                    target_type = key_to_type.get(required_key)
+                    options = [
+                        {"value": str(instance.id), "label": instance.display_name}
+                        for instance in connected_instances
+                        if target_type is not None and instance.connector_type_id == target_type.id
+                    ]
+                else:
+                    # `connector.action` (and any template built over it with no
+                    # explicit gate): every connected instance across every
+                    # currently-granted type, label prefixed by connector type.
+                    options = [
+                        {
+                            "value": str(instance.id),
+                            "label": f"{instance.connector_type.display_name} — {instance.display_name}",
+                        }
+                        for instance in connected_instances
+                        if _is_granted(instance.connector_type.key)
+                    ]
+                suggestions[field_name] = options
+            elif field_name.endswith(_CONNECTOR_INSTANCE_ID_SUFFIX):
+                # A suffixed field (e.g. `razorpay_connector_instance_id`) is
+                # never itself the reason a node is gated in `surviving`
+                # (that's still driven by the node's own single
+                # `required_connector_type_key`, if any) - so, unlike the
+                # bare-name case above, it needs its own explicit
+                # entitlement check rather than inheriting one from node-
+                # level filtering that never happened for this connector type.
+                connector_type_key = _connector_type_key_for_field(field_name, e["required_connector_type_key"])
+                target_type = key_to_type.get(connector_type_key) if connector_type_key else None
                 options = [
                     {"value": str(instance.id), "label": instance.display_name}
                     for instance in connected_instances
-                    if target_type is not None and instance.connector_type_id == target_type.id
+                    if target_type is not None
+                    and instance.connector_type_id == target_type.id
+                    and _is_granted(connector_type_key)
                 ]
-            else:
-                # `connector.action` (and any template built over it with no
-                # explicit gate): every connected instance across every
-                # currently-granted type, label prefixed by connector type.
-                options = [
-                    {
-                        "value": str(instance.id),
-                        "label": f"{instance.connector_type.display_name} — {instance.display_name}",
-                    }
-                    for instance in connected_instances
-                    if _is_granted(instance.connector_type.key)
-                ]
-            field_suggestions = {"connector_instance_id": options}
-        elif "module" in properties:
-            field_suggestions = {
-                "module": [{"value": t.key, "label": t.display_name} for t in granted_feature_types]
-            }
+                suggestions[field_name] = options
+
+        if "module" in properties:
+            suggestions["module"] = [
+                {"value": t.key, "label": t.display_name} for t in granted_feature_types
+            ]
+
+        field_suggestions = suggestions or None
 
         entries.append(
             schemas.NodeTypeOut(
@@ -584,6 +689,7 @@ async def list_node_types_with_templates(
                 field_suggestions=field_suggestions,
                 icon=e["icon"],
                 palette_group=e["palette_group"],
+                applicable_purposes=e["applicable_purposes"],
             )
         )
     return entries
@@ -634,6 +740,10 @@ async def list_components(session: AsyncSession, *, tenant_id: uuid.UUID) -> lis
                 source="admin",
                 graph_fragment=component.graph_fragment,
                 required_object_types=component.required_object_types,
+                required_connector_type_keys=admin_service.compute_required_connector_type_keys(
+                    component.graph_fragment
+                ),
+                setup_notes=component.setup_notes,
             )
         )
 
@@ -653,6 +763,10 @@ async def list_components(session: AsyncSession, *, tenant_id: uuid.UUID) -> lis
                 source="user",
                 graph_fragment=component.graph_fragment,
                 required_object_types=None,
+                required_connector_type_keys=admin_service.compute_required_connector_type_keys(
+                    component.graph_fragment
+                ),
+                setup_notes=None,
             )
         )
 
@@ -727,3 +841,111 @@ async def delete_user_component(session: AsyncSession, *, tenant_id: uuid.UUID, 
     await session.delete(component)
     await session.flush()
     return True
+
+
+# --- Workflow schedules (recurring/bulk-messaging support) -----------------
+
+
+def _initial_next_run_at(payload: "schemas.WorkflowScheduleCreateRequest", *, after: datetime) -> datetime:
+    """For frequency='once', `next_run_at` is just the given `run_at` - no
+    computation needed (a future one-off instant is already fully known).
+    Every other frequency computes its first occurrence from `after`
+    (creation/update time) via `compute_next_run_at`."""
+    if payload.frequency == "once":
+        assert payload.run_at is not None  # enforced by the schema's own validator
+        return payload.run_at
+    return compute_next_run_at(
+        payload.frequency,
+        payload.time_of_day,
+        payload.weekdays,
+        payload.day_of_month,
+        payload.timezone,
+        after=after,
+    )
+
+
+async def create_schedule(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    workflow_id: uuid.UUID,
+    payload: "schemas.WorkflowScheduleCreateRequest",
+) -> WorkflowSchedule:
+    schedule = WorkflowSchedule(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        workflow_id=workflow_id,
+        frequency=payload.frequency,
+        run_at=payload.run_at,
+        time_of_day=payload.time_of_day,
+        weekdays=payload.weekdays,
+        day_of_month=payload.day_of_month,
+        timezone=payload.timezone,
+        recipient_source=payload.recipient_source.model_dump(),
+        next_run_at=_initial_next_run_at(payload, after=_now()),
+        is_active=payload.is_active,
+    )
+    session.add(schedule)
+    await session.flush()
+    return schedule
+
+
+async def list_schedules(session: AsyncSession, *, workflow_id: uuid.UUID) -> list[WorkflowSchedule]:
+    rows = await session.execute(
+        select(WorkflowSchedule)
+        .where(WorkflowSchedule.workflow_id == workflow_id)
+        .order_by(WorkflowSchedule.created_at.desc())
+    )
+    return list(rows.scalars().all())
+
+
+async def get_schedule(session: AsyncSession, schedule_id: uuid.UUID) -> WorkflowSchedule | None:
+    return await session.get(WorkflowSchedule, schedule_id)
+
+
+_SCHEDULE_SCALAR_FIELDS = ("frequency", "run_at", "time_of_day", "weekdays", "day_of_month", "timezone", "is_active")
+_SCHEDULE_RECOMPUTE_FIELDS = ("frequency", "time_of_day", "weekdays", "day_of_month", "timezone", "run_at")
+
+
+async def update_schedule(
+    session: AsyncSession, schedule: WorkflowSchedule, *, payload: "schemas.WorkflowScheduleUpdateRequest"
+) -> WorkflowSchedule:
+    """PATCH — only fields the caller actually sent are applied
+    (`exclude_unset`), so e.g. `{"is_active": false}` (pause) never
+    disturbs the schedule's recurrence fields. `next_run_at` is only ever
+    recomputed when a recurrence-affecting field was part of this update
+    AND the schedule is (still) active - pausing a schedule leaves its
+    stale `next_run_at` in place (harmless: the poller's own `is_active`
+    check already excludes it), and reactivating it without touching any
+    recurrence field also leaves it untouched (resume where it would have
+    fired, not "push it out from right now")."""
+    data = payload.model_dump(exclude_unset=True)
+    recipient_source = data.pop("recipient_source", None)
+
+    for field in _SCHEDULE_SCALAR_FIELDS:
+        if field in data:
+            setattr(schedule, field, data[field])
+    if recipient_source is not None:
+        schedule.recipient_source = recipient_source
+
+    recomputed_now = any(field in data for field in _SCHEDULE_RECOMPUTE_FIELDS)
+    if recomputed_now and schedule.is_active:
+        if schedule.frequency == "once":
+            assert schedule.run_at is not None
+            schedule.next_run_at = schedule.run_at
+        else:
+            schedule.next_run_at = compute_next_run_at(
+                schedule.frequency,
+                schedule.time_of_day,
+                schedule.weekdays,
+                schedule.day_of_month,
+                schedule.timezone,
+                after=_now(),
+            )
+
+    await session.flush()
+    return schedule
+
+
+async def delete_schedule(session: AsyncSession, schedule: WorkflowSchedule) -> None:
+    await session.delete(schedule)

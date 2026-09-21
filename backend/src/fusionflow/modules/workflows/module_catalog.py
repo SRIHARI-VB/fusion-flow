@@ -26,11 +26,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.business_objects import service as business_objects_service
-from fusionflow.modules.business_objects.models import ObjectFieldDefinition
 from fusionflow.modules.catalog.schemas import CouponCreate, OfferCreate, ProductServiceCreate
-from fusionflow.modules.customers.schemas import CustomerCreate
+from fusionflow.modules.custom_fields import module_fields as module_fields_service
 from fusionflow.modules.custom_fields import service as custom_fields_service
-from fusionflow.modules.custom_fields.models import EntityType, FieldDefinition
+from fusionflow.modules.custom_fields.models import EntityType, FieldDefinition, ModuleFieldDefinitionMixin
+from fusionflow.modules.customers.models import CustomerFieldDefinition
+from fusionflow.modules.customers.schemas import CustomerCreate
 from fusionflow.modules.kb.schemas import KbArticleCreate
 from fusionflow.modules.tickets.schemas import TicketCreate
 from fusionflow.modules.workflows.engine.module_registry import ModuleQueryAdapter
@@ -48,6 +49,14 @@ class ModuleCatalogSpec:
     icon: str
     create_schema: type[BaseModel] | None = None
     custom_fields_entity_type: EntityType | None = None
+    #: Set for a fixed module that has its own `ModuleFieldDefinitionMixin`
+    #: table (the "give every fixed module its own table" design - see
+    #: `custom_fields.models.ModuleFieldDefinitionMixin`) rather than
+    #: registering into the shared, closed-enum `field_definitions` table
+    #: `custom_fields_entity_type` reads from. Mutually exclusive with
+    #: `custom_fields_entity_type` in practice (a module uses one design or
+    #: the other), but nothing enforces that here beyond convention.
+    module_field_model: type[ModuleFieldDefinitionMixin] | None = None
     create_schema_exclude: frozenset[str] = dataclasses.field(default_factory=lambda: frozenset({"custom_fields"}))
 
 
@@ -67,7 +76,10 @@ FIXED_MODULE_CATALOG: dict[str, ModuleCatalogSpec] = {
     ),
     "coupons": ModuleCatalogSpec("coupons", "Coupon", "Ecommerce", "ticket-percent", CouponCreate, EntityType.COUPON),
     "offers": ModuleCatalogSpec("offers", "Offer", "Ecommerce", "gift", OfferCreate, EntityType.OFFER),
-    "customers": ModuleCatalogSpec("customers", "Customer", "Customers", "users", CustomerCreate),
+    "customers": ModuleCatalogSpec(
+        "customers", "Customer", "Customers", "users", CustomerCreate,
+        module_field_model=CustomerFieldDefinition,
+    ),
     "tickets": ModuleCatalogSpec("tickets", "Ticket", "Support", "life-buoy", TicketCreate),
     "kb": ModuleCatalogSpec("kb", "KB Article", "Data", "book-open", KbArticleCreate),
     "orders": ModuleCatalogSpec("orders", "Order", "Ecommerce", "shopping-cart"),
@@ -150,7 +162,7 @@ def _schema_to_fields(schema_cls: type[BaseModel] | None, *, exclude: frozenset[
     return fields
 
 
-def _field_def_to_dict(field_def: FieldDefinition | ObjectFieldDefinition) -> dict[str, Any]:
+def _field_def_to_dict(field_def: FieldDefinition | ModuleFieldDefinitionMixin) -> dict[str, Any]:
     field_type = field_def.field_type
     return {
         "key": field_def.key,
@@ -191,6 +203,11 @@ async def list_modules(session: AsyncSession, *, tenant_id: uuid.UUID) -> list["
                 session, tenant_id=tenant_id, entity_type=spec.custom_fields_entity_type
             )
             fields.extend(_field_def_to_dict(fd) for fd in tenant_field_defs)
+        if spec.module_field_model is not None:
+            module_field_defs = await module_fields_service.list_definitions(
+                session, spec.module_field_model, tenant_id=tenant_id
+            )
+            fields.extend(_field_def_to_dict(fd) for fd in module_field_defs)
         entries.append(
             ModuleCatalogEntry(
                 key=spec.module_key,

@@ -18,7 +18,22 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Blocks, Layers, Maximize2, Minimize2, PlayCircle, Save, ShieldCheck, Upload } from "lucide-react";
+import * as dagre from "dagre";
+import {
+  ArrowLeft,
+  Blocks,
+  CalendarClock,
+  LayoutGrid,
+  Layers,
+  Maximize2,
+  Minimize2,
+  PlayCircle,
+  Redo2,
+  Save,
+  ShieldCheck,
+  Undo2,
+  Upload,
+} from "lucide-react";
 import { Button, Input } from "@fusion-flow/ui";
 import { useLayoutStore } from "../../lib/layout-store";
 import {
@@ -32,7 +47,6 @@ import {
   updateWorkflow,
 } from "./api";
 import type {
-  NodeType,
   ValidationIssue,
   WorkflowComponent,
   WorkflowGraphEdge,
@@ -42,12 +56,13 @@ import type {
   WorkflowRunDetail,
 } from "./types";
 import { flattenOutputPaths } from "./jsonSchemaForm";
+import { useGraphHistory } from "./useGraphHistory";
 import { CardNode } from "./nodes/CardNode";
 import { ContainerNode, CONTAINER_MIN_HEIGHT, CONTAINER_MIN_WIDTH } from "./nodes/ContainerNode";
 import { NodePalette } from "./components/NodePalette";
-import { NodeConfigDrawer } from "./components/NodeConfigDrawer";
 import { EdgeConfigDrawer } from "./components/EdgeConfigDrawer";
 import { ValidationPanel } from "./components/ValidationPanel";
+import { SchedulePanel } from "./components/SchedulePanel";
 import { RunStepTrace } from "./components/RunStepTrace";
 import { SaveComponentDialog } from "./components/SaveComponentDialog";
 import { ComponentPicker } from "./components/ComponentPicker";
@@ -56,6 +71,7 @@ import {
   CONTAINER_RF_TYPE,
   enrichNodes,
   edgesFromJson,
+  fitContainerToChildren,
   toGraphJson,
   type CardNodeData,
 } from "./graphUtils";
@@ -139,6 +155,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const queryClient = useQueryClient();
   const reactFlow = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // Guards the container auto-fit effect below against fighting an
+  // in-progress manual `NodeResizer` drag — set true/false by
+  // `ContainerNode`'s `onResizeActiveChange` (threaded in via
+  // `nodeTypesForFlow`'s `containerNodeWithContext` closure, same pattern
+  // as `connectorInstanceLabel` for `CardNode`).
+  const containerResizingRef = useRef(false);
   const fullView = useLayoutStore((s) => s.fullView);
   const setFullView = useLayoutStore((s) => s.setFullView);
 
@@ -154,33 +176,16 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     queryKey: ["workflow-versions", workflowId],
     queryFn: () => listWorkflowVersions(workflowId),
   });
-  const { data: nodeTypes = [] } = useQuery({ queryKey: ["workflow-node-types"], queryFn: listNodeTypes });
+  // `purpose` narrows the palette's trigger set once the workflow itself
+  // has loaded (undefined on first render, before `getWorkflow` resolves -
+  // `listNodeTypes()`'s no-arg overload returns everything unfiltered in
+  // that brief window, then this refetches filtered as soon as `purpose`
+  // is known, via `queryKey` including it).
+  const { data: nodeTypes = [] } = useQuery({
+    queryKey: ["workflow-node-types", workflow?.purpose],
+    queryFn: () => (workflow?.purpose ? listNodeTypes(workflow.purpose) : listNodeTypes()),
+  });
   const { data: connectorInstances = [] } = useConnectorInstances();
-
-  // A raw `connector_instance_id` UUID means nothing to a non-technical
-  // reader - `CardNode`'s bespoke summaries (`cardSummaries.ts`) resolve
-  // it to the channel's own display name via this lookup. React Flow
-  // custom node components only receive their own `NodeProps`, so this is
-  // threaded in as a plain closure captured by a `nodeTypes` map wrapper
-  // (recomputed only when the instance list changes) rather than
-  // denormalized onto every node's `data` - `enrichNodes` already runs
-  // once at hydration time and wouldn't otherwise re-run when instances
-  // load asynchronously or a node is dropped fresh via `onDrop`.
-  const connectorInstanceLabel = useCallback(
-    (instanceId: string) => connectorInstances.find((i) => i.id === instanceId)?.display_name,
-    [connectorInstances],
-  );
-  const nodeTypesForFlow = useMemo(() => {
-    const cardNodeWithContext = (props: NodeProps<Node<CardNodeData>>) => (
-      <CardNode {...props} connectorInstanceLabel={connectorInstanceLabel} />
-    );
-    return {
-      trigger: cardNodeWithContext,
-      action: cardNodeWithContext,
-      condition: cardNodeWithContext,
-      [CONTAINER_RF_TYPE]: ContainerNode,
-    };
-  }, [connectorInstanceLabel]);
 
   const nodeTypesByKey = useMemo(() => new Map(nodeTypes.map((nt) => [nt.node_type, nt])), [nodeTypes]);
   const latestVersion = versions?.[0];
@@ -188,9 +193,136 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [name, setName] = useState("");
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<CardNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [selectedChannelInstanceId, setSelectedChannelInstanceId] = useState<string | null>(null);
+  // Collapsed-by-default redesign: purely a view toggle (which cards show
+  // their full `NodeInlineForm` vs. a compact preview from
+  // `NodePreview.tsx`), never part of `nodes`/`edges` - so it never enters
+  // `useGraphHistory`'s undo/redo stack and never marks the workflow dirty.
+  // A freshly dropped node (see `onDrop`) starts expanded; everything
+  // loaded from a saved graph starts collapsed.
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(new Set());
+  const toggleNodeExpanded = useCallback((nodeId: string) => {
+    setExpandedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  }, []);
+
+  // Every field on every card commits through this (there's no more
+  // separate drawer-form-submit step - see `NodeInlineForm.tsx`'s own
+  // docstring for why every field, not just one primary one, has to go
+  // through the same merge-into-`data.config` path now).
+  const updateNodeConfig = useCallback(
+    (nodeId: string, patch: Record<string, unknown>) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, config: { ...n.data.config, ...patch } } } : n)),
+      );
+    },
+    [setNodes],
+  );
+
+  const updateNodeLabel = useCallback(
+    (nodeId: string, label: string) => {
+      setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, label } } : n)));
+    },
+    [setNodes],
+  );
+
+  // Generalized from the old drawer's `deleteSelectedNode` - parameterized
+  // by `nodeId` instead of a page-level `selectedNodeId`, since every
+  // card now owns its own delete icon rather than there being one
+  // "currently selected node" to delete. Deleting a container also
+  // deletes its embedded children - leaving them behind with a dangling
+  // `parentId` would be a malformed graph (publish-time rule 6 would
+  // reject it anyway).
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => {
+        const childIds = new Set(nds.filter((n) => n.parentId === nodeId).map((n) => n.id));
+        const removedIds = new Set([nodeId, ...childIds]);
+        setEdges((eds) => eds.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target)));
+        return nds.filter((n) => !removedIds.has(n.id));
+      });
+    },
+    [setNodes, setEdges],
+  );
+
+  // Every node reachable by walking edges backward from it (a plain,
+  // honest approximation - no special-casing of container/loop variable
+  // scoping) offers its declared `output_schema` leaf paths as "insert
+  // variable" suggestions. Computed for every node at once now, not just
+  // one selected node, since every card's fields are always visible (see
+  // `NodeInlineForm.tsx`).
+  const upstreamSuggestionsByNode = useMemo(() => {
+    const map = new Map<string, { path: string; label: string }[]>();
+    for (const node of nodes) {
+      const ancestorIds = new Set<string>();
+      const queue = [node.id];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const edge of edges) {
+          if (edge.target === current && !ancestorIds.has(edge.source)) {
+            ancestorIds.add(edge.source);
+            queue.push(edge.source);
+          }
+        }
+      }
+      const suggestions: { path: string; label: string }[] = [];
+      for (const ancestorId of ancestorIds) {
+        const ancestorNode = nodes.find((n) => n.id === ancestorId);
+        if (!ancestorNode) continue;
+        const ancestorNodeType = nodeTypesByKey.get(ancestorNode.data.nodeType);
+        // `path` (used inside `{{...}}`) must stay the raw graph node id -
+        // that's what the backend's templating engine actually resolves
+        // against. Only the human-readable breadcrumb `label` prefers the
+        // author-set label / node type's own friendly label, same
+        // precedence `CardNode.tsx`'s own title computation uses, instead
+        // of the opaque `node_abc123` id a non-technical author never typed.
+        const friendlyPrefix = ancestorNode.data.label || ancestorNodeType?.label || ancestorNode.data.nodeType;
+        for (const { path, label } of flattenOutputPaths(ancestorNodeType?.output_schema, ancestorNode.id)) {
+          suggestions.push({ path, label: label.replace(ancestorNode.id, friendlyPrefix) });
+        }
+      }
+      map.set(node.id, suggestions);
+    }
+    return map;
+  }, [nodes, edges, nodeTypesByKey]);
+
+  const nodeTypesForFlow = useMemo(() => {
+    const cardNodeWithContext = (props: NodeProps<Node<CardNodeData>>) => (
+      <CardNode
+        {...props}
+        onConfigChange={updateNodeConfig}
+        onLabelChange={updateNodeLabel}
+        onDeleteNode={deleteNode}
+        upstreamSuggestions={upstreamSuggestionsByNode.get(props.id) ?? []}
+        expanded={expandedNodeIds.has(props.id)}
+        onToggleExpand={toggleNodeExpanded}
+      />
+    );
+    const containerNodeWithContext = (props: NodeProps<Node<CardNodeData>>) => (
+      <ContainerNode
+        {...props}
+        onResizeActiveChange={(active) => {
+          containerResizingRef.current = active;
+        }}
+        onConfigChange={updateNodeConfig}
+        onDeleteNode={deleteNode}
+        upstreamSuggestions={upstreamSuggestionsByNode.get(props.id) ?? []}
+        expanded={expandedNodeIds.has(props.id)}
+        onToggleExpand={toggleNodeExpanded}
+      />
+    );
+    return {
+      trigger: cardNodeWithContext,
+      action: cardNodeWithContext,
+      condition: cardNodeWithContext,
+      [CONTAINER_RF_TYPE]: containerNodeWithContext,
+    };
+  }, [updateNodeConfig, updateNodeLabel, deleteNode, upstreamSuggestionsByNode, expandedNodeIds, toggleNodeExpanded]);
 
   // Channel-first filter (Part D): the selected instance narrows only the
   // Messaging-category nodes to its own connector type — `required_connector_type_key`
@@ -215,6 +347,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   const [autosave, setAutosave] = useState(false);
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[] | null>(null);
   const [showValidation, setShowValidation] = useState(false);
+  const [showSchedulePanel, setShowSchedulePanel] = useState(false);
   const [showTestPanel, setShowTestPanel] = useState(false);
   const [testPayload, setTestPayload] = useState("{}");
   const [lastRun, setLastRun] = useState<WorkflowRunDetail | null>(null);
@@ -237,14 +370,89 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
 
   // Hydrate the canvas from the latest version exactly once (per workflow
   // load) so an in-progress edit isn't clobbered by a background refetch.
+  // Must also wait for `versions` itself to have resolved, not just
+  // `nodeTypes` - `nodeTypes` is a workflow-independent query that's often
+  // already warm from a previous visit, while `versions` is always a fresh
+  // per-workflow fetch. Gating on `nodeTypes` alone let this fire while
+  // `versions` was still `undefined`, permanently hydrate from
+  // `EMPTY_GRAPH`, and never load the real graph even once `versions`
+  // arrived - a real, silent Save-blows-away-your-workflow bug.
   useEffect(() => {
-    if (hydratedRef.current || nodeTypes.length === 0) return;
+    if (hydratedRef.current || nodeTypes.length === 0 || versions === undefined) return;
     const graph = latestVersion?.graph ?? EMPTY_GRAPH;
     setNodes(enrichNodes(graph.nodes, nodeTypesByKey));
     setEdges(edgesFromJson(graph.edges));
     hydratedRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestVersion, nodeTypes]);
+  }, [latestVersion, nodeTypes, versions]);
+
+  // Container auto-fit-to-children: nothing else in this codebase resizes a
+  // `flow.loop`/`flow.parallel`/`flow.try_catch` container after a child is
+  // dropped in/out of it, moved, or first measured — it just stays whatever
+  // fixed size it was created/manually-resized at, leaving either empty
+  // leftover space or a clipped child. This watches `nodes` generically
+  // (same "react to whatever changed" spirit as the hydration effect above)
+  // and, after a short debounce, snugly resizes every top-level container to
+  // wrap its current children via `fitContainerToChildren` (which itself
+  // returns `null`/no-op once the size already matches, so this can't loop).
+  // The debounce absorbs a burst of rapid node-position/measurement updates
+  // (e.g. a drag-and-drop or React Flow's own first `ResizeObserver` pass);
+  // `containerResizingRef` (set by `ContainerNode`'s `onResizeActiveChange`)
+  // additionally skips the update entirely while the author is mid-drag on a
+  // container's own resize handle, so this never fights that manual resize.
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (containerResizingRef.current) return;
+      setNodes((nds) => {
+        let changed = false;
+        const next = nds.map((n) => {
+          if (n.type !== CONTAINER_RF_TYPE || n.parentId) return n;
+          const fit = fitContainerToChildren(n.id, nds);
+          if (!fit) return n;
+          changed = true;
+          return { ...n, width: fit.width, height: fit.height };
+        });
+        return changed ? next : nds;
+      });
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [nodes, setNodes]);
+
+  // Undo/redo: a single debounced watcher over `nodes`/`edges` rather than
+  // instrumenting every individual mutation call site (see useGraphHistory
+  // for the full rationale).
+  const { undo, redo, undoAvailable, redoAvailable } = useGraphHistory({
+    nodes,
+    edges,
+    setNodes,
+    setEdges,
+    hasHydratedRef: hydratedRef,
+  });
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      const isMeta = event.ctrlKey || event.metaKey;
+      if (!isMeta) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+      } else if ((key === "z" && event.shiftKey) || key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undo, redo]);
 
   const updateMutation = useMutation({
     mutationFn: (graph: WorkflowGraphJson) => updateWorkflow(workflowId, { name, graph }),
@@ -346,6 +554,68 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     });
   }
 
+  // Auto-arrange only ever repositions TOP-LEVEL nodes (`!parentId`) via
+  // dagre - a container's children are positioned relative to it, so
+  // moving the container already carries them along; touching a child's
+  // own `position` here would double-offset it. Edges that actually run
+  // into/out of a container's children are remapped to that container's id
+  // for layout purposes only (the real edge is left untouched) so the
+  // container itself still gets ranked correctly relative to its
+  // neighbors.
+  function handleAutoArrange() {
+    const DEFAULT_WIDTH = 256;
+    const DEFAULT_HEIGHT = 80;
+
+    const topLevelNodes = nodes.filter((n) => !n.parentId);
+    const topLevelIds = new Set(topLevelNodes.map((n) => n.id));
+    const nodesById = new Map(nodes.map((n) => [n.id, n]));
+
+    function topLevelAncestorId(nodeId: string): string | null {
+      const node = nodesById.get(nodeId);
+      if (!node) return null;
+      return node.parentId ? topLevelAncestorId(node.parentId) : node.id;
+    }
+
+    const graph = new dagre.graphlib.Graph();
+    graph.setDefaultEdgeLabel(() => ({}));
+    graph.setGraph({ rankdir: "TB" });
+
+    for (const node of topLevelNodes) {
+      const width = node.measured?.width ?? node.width ?? DEFAULT_WIDTH;
+      const height = node.measured?.height ?? node.height ?? DEFAULT_HEIGHT;
+      graph.setNode(node.id, { width, height });
+    }
+
+    const seenEdges = new Set<string>();
+    for (const edge of edges) {
+      const source = topLevelAncestorId(edge.source);
+      const target = topLevelAncestorId(edge.target);
+      if (!source || !target || source === target) continue;
+      if (!topLevelIds.has(source) || !topLevelIds.has(target)) continue;
+      const key = `${source}->${target}`;
+      if (seenEdges.has(key)) continue;
+      seenEdges.add(key);
+      graph.setEdge(source, target);
+    }
+
+    dagre.layout(graph);
+
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.parentId) return n;
+        const laidOut = graph.node(n.id);
+        if (!laidOut) return n;
+        const width = n.measured?.width ?? n.width ?? DEFAULT_WIDTH;
+        const height = n.measured?.height ?? n.height ?? DEFAULT_HEIGHT;
+        return { ...n, position: { x: laidOut.x - width / 2, y: laidOut.y - height / 2 } };
+      }),
+    );
+
+    requestAnimationFrame(() => {
+      reactFlow.fitView({ padding: 0.2, duration: 300 });
+    });
+  }
+
   function handleRunTest() {
     let parsed: Record<string, unknown> = {};
     try {
@@ -415,6 +685,11 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         ...(container ? { parentId: container.id, extent: "parent" as const } : {}),
       };
       setNodes((nds) => [...nds, newNode]);
+      // A freshly dropped node has nothing configured yet - open it
+      // straight into edit mode instead of a blank/placeholder collapsed
+      // preview (mirrors ManyChat's "drop a block, its editor is right
+      // there" flow).
+      setExpandedNodeIds((prev) => new Set(prev).add(id));
     },
     [nodeTypesByKey, nodes, reactFlow, setNodes, selectedChannelInstance],
   );
@@ -466,84 +741,23 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     [nodeTypesByKey, setNodes],
   );
 
-  function onNodeClick(_event: React.MouseEvent, node: Node) {
-    setSelectedNodeId(node.id);
+  // A node's own expand/collapse click is handled inside `CardNode.tsx`/
+  // `ContainerNode.tsx` via `onToggleExpand` (threaded through
+  // `nodeTypesForFlow` above) - React Flow's own node click here only
+  // needs to dismiss an open edge-config drawer.
+  function onNodeClick() {
     setSelectedEdgeId(null);
   }
 
   function onEdgeClick(_event: React.MouseEvent, edge: Edge) {
     setSelectedEdgeId(edge.id);
-    setSelectedNodeId(null);
   }
 
   function onPaneClick() {
-    setSelectedNodeId(null);
     setSelectedEdgeId(null);
   }
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
-  const selectedNodeType: NodeType | undefined = selectedNode
-    ? nodeTypesByKey.get(selectedNode.data.nodeType)
-    : undefined;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
-
-  // Part B: every node reachable by walking edges backward from the
-  // selected node (a plain, honest approximation - no special-casing of
-  // container/loop variable scoping) offers its declared `output_schema`
-  // leaf paths as "insert variable" suggestions.
-  const upstreamSuggestions = useMemo(() => {
-    if (!selectedNodeId) return [];
-    const ancestorIds = new Set<string>();
-    const queue = [selectedNodeId];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      for (const edge of edges) {
-        if (edge.target === current && !ancestorIds.has(edge.source)) {
-          ancestorIds.add(edge.source);
-          queue.push(edge.source);
-        }
-      }
-    }
-    const suggestions: { path: string; label: string }[] = [];
-    for (const ancestorId of ancestorIds) {
-      const ancestorNode = nodes.find((n) => n.id === ancestorId);
-      if (!ancestorNode) continue;
-      const ancestorNodeType = nodeTypesByKey.get(ancestorNode.data.nodeType);
-      // `path` (used inside `{{...}}`) must stay the raw graph node id -
-      // that's what the backend's templating engine actually resolves
-      // against. Only the human-readable breadcrumb `label` prefers the
-      // author-set label / node type's own friendly label, same
-      // precedence `CardNode.tsx`'s own title computation uses, instead
-      // of the opaque `node_abc123` id a non-technical author never typed.
-      const friendlyPrefix = ancestorNode.data.label || ancestorNodeType?.label || ancestorNode.data.nodeType;
-      for (const { path, label } of flattenOutputPaths(ancestorNodeType?.output_schema, ancestorNode.id)) {
-        suggestions.push({ path, label: label.replace(ancestorNode.id, friendlyPrefix) });
-      }
-    }
-    return suggestions;
-  }, [selectedNodeId, nodes, edges, nodeTypesByKey]);
-
-  function updateSelectedNodeLabel(label: string) {
-    if (!selectedNodeId) return;
-    setNodes((nds) => nds.map((n) => (n.id === selectedNodeId ? { ...n, data: { ...n.data, label } } : n)));
-  }
-
-  function saveSelectedNodeConfig(config: Record<string, unknown>) {
-    if (!selectedNodeId) return;
-    setNodes((nds) => nds.map((n) => (n.id === selectedNodeId ? { ...n, data: { ...n.data, config } } : n)));
-  }
-
-  function deleteSelectedNode() {
-    if (!selectedNodeId) return;
-    // Deleting a container also deletes its embedded children - leaving
-    // them behind with a dangling parentId would be a malformed graph
-    // (publish-time rule 6 would reject it anyway).
-    const childIds = new Set(nodes.filter((n) => n.parentId === selectedNodeId).map((n) => n.id));
-    const removedIds = new Set([selectedNodeId, ...childIds]);
-    setNodes((nds) => nds.filter((n) => !removedIds.has(n.id)));
-    setEdges((eds) => eds.filter((e) => !removedIds.has(e.source) && !removedIds.has(e.target)));
-    setSelectedNodeId(null);
-  }
 
   // Fired by React Flow's own Backspace/Delete keyboard handling (see the
   // `deleteKeyCode` prop below) for however many nodes were selected -
@@ -553,8 +767,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   // know about is this app's own container/child nesting convention
   // (`parentId`) - a deleted container's embedded children aren't
   // graph-edge-connected to it, so they'd otherwise survive with a dangling
-  // parentId (same cascade `deleteSelectedNode` above already does for a
-  // single container deleted via the config drawer's own delete button).
+  // parentId (same cascade `deleteNode` above already does for a single
+  // container deleted via its own header trash icon).
   function handleNodesDelete(deleted: Node<CardNodeData>[]) {
     const deletedIds = new Set(deleted.map((n) => n.id));
     const childIds = nodes.filter((n) => n.parentId && deletedIds.has(n.parentId)).map((n) => n.id);
@@ -563,7 +777,6 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       setNodes((nds) => nds.filter((n) => !childIdSet.has(n.id)));
       setEdges((eds) => eds.filter((e) => !childIdSet.has(e.source) && !childIdSet.has(e.target)));
     }
-    if (selectedNodeId && deletedIds.has(selectedNodeId)) setSelectedNodeId(null);
   }
 
   function saveSelectedEdgeData(data: WorkflowGraphEdgeData) {
@@ -615,6 +828,18 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             Autosave{autosave ? " (UI only — not wired yet)" : ""}
           </label>
 
+          <Button variant="outline" size="sm" onClick={undo} disabled={!undoAvailable} title="Undo (Ctrl+Z)">
+            <Undo2 className="h-4 w-4" />
+            Undo
+          </Button>
+          <Button variant="outline" size="sm" onClick={redo} disabled={!redoAvailable} title="Redo (Ctrl+Shift+Z)">
+            <Redo2 className="h-4 w-4" />
+            Redo
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleAutoArrange} title="Auto-arrange the canvas">
+            <LayoutGrid className="h-4 w-4" />
+            Auto-arrange
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowTestPanel((s) => !s)}>
             <PlayCircle className="h-4 w-4" />
             Test
@@ -623,6 +848,12 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             <ShieldCheck className="h-4 w-4" />
             Validation
           </Button>
+          {workflow?.purpose === "broadcast" && (
+            <Button variant="outline" size="sm" onClick={() => setShowSchedulePanel((s) => !s)}>
+              <CalendarClock className="h-4 w-4" />
+              Schedule
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -687,6 +918,10 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             <ValidationPanel issues={validationIssues} onClose={() => setShowValidation(false)} />
           )}
 
+          {showSchedulePanel && (
+            <SchedulePanel workflowId={workflowId} onClose={() => setShowSchedulePanel(false)} />
+          )}
+
           {componentStatusMessage && (
             <div className="absolute right-4 top-4 z-20 rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground shadow-lg">
               {componentStatusMessage}
@@ -738,19 +973,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           )}
         </div>
 
-        {selectedNode && selectedNodeType ? (
-          <NodeConfigDrawer
-            nodeId={selectedNode.id}
-            nodeType={selectedNodeType}
-            label={selectedNode.data.label ?? ""}
-            config={selectedNode.data.config ?? {}}
-            onLabelChange={updateSelectedNodeLabel}
-            onSave={saveSelectedNodeConfig}
-            onClose={() => setSelectedNodeId(null)}
-            onDelete={deleteSelectedNode}
-            upstreamSuggestions={upstreamSuggestions}
-          />
-        ) : selectedEdge ? (
+        {selectedEdge ? (
           <EdgeConfigDrawer
             edgeId={selectedEdge.id}
             data={selectedEdge.data as WorkflowGraphEdgeData | undefined}

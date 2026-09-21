@@ -113,6 +113,38 @@ async def test_linear_chain_completes_and_records_every_step() -> None:
     assert session.added[1].output["context"]["trigger"] == {"foo": "bar"}
 
 
+async def test_fan_in_join_node_executes_only_once() -> None:
+    """Regression test: a plain fan-out/fan-in diamond (trigger -> A,B;
+    A,B -> join) is an entirely ordinary, validator-approved graph shape -
+    it must not double-execute `join` (and thus double-run its side
+    effects) just because two paths reach it."""
+    graph = WorkflowGraph.from_json(
+        {
+            "nodes": [
+                _node("trigger", "manual.test_trigger"),
+                _node("a", "log.noop", {"message": "a"}),
+                _node("b", "log.noop", {"message": "b"}),
+                _node("join", "log.noop", {"message": "join"}),
+            ],
+            "edges": [
+                _edge("e1", "trigger", "a"),
+                _edge("e2", "trigger", "b"),
+                _edge("e3", "a", "join"),
+                _edge("e4", "b", "join"),
+            ],
+        }
+    )
+    run = _run()
+    session = FakeSession()
+
+    result = await execute_run(session, run, graph, trigger_payload={})
+
+    assert result.status == RunStatus.COMPLETED
+    executed_node_ids = [s.node_id for s in session.added]
+    assert executed_node_ids.count("join") == 1
+    assert executed_node_ids == ["trigger", "a", "b", "join"]
+
+
 async def test_condition_branch_only_follows_matched_handle() -> None:
     graph = WorkflowGraph.from_json(
         {

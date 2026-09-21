@@ -17,13 +17,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fusionflow.api import api_router
-from fusionflow.config import Settings, get_settings
+from fusionflow.config import Settings, get_settings, validate_secrets_for_environment
 from fusionflow.core.cache import get_cache_backend
 from fusionflow.core.jobs import get_job_queue
 from fusionflow.modules.admin.router import router as admin_router
 from fusionflow.modules.workflows.engine.outbox_poller import (
     register_outbox_poller,
     start_outbox_poller,
+)
+from fusionflow.modules.workflows.engine.schedule_poller import (
+    register_schedule_poller,
+    start_schedule_poller,
 )
 
 # Imported for its side effect: registers every ORM class with the
@@ -59,6 +63,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     register_outbox_poller(app.state.jobs)
     await start_outbox_poller(app.state.jobs)
 
+    # Recurring/scheduled bulk-messaging support: polls `workflow_schedules`
+    # for due rows and starts a `WorkflowRun` per due schedule, same
+    # pluggable-JobQueue shape as the outbox poller above.
+    register_schedule_poller(app.state.jobs)
+    await start_schedule_poller(app.state.jobs)
+
     yield
     close = getattr(app.state.cache, "aclose", None)
     if close is not None:
@@ -67,6 +77,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    validate_secrets_for_environment(settings)
 
     app = FastAPI(
         title="fusion-flow API",

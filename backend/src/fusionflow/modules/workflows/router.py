@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
@@ -38,11 +38,26 @@ async def _get_workflow_or_404(session, tenant_id: uuid.UUID, workflow_id: uuid.
 
 
 @router.get("/node-types", response_model=list[schemas.NodeTypeOut])
-async def get_node_types(context: TenantContextDep, session: SessionDep) -> list[schemas.NodeTypeOut]:
+async def get_node_types(
+    context: TenantContextDep,
+    session: SessionDep,
+    purpose: str | None = Query(
+        default=None,
+        description=(
+            "The calling workflow's purpose ('automation'|'broadcast') - when given, a trigger "
+            "node type whose applicable_purposes is set and doesn't include it is excluded. "
+            "Omit to see every trigger regardless of purpose."
+        ),
+    ),
+) -> list[schemas.NodeTypeOut]:
     """Palette metadata for the workflow builder: every raw registered
     node type, plus one entry per active admin-managed
-    `WorkflowNodeTemplate` row — see `service.list_node_types_with_templates`."""
-    return await service.list_node_types_with_templates(session, tenant_id=context.tenant_id)
+    `WorkflowNodeTemplate` row — see `service.list_node_types_with_templates`.
+    `purpose` is a plain query param (not derived from a `workflow_id`)
+    since this endpoint has never taken one — the frontend already knows
+    which purpose the workflow it's editing has (see `schemas.WorkflowOut.purpose`)
+    and passes it straight through."""
+    return await service.list_node_types_with_templates(session, tenant_id=context.tenant_id, purpose=purpose)
 
 
 @router.get("/modules", response_model=list[schemas.ModuleCatalogEntryOut])
@@ -78,7 +93,20 @@ async def get_starter_templates(
     from fusionflow.modules.admin import service as admin_service
 
     templates = await admin_service.list_workflow_starter_templates(session, active_only=True)
-    return [schemas.WorkflowStarterTemplateSummaryOut.model_validate(t) for t in templates]
+    return [
+        schemas.WorkflowStarterTemplateSummaryOut(
+            id=t.id,
+            key=t.key,
+            name=t.name,
+            description=t.description,
+            category=t.category,
+            icon=t.icon,
+            required_connector_type_keys=admin_service.compute_required_connector_type_keys(t.graph_json),
+            setup_notes=t.setup_notes,
+            purpose=admin_service.compute_workflow_purpose(t.graph_json),
+        )
+        for t in templates
+    ]
 
 
 # --- Workflow components (insertable fragments, composable-builder redesign) -
@@ -151,6 +179,7 @@ async def create_workflow(
                 name=payload.name,
                 starter_template_id=payload.starter_template_id,
                 created_by=context.user.id,
+                purpose=payload.purpose,
             )
         except service.WorkflowServiceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -161,6 +190,7 @@ async def create_workflow(
             name=payload.name,
             graph=payload.graph,
             created_by=context.user.id,
+            purpose=payload.purpose,
         )
     await commit_and_keep_tenant_context(session)
     await session.refresh(workflow)
@@ -252,6 +282,73 @@ async def list_runs(
     await _get_workflow_or_404(session, context.tenant_id, workflow_id)
     runs = await service.list_runs(session, workflow_id)
     return [schemas.RunOut.model_validate(r) for r in runs]
+
+
+@router.post(
+    "/{workflow_id}/schedules", response_model=schemas.WorkflowScheduleOut, status_code=status.HTTP_201_CREATED
+)
+async def create_schedule(
+    workflow_id: uuid.UUID,
+    payload: schemas.WorkflowScheduleCreateRequest,
+    context: TenantContextDep,
+    session: SessionDep,
+) -> schemas.WorkflowScheduleOut:
+    """Recurring/scheduled bulk-send config (recurring/bulk-messaging
+    support) - drives `engine/schedule_poller.py`. Mirrors the run-history
+    endpoints' shape (`_get_workflow_or_404` + a plain service call)."""
+    workflow = await _get_workflow_or_404(session, context.tenant_id, workflow_id)
+    schedule = await service.create_schedule(
+        session, tenant_id=context.tenant_id, workflow_id=workflow.id, payload=payload
+    )
+    await commit_and_keep_tenant_context(session)
+    await session.refresh(schedule)
+    return schemas.WorkflowScheduleOut.model_validate(schedule)
+
+
+@router.get("/{workflow_id}/schedules", response_model=list[schemas.WorkflowScheduleOut])
+async def list_schedules(
+    workflow_id: uuid.UUID, context: TenantContextDep, session: SessionDep
+) -> list[schemas.WorkflowScheduleOut]:
+    await _get_workflow_or_404(session, context.tenant_id, workflow_id)
+    schedules = await service.list_schedules(session, workflow_id=workflow_id)
+    return [schemas.WorkflowScheduleOut.model_validate(s) for s in schedules]
+
+
+async def _get_schedule_or_404(
+    session, tenant_id: uuid.UUID, workflow_id: uuid.UUID, schedule_id: uuid.UUID
+):
+    schedule = await service.get_schedule(session, schedule_id)
+    if schedule is None or schedule.tenant_id != tenant_id or schedule.workflow_id != workflow_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+    return schedule
+
+
+@router.patch("/{workflow_id}/schedules/{schedule_id}", response_model=schemas.WorkflowScheduleOut)
+async def update_schedule(
+    workflow_id: uuid.UUID,
+    schedule_id: uuid.UUID,
+    payload: schemas.WorkflowScheduleUpdateRequest,
+    context: TenantContextDep,
+    session: SessionDep,
+) -> schemas.WorkflowScheduleOut:
+    """Also how a schedule is paused/resumed - `{"is_active": false}`/
+    `{"is_active": true}` - see `service.update_schedule`'s docstring."""
+    await _get_workflow_or_404(session, context.tenant_id, workflow_id)
+    schedule = await _get_schedule_or_404(session, context.tenant_id, workflow_id, schedule_id)
+    schedule = await service.update_schedule(session, schedule, payload=payload)
+    await commit_and_keep_tenant_context(session)
+    await session.refresh(schedule)
+    return schemas.WorkflowScheduleOut.model_validate(schedule)
+
+
+@router.delete("/{workflow_id}/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(
+    workflow_id: uuid.UUID, schedule_id: uuid.UUID, context: TenantContextDep, session: SessionDep
+) -> None:
+    await _get_workflow_or_404(session, context.tenant_id, workflow_id)
+    schedule = await _get_schedule_or_404(session, context.tenant_id, workflow_id, schedule_id)
+    await service.delete_schedule(session, schedule)
+    await commit_and_keep_tenant_context(session)
 
 
 @router.get("/runs/{run_id}", response_model=schemas.RunDetailOut)

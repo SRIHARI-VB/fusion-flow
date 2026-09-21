@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
+import { MessageCircle, Megaphone, Plus, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
 import {
   Badge,
   Button,
@@ -16,6 +16,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  cn,
   type BadgeVariant,
 } from "@fusion-flow/ui";
 import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
@@ -23,7 +24,7 @@ import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createWorkflow, deleteWorkflow, listWorkflows } from "./api";
 import { DeleteWorkflowDialog } from "./components/DeleteWorkflowDialog";
 import { StarterTemplatePicker } from "./components/StarterTemplatePicker";
-import type { Workflow, WorkflowStarterTemplate, WorkflowStatus } from "./types";
+import type { Workflow, WorkflowPurpose, WorkflowStarterTemplate, WorkflowStatus } from "./types";
 
 const statusVariant: Record<WorkflowStatus, BadgeVariant> = {
   draft: "outline",
@@ -31,16 +32,39 @@ const statusVariant: Record<WorkflowStatus, BadgeVariant> = {
   archived: "secondary",
 };
 
-/** Which step of the "New Workflow" flow is showing — `"picker"` (choose a
- * starter template or start from scratch, Phase 6) always comes first;
- * `"name"` is the same name form this page always had, now reached either
- * way (picking "Start from scratch" or a specific template). */
-type NewWorkflowStep = "closed" | "picker" | "name";
+/** Which step of the "New Workflow" flow is showing — `"purpose"` (pick
+ * "Automated Conversation" vs. "Broadcast Campaign") always comes first;
+ * `"picker"` (choose a starter template or start from scratch, Phase 6)
+ * comes next; `"name"` is the same name form this page always had, now
+ * reached either way (picking "Start from scratch" or a specific
+ * template). */
+type NewWorkflowStep = "closed" | "purpose" | "picker" | "name";
+
+const PURPOSE_OPTIONS: Array<{
+  purpose: WorkflowPurpose;
+  label: string;
+  description: string;
+  icon: typeof MessageCircle;
+}> = [
+  {
+    purpose: "automation",
+    label: "Automated Conversation",
+    description: "Replies to customers automatically, one conversation at a time.",
+    icon: MessageCircle,
+  },
+  {
+    purpose: "broadcast",
+    label: "Broadcast Campaign",
+    description: "Sends a message to many people at once, right now or on a schedule.",
+    icon: Megaphone,
+  },
+];
 
 export function WorkflowsListPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [newWorkflowStep, setNewWorkflowStep] = useState<NewWorkflowStep>("closed");
+  const [purpose, setPurpose] = useState<WorkflowPurpose>("automation");
   const [selectedTemplate, setSelectedTemplate] = useState<WorkflowStarterTemplate | null>(null);
   const [name, setName] = useState("");
   const [workflowPendingDelete, setWorkflowPendingDelete] = useState<Workflow | null>(null);
@@ -58,7 +82,7 @@ export function WorkflowsListPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => createWorkflow({ name, starter_template_id: selectedTemplate?.id }),
+    mutationFn: () => createWorkflow({ name, starter_template_id: selectedTemplate?.id, purpose }),
     onSuccess: (workflow) => {
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       navigate(`/workflows/${workflow.id}/edit`);
@@ -67,8 +91,14 @@ export function WorkflowsListPage() {
 
   function closeNewWorkflowFlow() {
     setNewWorkflowStep("closed");
+    setPurpose("automation");
     setSelectedTemplate(null);
     setName("");
+  }
+
+  function handlePurposeSelected(selected: WorkflowPurpose) {
+    setPurpose(selected);
+    setNewWorkflowStep("picker");
   }
 
   function handleTemplateSelected(template: WorkflowStarterTemplate | null) {
@@ -89,7 +119,7 @@ export function WorkflowsListPage() {
         <div className="flex items-center gap-2">
           <ResourceUsageBadge resourceKey="workflows" />
           <Button
-            onClick={() => setNewWorkflowStep((step) => (step === "closed" ? "picker" : "closed"))}
+            onClick={() => setNewWorkflowStep((step) => (step === "closed" ? "purpose" : "closed"))}
             disabled={atLimit}
             title={atLimit ? "You've reached your plan's limit" : undefined}
           >
@@ -99,8 +129,57 @@ export function WorkflowsListPage() {
         </div>
       </div>
 
+      {newWorkflowStep === "purpose" && (
+        <Card>
+          <CardContent className="flex flex-col gap-3 py-4">
+            <div>
+              <p className="text-sm font-semibold text-foreground">What kind of workflow is this?</p>
+              <p className="text-xs text-muted-foreground">
+                This decides which triggers you'll be able to start it with — you can't mix the two in one
+                workflow.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {PURPOSE_OPTIONS.map(({ purpose: optionPurpose, label, description, icon: Icon }) => (
+                <button
+                  key={optionPurpose}
+                  type="button"
+                  className={cn(
+                    "flex flex-col items-start gap-2 rounded-md border border-border bg-background p-4 text-left",
+                    "hover:border-accent hover:bg-accent-soft",
+                  )}
+                  onClick={() => handlePurposeSelected(optionPurpose)}
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <span className="text-sm font-medium text-foreground">{label}</span>
+                  <span className="text-xs text-muted-foreground">{description}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex justify-end border-t border-border pt-3">
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                onClick={closeNewWorkflowFlow}
+              >
+                Cancel
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {newWorkflowStep === "picker" && (
-        <StarterTemplatePicker onSelect={handleTemplateSelected} onCancel={closeNewWorkflowFlow} />
+        <StarterTemplatePicker
+          purpose={purpose}
+          onSelect={handleTemplateSelected}
+          onCancel={closeNewWorkflowFlow}
+          onBack={() => setNewWorkflowStep("purpose")}
+        />
       )}
 
       {newWorkflowStep === "name" && (

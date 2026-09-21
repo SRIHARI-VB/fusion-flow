@@ -303,11 +303,32 @@ async def _run_frontier(
     so a stray edge into or out of the container can never be silently
     followed at runtime even if it somehow made it past publish-time
     validation's containment-validity rule.
+
+    `pending` tracks node ids currently queued but not yet executed, so a
+    fan-in/join shape (two branches from one fan-out that both lead to a
+    shared downstream node - an entirely ordinary, validator-approved
+    graph, not just a condition/branch construct) queues that shared node
+    once, not once per incoming path still waiting to be processed. A node
+    is removed from `pending` the moment it's popped for execution, so a
+    later, genuinely separate arrival (a raw graph cycle - e.g. a
+    self-loop or back-edge guarded by `loop_safety_field` and the run-level
+    loop guard, not a `flow.loop` container) still re-queues and re-runs
+    normally; only simultaneous convergence within the same wave collapses.
+
+    Known limitation: this dedupes queue *membership*, not "has every
+    incoming edge into this node already fired" - a join whose incoming
+    paths have unequal lengths (e.g. one branch reaches it in 1 hop, the
+    sibling branch in 2) can still execute it more than once, same as
+    before this fix. Closing that fully needs real join/barrier semantics
+    (wait for every live incoming edge before running), which is a bigger
+    change; this fixes the common case a plain fan-out-then-merge authors.
     """
     frontier: list[str] = list(start_node_ids)
+    pending: set[str] = set(frontier)
 
     while frontier:
         node_id = frontier.pop(0)
+        pending.discard(node_id)
         if allowed_ids is not None and node_id not in allowed_ids:
             continue
         node = graph.node_by_id(node_id)
@@ -334,7 +355,11 @@ async def _run_frontier(
         if allowed_ids is not None:
             next_ids = [nid for nid in next_ids if nid in allowed_ids]
 
-        frontier.extend(next_ids)
+        for next_id in next_ids:
+            if next_id in pending:
+                continue
+            pending.add(next_id)
+            frontier.append(next_id)
 
 
 def _edge_passes_filter(edge: GraphEdge, variables: dict[str, Any]) -> bool:

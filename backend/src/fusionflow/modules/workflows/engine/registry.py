@@ -77,6 +77,15 @@ class NodeTypeMeta:
     # doesn't set one explicitly, so every entry always has a bucket.
     icon: str | None = None
     palette_group: str | None = None
+    # "Workflow purpose" tag (recurring/bulk-messaging support): the set of
+    # `Workflow.purpose` values this *trigger* type is allowed to appear
+    # under in the palette - e.g. `["automation"]` for an event-driven
+    # trigger, `["broadcast"]` for `broadcast.scheduled_send`. `None` means
+    # "applicable regardless of purpose" (every non-trigger node type, plus
+    # `manual.test_trigger`) - `service.list_node_types_with_templates`'s
+    # purpose filter only ever excludes an entry that sets this AND doesn't
+    # include the requested purpose.
+    applicable_purposes: list[str] | None = None
 
 
 #: Signature of `ExecutionContext.run_children` - see its docstring below.
@@ -228,6 +237,10 @@ class NodeExecutor(abc.ABC):
     # Composable-builder redesign - see NodeTypeMeta's field docstrings.
     icon: str | None = None
     palette_group: str | None = None
+    # "Workflow purpose" tag - see NodeTypeMeta's field docstring. Only ever
+    # meaningful for a `kind == "trigger"` node type; left `None` (the
+    # default) on every action/condition/flow-control node type.
+    applicable_purposes: list[str] | None = None
 
     async def extract_resume_value(self, config: dict[str, Any], resume_payload: dict[str, Any]) -> Any:
         """Only overridden by a `can_suspend = True` executor: turn the
@@ -259,6 +272,7 @@ class NodeExecutor(abc.ABC):
             output_schema=cls.output_schema,
             icon=cls.icon,
             palette_group=cls.palette_group,
+            applicable_purposes=cls.applicable_purposes,
         )
 
     def validate_config(self, config: dict[str, Any]) -> None:
@@ -328,6 +342,8 @@ class TriggerDefinition:
     output_schema: dict[str, Any] | None = None
     icon: str | None = None
     palette_group: str | None = None
+    # "Workflow purpose" tag - see NodeTypeMeta's field docstring.
+    applicable_purposes: list[str] | None = None
 
     def meta(self) -> NodeTypeMeta:
         schema = self.config_model.model_json_schema() if self.config_model else {}
@@ -343,6 +359,7 @@ class TriggerDefinition:
             output_schema=self.output_schema,
             icon=self.icon,
             palette_group=self.palette_group or "Triggers",
+            applicable_purposes=self.applicable_purposes,
         )
 
 

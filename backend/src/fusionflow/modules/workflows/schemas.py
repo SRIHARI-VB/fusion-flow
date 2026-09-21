@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from fusionflow.modules.workflows.models import (
     RunStatus,
@@ -12,6 +12,13 @@ from fusionflow.modules.workflows.models import (
     ValidationStatus,
     WorkflowStatus,
 )
+
+#: `Workflow.purpose` (recurring/bulk-messaging support) - which palette a
+#: workflow's builder should show. Kept as a plain module-level tuple/
+#: `Literal`, not `WorkflowStatus`-style `Enum` reuse, since `purpose` is a
+#: plain `String` column on the model (see `models.py::Workflow.purpose`'s
+#: docstring for why), not a DB-level enum.
+WorkflowPurpose = Literal["automation", "broadcast"]
 
 
 class WorkflowCreateRequest(BaseModel):
@@ -22,6 +29,10 @@ class WorkflowCreateRequest(BaseModel):
     # `WorkflowStarterTemplate` instead - see
     # `service.create_workflow_from_starter_template`.
     starter_template_id: uuid.UUID | None = None
+    # Recurring/bulk-messaging support: "automation" (default, event-driven
+    # triggers) or "broadcast" (`broadcast.scheduled_send` + a
+    # `WorkflowSchedule`) - see `models.py::Workflow.purpose`'s docstring.
+    purpose: WorkflowPurpose = "automation"
 
 
 class WorkflowUpdateRequest(BaseModel):
@@ -39,6 +50,7 @@ class WorkflowOut(BaseModel):
     id: uuid.UUID
     name: str
     status: WorkflowStatus
+    purpose: str
     current_published_version_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
@@ -148,6 +160,12 @@ class NodeTypeOut(BaseModel):
     # node type that doesn't declare one explicitly.
     icon: str | None = None
     palette_group: str = "Advanced"
+    # Recurring/bulk-messaging support: the set of `Workflow.purpose`
+    # values this (trigger) entry is applicable under - `None` means
+    # "applicable regardless of purpose" (every non-trigger entry, plus
+    # `manual.test_trigger`). See `engine/registry.py`'s
+    # `applicable_purposes` field docstring.
+    applicable_purposes: list[str] | None = None
 
 
 class ModuleFieldOut(BaseModel):
@@ -178,6 +196,22 @@ class WorkflowStarterTemplateSummaryOut(BaseModel):
     description: str | None = None
     category: str
     icon: str | None = None
+    # Auto-derived from the template's own graph (never hand-maintained -
+    # see `admin.service.compute_required_connector_type_keys`) - purely
+    # informational for a tenant deciding whether to use this template,
+    # not a hard gate (unlike `WorkflowNodeTemplate.required_connector_type_key`,
+    # which actually hides palette entries).
+    required_connector_type_keys: list[str] = Field(default_factory=list)
+    # Optional admin-authored free-text prerequisite guidance that isn't a
+    # connector or custom-object-type dependency (e.g. "populate your
+    # product catalog first").
+    setup_notes: str | None = None
+    # Server-computed from this template's own `graph_json` (its root
+    # trigger's registered `applicable_purposes`) — see
+    # `admin.service.compute_workflow_purpose`. `None` means "shown for
+    # either 'automation' or 'broadcast'" (no single-purpose-exclusive
+    # trigger tag resolved), not "unknown."
+    purpose: str | None = None
 
 
 class ModuleCatalogEntryOut(BaseModel):
@@ -218,6 +252,13 @@ class WorkflowComponentOut(BaseModel):
     source: Literal["admin", "user"]
     graph_fragment: dict[str, Any]
     required_object_types: list[dict[str, Any]] | None = None
+    # Same auto-derived/informational semantics as
+    # `WorkflowStarterTemplateSummaryOut.required_connector_type_keys` -
+    # computed from `graph_fragment` itself, so this works identically for
+    # both an admin-curated row and a tenant's own saved `source="user"`
+    # component.
+    required_connector_type_keys: list[str] = Field(default_factory=list)
+    setup_notes: str | None = None
 
 
 class WorkflowComponentCreateRequest(BaseModel):
@@ -226,3 +267,98 @@ class WorkflowComponentCreateRequest(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     icon: str | None = Field(default=None, max_length=80)
     graph_fragment: dict[str, Any]
+
+
+# --- Workflow schedules (recurring/bulk-messaging support) -----------------
+
+
+class StaticRecipientSource(BaseModel):
+    """`recipient_source.kind == "static"` - a hand-typed phone-number list,
+    resolved at fire time exactly as given (see
+    `engine/schedule_poller.py::_resolve_recipients`)."""
+
+    kind: Literal["static"] = "static"
+    phone_numbers: list[str] = Field(min_length=1)
+
+
+class ModuleRecipientSource(BaseModel):
+    """`recipient_source.kind == "module"` - resolved at fire time via a
+    live query against a module (a fixed one, or a tenant's own custom
+    object type), through the same `resolve_adapter`/`ModuleQueryAdapter.list`
+    lookup `nodes/whatsapp_ask_choice.py`'s `ModuleSource` branch already
+    uses at execute-time."""
+
+    kind: Literal["module"] = "module"
+    module: str = Field(min_length=1, description="A module key from GET /workflows/modules - fixed or custom.")
+    filters: dict[str, Any] = Field(default_factory=dict)
+    phone_field: str = Field(default="phone", description="Field on each matched row holding the recipient's phone number.")
+
+
+RecipientSource = StaticRecipientSource | ModuleRecipientSource
+
+#: "once" | "daily" | "weekly" | "monthly" - see `models.py::WorkflowSchedule`
+#: and `compute_next_run_at`'s docstrings for the per-frequency field
+#: requirements this module's validators below enforce.
+ScheduleFrequency = Literal["once", "daily", "weekly", "monthly"]
+
+_TIME_OF_DAY_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class WorkflowScheduleCreateRequest(BaseModel):
+    frequency: ScheduleFrequency
+    run_at: datetime | None = Field(default=None, description="Required (and only used) for frequency='once'.")
+    time_of_day: str | None = Field(
+        default=None, pattern=_TIME_OF_DAY_PATTERN, description="24h 'HH:MM', local to `timezone`."
+    )
+    weekdays: list[int] | None = Field(default=None, description="0=Monday..6=Sunday. Required for frequency='weekly'.")
+    day_of_month: int | None = Field(default=None, ge=1, le=31, description="Required for frequency='monthly'.")
+    timezone: str = Field(default="UTC", description="IANA tz name, e.g. 'UTC' or 'Asia/Kolkata'.")
+    recipient_source: StaticRecipientSource | ModuleRecipientSource = Field(discriminator="kind")
+    is_active: bool = True
+
+    @model_validator(mode="after")
+    def _check_frequency_fields(self) -> "WorkflowScheduleCreateRequest":
+        if self.frequency == "once" and self.run_at is None:
+            raise ValueError("run_at is required for a 'once' schedule")
+        if self.frequency in ("daily", "weekly", "monthly") and not self.time_of_day:
+            raise ValueError(f"time_of_day is required for a {self.frequency!r} schedule")
+        if self.frequency == "weekly" and not self.weekdays:
+            raise ValueError("weekdays is required for a 'weekly' schedule")
+        if self.frequency == "monthly" and not self.day_of_month:
+            raise ValueError("day_of_month is required for a 'monthly' schedule")
+        return self
+
+
+class WorkflowScheduleUpdateRequest(BaseModel):
+    """PATCH body — partial update, including pause/resume via `is_active`.
+    Every field optional; only fields the caller actually sent are applied
+    (see `service.update_schedule`'s `exclude_unset` use)."""
+
+    frequency: ScheduleFrequency | None = None
+    run_at: datetime | None = None
+    time_of_day: str | None = Field(default=None, pattern=_TIME_OF_DAY_PATTERN)
+    weekdays: list[int] | None = None
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    timezone: str | None = None
+    recipient_source: StaticRecipientSource | ModuleRecipientSource | None = Field(default=None, discriminator="kind")
+    is_active: bool | None = None
+
+
+class WorkflowScheduleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workflow_id: uuid.UUID
+    frequency: str
+    run_at: datetime | None
+    time_of_day: str | None
+    weekdays: list[int] | None
+    day_of_month: int | None
+    timezone: str
+    recipient_source: dict[str, Any]
+    next_run_at: datetime
+    is_active: bool
+    last_run_at: datetime | None
+    last_run_status: str | None
+    created_at: datetime
+    updated_at: datetime
