@@ -21,15 +21,13 @@ import {
   TableRow,
 } from "@fusion-flow/ui";
 import { useAuthStore } from "../../lib/auth-store";
+import { listBusinessTemplates } from "../onboarding/business-templates-api";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { fetchMembers, updateBusinessSettings } from "./api";
 
-const VERTICALS = [
-  { value: "retail", label: "Retail" },
-  { value: "salon", label: "Salon & Beauty" },
-  { value: "restaurant", label: "Restaurant" },
-  { value: "other", label: "Other" },
-];
+function titleCase(value: string): string {
+  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 const profileSchema = z.object({
   name: z.string().min(1, "Business name is required"),
@@ -50,6 +48,29 @@ export function SettingsPage() {
   const businessId = claims?.tenant_id ?? null;
 
   const [confirmPauseOpen, setConfirmPauseOpen] = useState(false);
+
+  // Derived from the real, admin-extensible BusinessTemplate catalog
+  // (the same one onboarding's "pick a starter kit" step already reads)
+  // rather than a hardcoded list - a business assigned any vertical an
+  // admin has since added a template for would otherwise have no matching
+  // <option> and silently render blank. The business's own current
+  // `vertical` is always included even if no template uses it (e.g. it
+  // was set before that template existed, or free-typed some other way),
+  // so the field never shows blank for a value that IS genuinely set.
+  const { data: businessTemplates = [] } = useQuery({
+    queryKey: ["settings", "business-templates"],
+    queryFn: listBusinessTemplates,
+  });
+  const verticals = (() => {
+    const seen = new Map<string, string>();
+    for (const template of businessTemplates) {
+      if (template.vertical) seen.set(template.vertical, titleCase(template.vertical));
+    }
+    if (business?.vertical && !seen.has(business.vertical)) {
+      seen.set(business.vertical, titleCase(business.vertical));
+    }
+    return [...seen.entries()].map(([value, label]) => ({ value, label }));
+  })();
 
   const {
     register,
@@ -147,7 +168,7 @@ export function SettingsPage() {
                   <option value="" disabled>
                     Select a vertical...
                   </option>
-                  {VERTICALS.map((v) => (
+                  {verticals.map((v) => (
                     <option key={v.value} value={v.value}>
                       {v.label}
                     </option>
