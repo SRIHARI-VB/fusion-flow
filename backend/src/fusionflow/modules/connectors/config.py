@@ -64,7 +64,14 @@ class ConnectorSettings(BaseSettings):
     # tenant pastes their own IG professional account id + access token
     # (generated in their own Meta Business Suite) - no platform-level
     # Meta app id/secret needed for the connect step itself.
-    INSTAGRAM_GRAPH_API_BASE_URL: str = "https://graph.facebook.com/v20.0"
+    # Deliberately graph.instagram.com, not graph.facebook.com: tokens
+    # issued by "Instagram API with Instagram Login" (no linked Facebook
+    # Page - the IGA-prefixed token format tenants actually get today)
+    # are only valid against graph.instagram.com. Calling
+    # graph.facebook.com with one 400s ("could not reach" it is not -
+    # the request does land, Meta just rejects the token/endpoint
+    # combination outright).
+    INSTAGRAM_GRAPH_API_BASE_URL: str = "https://graph.instagram.com/v20.0"
     # App-level secret used to verify X-Hub-Signature-256 on inbound
     # webhooks, when a tenant doesn't supply their own `app_secret` at
     # connect time - mirrors WHATSAPP_WEBHOOK_APP_SECRET exactly.

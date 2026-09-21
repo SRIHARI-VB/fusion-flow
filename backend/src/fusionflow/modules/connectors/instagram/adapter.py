@@ -89,8 +89,10 @@ CONFIG_SCHEMA: dict[str, Any] = {
         "access_token": {
             "type": "string",
             "description": (
-                "A Page/User access token with instagram_basic, instagram_manage_messages, and "
-                "instagram_manage_comments permissions, generated in your own Meta Business Suite."
+                "An Instagram access token (from Instagram API with Instagram Login - starts with "
+                "'IGA') with instagram_business_basic, instagram_business_manage_messages, and "
+                "instagram_business_manage_comments permissions, generated in your own Meta "
+                "Business Suite."
             ),
         },
         "app_secret": {
