@@ -22,8 +22,20 @@ import {
   ConnectorDetailPage,
   WhatsAppConnectPage,
   RazorpayConnectPage,
+  CloudflareR2ConnectPage,
+  InstagramConnectPage,
+  GoogleCalendarConnectPage,
+  GmailConnectPage,
+  GoogleMeetConnectPage,
+  GoogleSheetsConnectPage,
 } from "./features/connectors";
 import { WorkflowsListPage, WorkflowEditorPage, WorkflowRunsPage } from "./features/workflows";
+import { WhatsAppAutomationsListPage, WhatsAppAutomationWizardPage } from "./features/communication/whatsapp";
+import { InstagramAutomationsListPage, InstagramAutomationWizardPage } from "./features/communication/instagram";
+import { InboxPage } from "./features/communication/inbox";
+import { QuickRepliesPage } from "./features/communication/quick-replies";
+import { MediaLibraryPage } from "./features/communication/media-library";
+import { BroadcastCampaignsListPage, BroadcastCampaignWizardPage } from "./features/communication/broadcasts";
 
 export default function App() {
   return (
@@ -60,6 +72,12 @@ export default function App() {
         <Route path="/connectors" element={<ConnectorsGridPage />} />
         <Route path="/connectors/whatsapp/connect" element={<WhatsAppConnectPage />} />
         <Route path="/connectors/razorpay/connect" element={<RazorpayConnectPage />} />
+        <Route path="/connectors/cloudflare_r2/connect" element={<CloudflareR2ConnectPage />} />
+        <Route path="/connectors/instagram/connect" element={<InstagramConnectPage />} />
+        <Route path="/connectors/google_calendar/connect" element={<GoogleCalendarConnectPage />} />
+        <Route path="/connectors/gmail/connect" element={<GmailConnectPage />} />
+        <Route path="/connectors/google_meet/connect" element={<GoogleMeetConnectPage />} />
+        <Route path="/connectors/google_sheets/connect" element={<GoogleSheetsConnectPage />} />
         <Route path="/connectors/:instanceId" element={<ConnectorDetailPage />} />
 
         <Route path="/workflows" element={<RequireModule moduleKey="workflows"><WorkflowsListPage /></RequireModule>} />
@@ -80,6 +98,56 @@ export default function App() {
             </RequireModule>
           }
         />
+
+        {/* Communication */}
+        <Route
+          path="/communication/whatsapp/automations"
+          element={<RequireModule moduleKey="whatsapp"><WhatsAppAutomationsListPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/whatsapp/automations/new"
+          element={<RequireModule moduleKey="whatsapp"><WhatsAppAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/whatsapp/automations/:id/edit"
+          element={<RequireModule moduleKey="whatsapp"><WhatsAppAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/automations"
+          element={<RequireModule moduleKey="instagram"><InstagramAutomationsListPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramAutomationWizardPage /></RequireModule>}
+        />
+        {/* Telegram/Facebook predefined-automation types aren't built yet
+            (only WhatsApp/Instagram flagships shipped this wave) - the nav
+            entry still needs somewhere to land. */}
+        <Route
+          path="/communication/telegram/automations"
+          element={
+            <RequireModule moduleKey="telegram">
+              <PlaceholderPage title="Telegram Automations" description="Coming in a later phase." />
+            </RequireModule>
+          }
+        />
+        <Route
+          path="/communication/facebook/automations"
+          element={
+            <RequireModule moduleKey="facebook">
+              <PlaceholderPage title="Facebook Automations" description="Coming in a later phase." />
+            </RequireModule>
+          }
+        />
+        <Route path="/communication/inbox" element={<InboxPage />} />
+        <Route path="/communication/quick-replies" element={<QuickRepliesPage />} />
+        <Route path="/communication/media-library" element={<MediaLibraryPage />} />
+        <Route path="/communication/broadcasts" element={<BroadcastCampaignsListPage />} />
+        <Route path="/communication/broadcasts/new" element={<BroadcastCampaignWizardPage />} />
 
         <Route
           path="/settings/custom-fields"

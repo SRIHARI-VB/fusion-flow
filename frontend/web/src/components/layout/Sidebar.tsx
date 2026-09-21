@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, Sparkles } from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -10,20 +11,51 @@ import {
   DropdownMenuTrigger,
   cn,
 } from "@fusion-flow/ui";
-import { navGroups } from "./nav-config";
+import { navGroups, type NavItem } from "./nav-config";
 import { useAuthStore } from "../../lib/auth-store";
 import { useLayoutStore } from "../../lib/layout-store";
 import { logout } from "../../lib/endpoints";
 import { useModuleAccess } from "../../lib/useModuleAccess";
 
+function isItemVisible(item: NavItem, moduleAccess: Record<string, string>): boolean {
+  return !item.moduleKey || moduleAccess[item.moduleKey] === "granted";
+}
+
 export function Sidebar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const business = useAuthStore((s) => s.business);
   const clear = useAuthStore((s) => s.clear);
   const { map: moduleAccess } = useModuleAccess();
   const collapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleCollapsed = useLayoutStore((s) => s.toggleSidebarCollapsed);
+
+  // Which parent-with-children items are expanded, keyed by label (unique
+  // within a group, and this sidebar's nav tree is small enough that a
+  // plain label key - rather than a synthetic id - is fine). A parent
+  // whose current route matches one of its children auto-expands on
+  // mount/navigation even if the set below doesn't mention it yet.
+  const [manuallyToggled, setManuallyToggled] = useState<Record<string, boolean>>({});
+  const autoExpanded = useMemo(() => {
+    const labels = new Set<string>();
+    for (const group of navGroups) {
+      for (const item of group.items) {
+        if (item.children?.some((child) => child.path && location.pathname.startsWith(child.path))) {
+          labels.add(item.label);
+        }
+      }
+    }
+    return labels;
+  }, [location.pathname]);
+
+  function isExpanded(label: string): boolean {
+    return manuallyToggled[label] ?? autoExpanded.has(label);
+  }
+
+  function toggleExpanded(label: string) {
+    setManuallyToggled((prev) => ({ ...prev, [label]: !isExpanded(label) }));
+  }
 
   const initials = (user?.email ?? "F F")
     .split("@")[0]
@@ -57,24 +89,34 @@ export function Sidebar() {
         </button>
 
         <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
-          {navGroups.flatMap((group) =>
-            group.items.filter((item) => !item.moduleKey || moduleAccess[item.moduleKey] === "granted"),
-          ).map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              title={item.label}
-              aria-label={item.label}
-              className={({ isActive }) =>
-                cn(
-                  "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
-                  isActive ? "bg-sidebar-active text-accent" : "text-sidebar-foreground hover:bg-muted",
-                )
-              }
-            >
-              <item.icon className="h-4 w-4" />
-            </NavLink>
-          ))}
+          {navGroups
+            .flatMap((group) => group.items.filter((item) => isItemVisible(item, moduleAccess)))
+            // A parent-with-children (e.g. "WhatsApp") has no `path` of its
+            // own and no room for an expand toggle in icon-only mode - it
+            // links straight to its first child instead, using its own
+            // (channel) icon so it's still visually distinguishable.
+            .map((item) =>
+              item.children && item.children.length > 0
+                ? { path: item.children[0].path, icon: item.icon, label: item.label }
+                : item,
+            )
+            .filter((item): item is NavItem & { path: string } => Boolean(item.path))
+            .map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                title={item.label}
+                aria-label={item.label}
+                className={({ isActive }) =>
+                  cn(
+                    "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                    isActive ? "bg-sidebar-active text-accent" : "text-sidebar-foreground hover:bg-muted",
+                  )
+                }
+              >
+                <item.icon className="h-4 w-4" />
+              </NavLink>
+            ))}
         </nav>
 
         <DropdownMenu>
@@ -126,9 +168,7 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter(
-            (item) => !item.moduleKey || moduleAccess[item.moduleKey] === "granted",
-          );
+          const visibleItems = group.items.filter((item) => isItemVisible(item, moduleAccess));
           if (visibleItems.length === 0) return null;
           return (
           <div key={group.label} className="mb-5">
@@ -136,23 +176,66 @@ export function Sidebar() {
               {group.label}
             </div>
             <div className="flex flex-col gap-0.5">
-              {visibleItems.map((item) => (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  className={({ isActive }) =>
-                    cn(
-                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                      isActive
-                        ? "bg-sidebar-active text-accent"
-                        : "text-sidebar-foreground hover:bg-muted",
-                    )
-                  }
-                >
-                  <item.icon className="h-4 w-4" />
-                  {item.label}
-                </NavLink>
-              ))}
+              {visibleItems.map((item) =>
+                item.children && item.children.length > 0 ? (
+                  <div key={item.label}>
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(item.label)}
+                      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-muted"
+                      aria-expanded={isExpanded(item.label)}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="flex-1 text-left">{item.label}</span>
+                      <ChevronDown
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0 transition-transform",
+                          isExpanded(item.label) && "rotate-180",
+                        )}
+                      />
+                    </button>
+                    {isExpanded(item.label) && (
+                      <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-4">
+                        {item.children
+                          .filter((child) => isItemVisible(child, moduleAccess))
+                          .map((child) => (
+                            <NavLink
+                              key={child.path}
+                              to={child.path ?? "#"}
+                              className={({ isActive }) =>
+                                cn(
+                                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                                  isActive
+                                    ? "bg-sidebar-active text-accent"
+                                    : "text-sidebar-foreground hover:bg-muted",
+                                )
+                              }
+                            >
+                              <child.icon className="h-4 w-4" />
+                              {child.label}
+                            </NavLink>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <NavLink
+                    key={item.path}
+                    to={item.path ?? "#"}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-sidebar-active text-accent"
+                          : "text-sidebar-foreground hover:bg-muted",
+                      )
+                    }
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </NavLink>
+                ),
+              )}
             </div>
           </div>
           );
