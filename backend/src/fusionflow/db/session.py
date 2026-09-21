@@ -3,10 +3,36 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from fusionflow.config import get_settings
 
 settings = get_settings()
+
+# Both engines below are built the same way, for the same reason:
+#
+# - `poolclass=NullPool`: a serverless invocation cannot own a
+#   long-lived client-side pool across requests (the process may be
+#   torn down at any point), and every deployment target here (Supabase
+#   Supavisor, pgbouncer) already pools connections on the server side -
+#   a client-side pool on top of that just adds a second, redundant
+#   layer that leaks connections when a container is discarded mid-use.
+#   Each checkout opens a fresh connection through the external pooler
+#   and returns it immediately after, which is exactly the connect/
+#   disconnect pattern a transaction-mode pooler is built to handle
+#   cheaply (unlike a real Postgres session-mode connection).
+# - `connect_args={"statement_cache_size": 0}`: required for asyncpg to
+#   work at all against a transaction-mode pooler - it multiplexes each
+#   query onto a different backend connection, so a server-side prepared
+#   statement from one query is not guaranteed to still exist by the
+#   next one on the same client connection.
+#
+# `RUNTIME_DATABASE_URL`/`DATABASE_URL` must therefore point at the
+# pooler's *transaction*-mode port (Supabase: 6543), not session mode
+# (5432) - session mode cannot multiplex, so its client-slot limit is
+# exhausted almost immediately once more than a couple of serverless
+# invocations run concurrently.
+_ASYNCPG_CONNECT_ARGS = {"statement_cache_size": 0}
 
 # create_async_engine() does not open a connection - the pool is lazily
 # populated on first use. This is required so the app can boot (and
@@ -18,7 +44,13 @@ settings = get_settings()
 # to apply to it at all. Alembic (alembic/env.py) is the one place that
 # still uses DATABASE_URL directly, since migrations need the
 # owner/admin role's DDL rights. See config.py::RUNTIME_DATABASE_URL.
-engine = create_async_engine(settings.runtime_database_url, pool_pre_ping=True, future=True)
+engine = create_async_engine(
+    settings.runtime_database_url,
+    poolclass=NullPool,
+    connect_args=_ASYNCPG_CONNECT_ARGS,
+    pool_pre_ping=True,
+    future=True,
+)
 
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
@@ -39,7 +71,13 @@ async_session_factory = async_sessionmaker(engine, expire_on_commit=False, autof
 # call `set_tenant_context` on the normal `async_session_factory` session
 # and re-query through that for anything else (including any write) -
 # never perform tenant-scoped business logic through this engine.
-_unscoped_engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True, future=True)
+_unscoped_engine = create_async_engine(
+    settings.DATABASE_URL,
+    poolclass=NullPool,
+    connect_args=_ASYNCPG_CONNECT_ARGS,
+    pool_pre_ping=True,
+    future=True,
+)
 unscoped_session_factory = async_sessionmaker(_unscoped_engine, expire_on_commit=False, autoflush=False)
 
 # Key under which the active tenant id is stashed on `session.info`.

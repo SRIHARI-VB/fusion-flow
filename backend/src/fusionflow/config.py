@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -64,6 +65,21 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.ENVIRONMENT.lower() in {"development", "dev", "local", "test"}
+
+    @property
+    def is_serverless(self) -> bool:
+        """True when running as a Vercel Python function.
+
+        Vercel sets `VERCEL=1` on every deployment (production, preview,
+        and `vercel dev`) - used to skip the in-process "forever" pollers
+        (see main.py's lifespan), which cannot run inside a per-request
+        serverless invocation: each cold start would spin up a fresh
+        polling loop that never gets a chance to actually poll on a
+        useful cadence, while still opening its own DB connections every
+        time it's resumed - exactly the kind of connection churn that
+        exhausts a pooler's client slots under concurrent invocations.
+        """
+        return os.environ.get("VERCEL") == "1"
 
 
 _DEV_ONLY_JWT_SECRET = "dev-only-change-me-jwt-secret-0123456789abcdef"

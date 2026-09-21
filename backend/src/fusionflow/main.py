@@ -56,18 +56,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.AI_ENABLED,
     )
 
-    # Workflow trigger dispatch (transactional outbox -> workflow_triggers
-    # match -> workflow_runs). Runs on the same pluggable JobQueue as
-    # everything else, so it is a no-op-safe asyncio task in dev and would
-    # be a Celery/Redis Streams consumer in prod - see core/jobs.py.
-    register_outbox_poller(app.state.jobs)
-    await start_outbox_poller(app.state.jobs)
+    if settings.is_serverless:
+        # See Settings.is_serverless's docstring: an in-process "forever"
+        # polling loop cannot run inside a per-request serverless
+        # function - every cold start would spin up another one, each
+        # opening its own DB connections, which is exactly what was
+        # exhausting Supabase's pooler client-slot limit in production.
+        # Scheduled dispatch needs a real external trigger (a Vercel Cron
+        # Job hitting a dedicated endpoint) on this platform instead.
+        logger.warning(
+            "fusion-flow: running under Vercel (is_serverless) - outbox/schedule pollers are "
+            "disabled; workflow triggers and scheduled/broadcast sends will not fire automatically."
+        )
+    else:
+        # Workflow trigger dispatch (transactional outbox -> workflow_triggers
+        # match -> workflow_runs). Runs on the same pluggable JobQueue as
+        # everything else, so it is a no-op-safe asyncio task in dev and would
+        # be a Celery/Redis Streams consumer in prod - see core/jobs.py.
+        register_outbox_poller(app.state.jobs)
+        await start_outbox_poller(app.state.jobs)
 
-    # Recurring/scheduled bulk-messaging support: polls `workflow_schedules`
-    # for due rows and starts a `WorkflowRun` per due schedule, same
-    # pluggable-JobQueue shape as the outbox poller above.
-    register_schedule_poller(app.state.jobs)
-    await start_schedule_poller(app.state.jobs)
+        # Recurring/scheduled bulk-messaging support: polls `workflow_schedules`
+        # for due rows and starts a `WorkflowRun` per due schedule, same
+        # pluggable-JobQueue shape as the outbox poller above.
+        register_schedule_poller(app.state.jobs)
+        await start_schedule_poller(app.state.jobs)
 
     yield
     close = getattr(app.state.cache, "aclose", None)
