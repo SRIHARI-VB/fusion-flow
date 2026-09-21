@@ -136,7 +136,7 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
                     "config": {
                         "connector_instance_id": instance_id,
                         "action": "send_direct_message",
-                        "params": {"recipient_id": "{{trigger.from_username}}", "text": parsed.dm_text},
+                        "params": {"recipient_id": "{{trigger.from_id}}", "text": parsed.dm_text},
                     },
                 },
             }

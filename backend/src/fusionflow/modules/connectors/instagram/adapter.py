@@ -471,13 +471,21 @@ class InstagramAdapter(base.ConnectorAdapter):
         Messaging webhook body. Real shape (Meta docs):
           entry[0].messaging[0] = {"sender": {"id": "<igsid>"},
             "recipient": {"id": "<ig_account_id>"}, "timestamp": ...,
-            "message": {"mid": "...", "text": "..."}}
+            "message": {"mid": "...", "text": "...", "is_echo": true?}}
+
+        `is_echo` (confirmed live: a real webhook delivery for our own
+        `send_direct_message` call comes back through this exact same
+        webhook) marks a message the connected account itself sent, not
+        one it received - skipping it is not just "don't double-count",
+        it's load-bearing: a DM auto-reply automation whose reply text
+        ever happens to match its own trigger keyword would otherwise
+        reply to its own echoed reply forever.
         """
         entries = body.get("entry") or []
         for entry in entries:
             for messaging in entry.get("messaging") or []:
                 message = messaging.get("message")
-                if not message:
+                if not message or message.get("is_echo"):
                     continue
                 return {
                     "from": (messaging.get("sender") or {}).get("id"),
@@ -573,6 +581,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                 payload={
                     "comment_id": inbound_comment["id"],
                     "text": inbound_comment.get("text"),
+                    "from_id": (inbound_comment.get("from") or {}).get("id"),
                     "from_username": (inbound_comment.get("from") or {}).get("username"),
                     "media_id": (inbound_comment.get("media") or {}).get("id"),
                 },

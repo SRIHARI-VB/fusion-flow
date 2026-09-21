@@ -33,6 +33,7 @@ _OUTPUT_SCHEMA = {
     "properties": {
         "comment_id": {"type": "string"},
         "text": {"type": "string"},
+        "from_id": {"type": "string"},
         "from_username": {"type": "string"},
         "media_id": {"type": "string"},
     },
@@ -54,8 +55,8 @@ class InstagramCommentReceivedExecutor(NodeExecutor):
     label = "Instagram Comment Received"
     description = (
         "Fires when a post or reel on a connected Instagram account receives an inbound "
-        "comment. Run context is seeded with the comment id, text, commenter's username, "
-        "and the media id it was left on."
+        "comment. Run context is seeded with the comment id, text, commenter's Instagram-"
+        "scoped id and username, and the media id it was left on."
     )
     config_model = InstagramCommentReceivedConfig
     required_connector_type_key = "instagram"
