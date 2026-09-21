@@ -53,6 +53,43 @@ class FieldType(str, enum.Enum):
     RICHTEXT = "richtext"
 
 
+class ModuleFieldDefinitionMixin:
+    """Shared column shape for a fixed module's own tenant-scoped field-definition table.
+
+    `FieldDefinition` below is the older of two "custom fields" designs in
+    this codebase: one shared table keyed by a closed, platform-fixed
+    `EntityType` enum (product/service/coupon/offer only). Any other fixed
+    module that wants tenant-defined custom fields (customers, tickets, ...)
+    can't extend that enum, so it gets its own table instead — same column
+    shape (mix this in), separate table. `business_objects.ObjectFieldDefinition`
+    was the first of these; concrete per-module tables (e.g.
+    `customers.CustomerFieldDefinition`) follow the same shape so
+    `custom_fields.validation.validate_custom_fields` — duck-typed against
+    `.key`/`.field_type`/`.required`/`.options` — validates all of them
+    without caring which table a row came from.
+
+    `create_type=False` on `field_type`: every subclass shares the single
+    `custom_field_type` Postgres enum `FieldDefinition` defines below (created
+    once, in migration 0003) rather than each table creating its own enum
+    type.
+    """
+
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    field_type: Mapped[FieldType] = mapped_column(
+        Enum(
+            FieldType,
+            name="custom_field_type",
+            values_callable=lambda e: [m.value for m in e],
+            create_type=False,
+        ),
+        nullable=False,
+    )
+    options: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
 class FieldTemplate(Base):
     """A global, platform-seeded starter field set for one vertical + entity_type.
 

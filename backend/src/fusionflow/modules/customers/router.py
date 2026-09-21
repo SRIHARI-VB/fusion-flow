@@ -13,7 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors.deps import enforce_resource_limit, require_module_access
+from fusionflow.modules.custom_fields.module_fields import make_field_definitions_router
 from fusionflow.modules.customers import service as customers_service
+from fusionflow.modules.customers.models import CustomerFieldDefinition
 from fusionflow.modules.customers.schemas import CustomerCreate, CustomerOut, CustomerUpdate
 
 router = APIRouter(
@@ -22,6 +24,18 @@ router = APIRouter(
     dependencies=[Depends(require_module_access("customers"))],
 )
 _resource_gate = Depends(enforce_resource_limit("customers", customers_service.count_customers))
+
+#: `/customers/field-definitions` - this fixed module's own custom-field
+#: metadata CRUD, gated behind the same `customers` module-access check as
+#: `router` above (a tenant without access to Customers shouldn't be able to
+#: define fields on it either). Mounted as a sibling router (not nested under
+#: `router`) since `make_field_definitions_router` owns its own full path.
+field_definitions_router = make_field_definitions_router(
+    path="/customers/field-definitions",
+    tags=["customers"],
+    model=CustomerFieldDefinition,
+    gate=Depends(require_module_access("customers")),
+)
 
 
 @router.get("", response_model=list[CustomerOut])

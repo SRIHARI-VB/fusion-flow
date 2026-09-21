@@ -15,13 +15,13 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fusionflow.db.base import Base, TenantScopedMixin, TimestampMixin
-from fusionflow.modules.custom_fields.models import FieldType
+from fusionflow.modules.custom_fields.models import FieldType, ModuleFieldDefinitionMixin
 
 __all__ = ["FieldType", "ObjectFieldDefinition", "ObjectRecord", "ObjectTypeDefinition"]
 
@@ -44,18 +44,15 @@ class ObjectTypeDefinition(Base, TenantScopedMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
 
-class ObjectFieldDefinition(Base, TenantScopedMixin, TimestampMixin):
+class ObjectFieldDefinition(Base, TenantScopedMixin, TimestampMixin, ModuleFieldDefinitionMixin):
     """One field on a tenant's object type.
 
-    Same shape/vocabulary as `custom_fields.models.FieldDefinition` (this
-    module reuses its `FieldType` enum, and `service.validate_record_payload`
-    reuses `custom_fields.validation.validate_custom_fields` directly,
-    since both are duck-typed against `.key`/`.field_type`/`.required`/
-    `.options`), but deliberately a separate table:
-    `FieldDefinition.entity_type` is a closed, platform-fixed enum
-    (product/service/coupon/offer) a tenant cannot extend, so a
-    tenant-defined object type needs its own field-definition table, not a
-    widened enum.
+    The original "give this fixed module its own field-definition table"
+    implementation — see `ModuleFieldDefinitionMixin`'s docstring in
+    `custom_fields.models` for why this is a separate table rather than a
+    widened `FieldDefinition.entity_type` enum, and why the mixin's shape
+    (rather than each module reimplementing it) is what other fixed modules
+    now reuse (e.g. `customers.CustomerFieldDefinition`).
     """
 
     __tablename__ = "object_field_definitions"
@@ -65,20 +62,6 @@ class ObjectFieldDefinition(Base, TenantScopedMixin, TimestampMixin):
     object_type_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("object_type_definitions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    key: Mapped[str] = mapped_column(String(100), nullable=False)
-    label: Mapped[str] = mapped_column(String(200), nullable=False)
-    field_type: Mapped[FieldType] = mapped_column(
-        Enum(
-            FieldType,
-            name="custom_field_type",
-            values_callable=lambda e: [m.value for m in e],
-            create_type=False,
-        ),
-        nullable=False,
-    )
-    options: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
-    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class ObjectRecord(Base, TenantScopedMixin, TimestampMixin):
