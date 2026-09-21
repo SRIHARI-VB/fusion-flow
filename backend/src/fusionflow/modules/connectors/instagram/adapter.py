@@ -301,33 +301,6 @@ class InstagramAdapter(base.ConnectorAdapter):
                 comment_id,
             )
 
-    async def like_comment(self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str) -> None:
-        """Like an Instagram comment - the `instagram.comment_automation`
-        predefined automation's "Auto-Like" toggle (see
-        `modules/predefined_automations/instagram_comment_automation.py`).
-        """
-        secret = await connector_service.get_credential_secret(session, instance=instance)
-        if secret is None:
-            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
-
-        # TODO(meta-graph-api): POST /{comment_id}/likes
-        #   Authorization: Bearer {access_token}
-        try:
-            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
-                response = await client.post(
-                    f"/{comment_id}/likes", headers={"Authorization": f"Bearer {secret['access_token']}"}
-                )
-                response.raise_for_status()
-        except _NETWORK_UNREACHABLE_ERRORS as exc:
-            logger.warning(
-                "[instagram] could not reach %s (%s) - stub mode: skipping this like so the "
-                "workflow action stays testable offline (instance=%s, comment_id=%s).",
-                settings.INSTAGRAM_GRAPH_API_BASE_URL,
-                exc,
-                instance.id,
-                comment_id,
-            )
-
     async def hide_comment(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, hidden: bool = True
     ) -> None:
@@ -378,12 +351,6 @@ class InstagramAdapter(base.ConnectorAdapter):
                 raise ValueError("reply_to_comment requires non-empty 'comment_id' and 'text' params")
             await self.reply_to_comment(instance=instance, session=session, comment_id=comment_id, text=text)
             return {"comment_id": comment_id, "text": text}
-        if action == "like_comment":
-            comment_id = params.get("comment_id")
-            if not comment_id:
-                raise ValueError("like_comment requires a non-empty 'comment_id' param")
-            await self.like_comment(instance=instance, session=session, comment_id=comment_id)
-            return {"comment_id": comment_id}
         if action == "hide_comment":
             comment_id = params.get("comment_id")
             if not comment_id:

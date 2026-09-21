@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AxiosError } from "axios";
-import { EyeOff, Heart } from "lucide-react";
+import { EyeOff } from "lucide-react";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
 import { OptionPickerCard, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
@@ -58,7 +58,6 @@ export function InstagramAutomationWizardPage() {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
-  const [autoLike, setAutoLike] = useState(false);
   const [autoHide, setAutoHide] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [dmText, setDmText] = useState("");
@@ -73,7 +72,6 @@ export function InstagramAutomationWizardPage() {
     const config = existingAutomation.config;
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
-    setAutoLike(config.auto_like);
     setAutoHide(config.auto_hide);
     setReplyText(config.reply_comment_text ?? "");
     setDmText(config.dm_text ?? "");
@@ -102,9 +100,9 @@ export function InstagramAutomationWizardPage() {
   function handleSubmit() {
     const trimmedReply = replyText.trim();
     const trimmedDm = dmText.trim();
-    if (!autoLike && !autoHide && !trimmedReply && !trimmedDm) {
+    if (!autoHide && !trimmedReply && !trimmedDm) {
       setValidationError(
-        "Turn on at least one action - Auto-Like, Auto-Hide, a public reply, or a DM reply - before saving.",
+        "Turn on at least one action - Auto-Hide, a public reply, or a DM reply - before saving.",
       );
       return;
     }
@@ -113,7 +111,6 @@ export function InstagramAutomationWizardPage() {
     const config = {
       trigger_keywords: keywords,
       matching_method: matchingMethod,
-      auto_like: autoLike,
       auto_hide: autoHide,
       reply_comment_text: trimmedReply || null,
       dm_text: trimmedDm || null,
@@ -162,7 +159,6 @@ export function InstagramAutomationWizardPage() {
         rows={[
           { label: "Keywords", value: keywords.join(", ") },
           { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
-          { label: "Auto-Like", value: autoLike ? "On" : "Off" },
           { label: "Auto-Hide", value: autoHide ? "On" : "Off" },
           { label: "Public Reply", value: replyText.trim() || "Off" },
           { label: "DM Reply", value: dmText.trim() || "Off" },
@@ -201,7 +197,7 @@ export function InstagramAutomationWizardPage() {
   return (
     <WizardShell
       title={isEditing ? "Edit Comment Automation" : "New Comment Automation"}
-      description="Automatically like, hide, or reply to Instagram comments that match keywords you choose."
+      description="Automatically hide or reply to Instagram comments that match keywords you choose."
       backTo="/communication/instagram/automations"
       backLabel="Back to automations"
       steps={STEPS}
@@ -243,13 +239,6 @@ export function InstagramAutomationWizardPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <ToggleSettingRow
-            icon={Heart}
-            label="Auto-Like"
-            description="Automatically likes the matching comment"
-            checked={autoLike}
-            onCheckedChange={setAutoLike}
-          />
           <ToggleSettingRow
             icon={EyeOff}
             label="Auto-Hide"

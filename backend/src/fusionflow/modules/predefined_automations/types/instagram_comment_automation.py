@@ -1,23 +1,29 @@
 """`instagram.comment_automation` — the flagship predefined automation for
-Instagram: reply (publicly and/or via DM), like, and/or hide a comment
-when its text matches a configured keyword. Mirrors the Profiterasoft
-reference wizard's "Setup Social Automation" screen this task was built
-against.
+Instagram: reply (publicly and/or via DM) and/or hide a comment when its
+text matches a configured keyword. Mirrors the Profiterasoft reference
+wizard's "Setup Social Automation" screen this task was built against.
 
 Config shape (the wizard's own structured answers, stored verbatim on
 `PredefinedAutomation.config` for re-editing):
     {
       "trigger_keywords": ["price", "info"],       # non-empty, required
       "matching_method": "contains",                 # exact|contains|starts_with|ends_with
-      "auto_like": false,
       "auto_hide": false,
       "reply_comment_text": "Check your DM!" | null, # public reply; null/empty disables it
       "dm_text": "Here are our prices..." | null,     # DM reply; null/empty disables it
     }
 
 Deliberately scoped smaller than every toggle Profiterasoft's reference
-screen shows - two of its five are not included here, on purpose, not by
+screen shows - three of its five are not included here, on purpose, not by
 oversight:
+  - "Auto-Like" is not offered: confirmed against the real Graph API (not
+    just this sandbox's stub) that Instagram has no "like a comment"
+    endpoint at all - `POST /{comment_id}/likes` is a Facebook Page-comment
+    capability, and 400s on `graph.instagram.com` every time. An earlier
+    version of this file offered it; it never actually worked, and because
+    the generated graph chains actions sequentially, a failing Auto-Like
+    node was silently blocking the reply/DM actions after it in the same
+    run - removed rather than left half-working.
   - "Requires Following" has no reliable backing in Instagram's public
     Graph API (there is no supported "does this arbitrary commenter follow
     my account" lookup) - it would either silently no-op or need scraping-
@@ -27,8 +33,9 @@ oversight:
     not have yet (`flow_loop`/`flow_try_catch`/`flow_parallel` are the only
     container/timing-adjacent node types today) - a real fast-follow once
     one exists, not a permanent omission.
-`auto_like`/`auto_hide` ARE included - both are genuine, already-added
-`instagram/adapter.py` capabilities (`like_comment`/`hide_comment`).
+`auto_hide` IS included - a genuine, already-added `instagram/adapter.py`
+capability (`hide_comment`, backed by the real `POST /{comment_id}?hide=`
+endpoint).
 
 Generated graph shape: trigger (`instagram.comment_received`) -> an
 OR-chained sequence of `condition.field_compare` nodes (one per configured
@@ -37,8 +44,7 @@ owns the "every keyword's `true` handle converges on the same target, the
 last one's `false` handle terminates in a `log.noop`" wiring every
 automation type in this package reuses) -> the enabled `connector.action`
 nodes (one per toggle), chained sequentially - order doesn't matter
-functionally since none of like/hide/reply/DM depend on each other's
-output.
+functionally since neither of hide/reply/DM depends on the others' output.
 """
 
 from __future__ import annotations
@@ -66,7 +72,6 @@ _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
 class InstagramCommentAutomationConfig(BaseModel):
     trigger_keywords: list[str] = Field(min_length=1)
     matching_method: MatchingMethod = "contains"
-    auto_like: bool = False
     auto_hide: bool = False
     reply_comment_text: str | None = None
     dm_text: str | None = None
@@ -88,22 +93,6 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
     x = 780  # condition chain occupies x=260..~780 depending on keyword count; actions start past it
 
     action_nodes: list[dict[str, Any]] = []
-    if parsed.auto_like:
-        action_nodes.append(
-            {
-                "id": "action-like",
-                "type": "action",
-                "data": {
-                    "nodeType": "connector.action",
-                    "label": "Like Comment",
-                    "config": {
-                        "connector_instance_id": instance_id,
-                        "action": "like_comment",
-                        "params": {"comment_id": "{{trigger.comment_id}}"},
-                    },
-                },
-            }
-        )
     if parsed.auto_hide:
         action_nodes.append(
             {

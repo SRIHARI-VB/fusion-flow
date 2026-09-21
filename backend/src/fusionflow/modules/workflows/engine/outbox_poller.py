@@ -267,6 +267,23 @@ async def _start_run_for_trigger(
         logger.warning("workflow run %s could not start: %s", run.id, exc)
 
 
+async def process_pending_now(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    """Dispatch `tenant_id`'s pending inbox rows immediately, in the
+    caller's own session/transaction - the serverless (Vercel) substitute
+    for waiting on `_poll_forever_job`'s next pass.
+
+    A serverless deployment has no persistent process to run that loop in
+    (see `Settings.is_serverless`'s docstring), so `webhooks.py::_dispatch`
+    calls this synchronously, right after its own webhook write commits,
+    instead of relying on a background poller that would never actually
+    run. The caller is responsible for `app.current_tenant_id` already
+    being set on `session` for `tenant_id` (RLS) - same precondition
+    `_process_tenant_inbox` always had, just met inline here instead of by
+    `poll_once`'s per-tenant loop.
+    """
+    return await _process_tenant_inbox(session, tenant_id)
+
+
 async def _poll_forever_job(
     jobs: "JobQueue",
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,

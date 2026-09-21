@@ -12,7 +12,6 @@ export type InstagramMatchingMethod = "exact" | "contains" | "starts_with" | "en
 export interface InstagramCommentAutomationConfig {
   trigger_keywords: string[];
   matching_method: InstagramMatchingMethod;
-  auto_like: boolean;
   auto_hide: boolean;
   reply_comment_text: string | null;
   dm_text: string | null;

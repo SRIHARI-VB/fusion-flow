@@ -34,8 +34,9 @@ from typing import Mapping
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from sqlalchemy import select
 
+from fusionflow.config import get_settings
 from fusionflow.core.deps import SessionDep
-from fusionflow.db.session import set_tenant_context, unscoped_session_factory
+from fusionflow.db.session import commit_and_keep_tenant_context, set_tenant_context, unscoped_session_factory
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
@@ -112,7 +113,23 @@ async def _dispatch(type_key: str, request: Request, session: SessionDep) -> dic
     )
 
     instance.last_webhook_at = datetime.now(timezone.utc)
-    await session.commit()
+    await commit_and_keep_tenant_context(session)
+
+    if get_settings().is_serverless:
+        # No persistent process to run `outbox_poller`'s background loop
+        # in (see `Settings.is_serverless`'s docstring) - dispatch this
+        # tenant's just-written trigger-inbox row(s) synchronously, right
+        # here, instead of leaving them to a poller that would never
+        # actually run. Deferred import: `workflows.engine.outbox_poller`
+        # pulls in the `workflows` package, which imports every built-in
+        # node (including the connector adapters, for registration) -
+        # importing it at module level here would risk exactly the
+        # circular import `handle_webhook`'s own deferred `event_bus`/
+        # `inbox.service` imports already dodge, one layer further out.
+        from fusionflow.modules.workflows.engine.outbox_poller import process_pending_now
+
+        await process_pending_now(session, tenant_id)
+
     return {"received": True, "events": len(events)}
 
 
