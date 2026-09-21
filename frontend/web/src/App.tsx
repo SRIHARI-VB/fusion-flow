@@ -31,7 +31,11 @@ import {
 } from "./features/connectors";
 import { WorkflowsListPage, WorkflowEditorPage, WorkflowRunsPage } from "./features/workflows";
 import { WhatsAppAutomationsListPage, WhatsAppAutomationWizardPage } from "./features/communication/whatsapp";
-import { InstagramAutomationsListPage, InstagramAutomationWizardPage } from "./features/communication/instagram";
+import {
+  InstagramAutomationsListPage,
+  InstagramAutomationWizardPage,
+  InstagramDmAutomationWizardPage,
+} from "./features/communication/instagram";
 import { InboxPage } from "./features/communication/inbox";
 import { QuickRepliesPage } from "./features/communication/quick-replies";
 import { MediaLibraryPage } from "./features/communication/media-library";
@@ -123,6 +127,14 @@ export default function App() {
         <Route
           path="/communication/instagram/automations/:id/edit"
           element={<RequireModule moduleKey="instagram"><InstagramAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/dm-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramDmAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/dm-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramDmAutomationWizardPage /></RequireModule>}
         />
         {/* Telegram/Facebook predefined-automation types aren't built yet
             (only WhatsApp/Instagram flagships shipped this wave) - the nav

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Instagram, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Instagram, MessageCircle, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Badge,
   Button,
@@ -9,6 +9,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   Table,
   TableBody,
   TableCell,
@@ -20,11 +24,23 @@ import { Switch } from "../../wizard";
 import { ConfirmDialog } from "../../../connectors/components/ConfirmDialog";
 import { useDeleteInstagramAutomation, useInstagramAutomations, useSetInstagramAutomationActive } from "../hooks";
 import { MATCHING_METHOD_LABELS } from "../constants";
+import { isCommentAutomationConfig, type PredefinedAutomation } from "../types";
+
+function automationTypeLabel(automation: PredefinedAutomation): string {
+  return isCommentAutomationConfig(automation) ? "Comment Automation" : "DM Auto-Reply";
+}
+
+function editPathFor(automation: PredefinedAutomation): string {
+  return isCommentAutomationConfig(automation)
+    ? `/communication/instagram/automations/${automation.id}/edit`
+    : `/communication/instagram/dm-automations/${automation.id}/edit`;
+}
 
 /**
- * `/communication/instagram/automations` - list of every "Comment
- * Automation" predefined automation configured against the tenant's
- * connected Instagram account. There is no `name` field on the backend's
+ * `/communication/instagram/automations` - list of every predefined
+ * automation configured against the tenant's connected Instagram account,
+ * across both automation types ("Comment Automation" and "DM
+ * Auto-Reply"). There is no `name` field on the backend's
  * `PredefinedAutomation` DTO, so the trigger keywords stand in as the
  * row's label (matches the spec: "config.trigger_keywords.join(', ')").
  */
@@ -43,16 +59,28 @@ export function InstagramAutomationsListPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Instagram Automations</h1>
           <p className="text-sm text-muted-foreground">
-            Automatically like, hide, or reply to comments across every post and reel on this account.
+            Automatically like, hide, or reply to comments - or auto-reply to direct messages - on this account.
           </p>
         </div>
-        <Button
-          variant="success"
-          onClick={() => navigate("/communication/instagram/automations/new")}
-        >
-          <Plus className="h-4 w-4" />
-          New Automation
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger>
+            <Button variant="success">
+              <Plus className="h-4 w-4" />
+              New Automation
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => navigate("/communication/instagram/automations/new")}>
+              <MessageSquare className="h-3.5 w-3.5" />
+              Comment Automation
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/communication/instagram/dm-automations/new")}>
+              <MessageCircle className="h-3.5 w-3.5" />
+              DM Auto-Reply
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {isLoading ? (
@@ -65,14 +93,18 @@ export function InstagramAutomationsListPage() {
             </div>
             <CardTitle>No automations yet</CardTitle>
             <CardDescription>
-              Create a comment automation to auto-like, auto-hide, or reply to comments containing keywords
-              you choose - across every post and reel on this account.
+              Create a comment automation to auto-like, auto-hide, or reply to comments, or a DM auto-reply to
+              respond to direct messages - both triggered by keywords you choose.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex justify-center pb-6">
-            <Button variant="success" onClick={() => navigate("/communication/instagram/automations/new")}>
+          <CardContent className="flex justify-center gap-2 pb-6">
+            <Button variant="outline" onClick={() => navigate("/communication/instagram/automations/new")}>
               <Plus className="h-4 w-4" />
-              New Automation
+              Comment Automation
+            </Button>
+            <Button variant="success" onClick={() => navigate("/communication/instagram/dm-automations/new")}>
+              <Plus className="h-4 w-4" />
+              DM Auto-Reply
             </Button>
           </CardContent>
         </Card>
@@ -82,6 +114,7 @@ export function InstagramAutomationsListPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Type</TableHead>
                   <TableHead>Keywords</TableHead>
                   <TableHead>Matching Method</TableHead>
                   <TableHead>Status</TableHead>
@@ -91,6 +124,9 @@ export function InstagramAutomationsListPage() {
               <TableBody>
                 {automations.map((automation) => (
                   <TableRow key={automation.id}>
+                    <TableCell>
+                      <Badge variant="secondary">{automationTypeLabel(automation)}</Badge>
+                    </TableCell>
                     <TableCell className="font-medium text-foreground">
                       {automation.config.trigger_keywords.join(", ") || "—"}
                     </TableCell>
@@ -113,11 +149,7 @@ export function InstagramAutomationsListPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/communication/instagram/automations/${automation.id}/edit`)}
-                        >
+                        <Button variant="outline" size="sm" onClick={() => navigate(editPathFor(automation))}>
                           <Pencil className="h-3.5 w-3.5" />
                           Edit
                         </Button>

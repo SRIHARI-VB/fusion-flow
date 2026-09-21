@@ -1,7 +1,8 @@
 import type { InstagramMatchingMethod } from "./types";
 
-/** Backend automation type key for `POST /api/v1/predefined-automations`. */
+/** Backend automation type keys for `POST /api/v1/predefined-automations`. */
 export const INSTAGRAM_COMMENT_AUTOMATION_TYPE = "instagram.comment_automation";
+export const INSTAGRAM_DM_AUTOMATION_TYPE = "instagram.dm_automation";
 
 /** Short label - used in the automations table. */
 export const MATCHING_METHOD_LABELS: Record<InstagramMatchingMethod, string> = {

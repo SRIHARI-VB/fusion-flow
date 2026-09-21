@@ -1,24 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AxiosError } from "axios";
-import { EyeOff, Heart } from "lucide-react";
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
-import { OptionPickerCard, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Textarea } from "@fusion-flow/ui";
+import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import {
-  INSTAGRAM_COMMENT_AUTOMATION_TYPE,
+  INSTAGRAM_DM_AUTOMATION_TYPE,
   MATCHING_METHOD_DESCRIPTIONS,
   MATCHING_METHOD_LABELS,
   MATCHING_METHODS,
 } from "../constants";
-import { isCommentAutomationConfig, type InstagramMatchingMethod } from "../types";
+import type { InstagramDmAutomationConfig, InstagramMatchingMethod } from "../types";
 
-const STEPS = ["Keywords & Matching", "Actions"];
+const STEPS = ["Keywords & Matching", "Reply"];
 
-/** Splits the free-text keyword field into `trigger_keywords`, trimming
- * whitespace and dropping empties/duplicates - the "simple comma-separated
- * field" UX the spec calls for in place of a full tag-input widget. */
+/** Same "comma-separated field, trim/dedupe/drop-empties" UX as the
+ * comment automation wizard - see `InstagramAutomationWizardPage.tsx`. */
 function parseKeywords(raw: string): string[] {
   return Array.from(
     new Set(
@@ -31,14 +29,13 @@ function parseKeywords(raw: string): string[] {
 }
 
 /**
- * `/communication/instagram/automations/new` and
- * `/communication/instagram/automations/:id/edit` - the "Comment
- * Automation" wizard. Account-wide by design (fires on comments across
- * every post/reel on the connected Instagram account) - there is no
- * per-post scoping on the backend, so this deliberately has no
- * post-picker/preview step, unlike a hypothetical per-post automation.
+ * `/communication/instagram/dm-automations/new` and
+ * `/communication/instagram/dm-automations/:id/edit` - the "DM Auto-Reply"
+ * wizard: automatically reply to an inbound direct message when its text
+ * matches a keyword. Sibling to `InstagramAutomationWizardPage.tsx`
+ * (comment automation), much smaller since there's only one action.
  */
-export function InstagramAutomationWizardPage() {
+export function InstagramDmAutomationWizardPage() {
   const { id } = useParams<{ id: string }>();
   const isEditing = Boolean(id);
   const navigate = useNavigate();
@@ -53,30 +50,21 @@ export function InstagramAutomationWizardPage() {
   );
   const foundAutomation = isEditing ? automations?.find((automation) => automation.id === id) : undefined;
   const existingAutomation =
-    foundAutomation && isCommentAutomationConfig(foundAutomation) ? foundAutomation : undefined;
+    foundAutomation && foundAutomation.automation_type === INSTAGRAM_DM_AUTOMATION_TYPE ? foundAutomation : undefined;
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
-  const [autoLike, setAutoLike] = useState(false);
-  const [autoHide, setAutoHide] = useState(false);
   const [replyText, setReplyText] = useState("");
-  const [dmText, setDmText] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
-  // Seeds form state from the fetched automation exactly once, when
-  // editing - guarded by `initialized` so a background refetch (e.g. the
-  // list's polling) never clobbers what the tenant is mid-typing.
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config;
+    const config = existingAutomation.config as InstagramDmAutomationConfig;
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
-    setAutoLike(config.auto_like);
-    setAutoHide(config.auto_hide);
-    setReplyText(config.reply_comment_text ?? "");
-    setDmText(config.dm_text ?? "");
+    setReplyText(config.reply_text);
     setInitialized(true);
   }, [isEditing, initialized, existingAutomation]);
 
@@ -101,22 +89,16 @@ export function InstagramAutomationWizardPage() {
 
   function handleSubmit() {
     const trimmedReply = replyText.trim();
-    const trimmedDm = dmText.trim();
-    if (!autoLike && !autoHide && !trimmedReply && !trimmedDm) {
-      setValidationError(
-        "Turn on at least one action - Auto-Like, Auto-Hide, a public reply, or a DM reply - before saving.",
-      );
+    if (!trimmedReply) {
+      setValidationError("Enter the reply text to send back.");
       return;
     }
     setValidationError(null);
 
-    const config = {
+    const config: InstagramDmAutomationConfig = {
       trigger_keywords: keywords,
       matching_method: matchingMethod,
-      auto_like: autoLike,
-      auto_hide: autoHide,
-      reply_comment_text: trimmedReply || null,
-      dm_text: trimmedDm || null,
+      reply_text: trimmedReply,
     };
 
     if (isEditing && id) {
@@ -128,7 +110,7 @@ export function InstagramAutomationWizardPage() {
     createMutation.mutate(
       {
         connector_instance_id: instagramInstance.id,
-        automation_type: INSTAGRAM_COMMENT_AUTOMATION_TYPE,
+        automation_type: INSTAGRAM_DM_AUTOMATION_TYPE,
         name: keywords.join(", "),
         config,
       },
@@ -146,7 +128,7 @@ export function InstagramAutomationWizardPage() {
         <CardHeader className="items-center text-center">
           <CardTitle>Connect Instagram first</CardTitle>
           <CardDescription>
-            You need a connected Instagram account before you can set up a comment automation.
+            You need a connected Instagram account before you can set up a DM auto-reply.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex justify-center pb-6">
@@ -162,17 +144,13 @@ export function InstagramAutomationWizardPage() {
         rows={[
           { label: "Keywords", value: keywords.join(", ") },
           { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
-          { label: "Auto-Like", value: autoLike ? "On" : "Off" },
-          { label: "Auto-Hide", value: autoHide ? "On" : "Off" },
-          { label: "Public Reply", value: replyText.trim() || "Off" },
-          { label: "DM Reply", value: dmText.trim() || "Off" },
+          { label: "Reply", value: replyText.trim() || "—" },
         ]}
       />
       <TipsCallout
         tips={[
-          "This automation checks every comment on every post/reel connected to this account.",
-          "Auto-Hide keeps your posts clean from bot replies or competitor scraping.",
-          "You can enable both a public reply and a DM reply at the same time.",
+          "This automation checks every direct message this account receives.",
+          "Keep the reply short - it sends as a normal DM, not a template.",
         ]}
       />
     </>
@@ -200,8 +178,8 @@ export function InstagramAutomationWizardPage() {
 
   return (
     <WizardShell
-      title={isEditing ? "Edit Comment Automation" : "New Comment Automation"}
-      description="Automatically like, hide, or reply to Instagram comments that match keywords you choose."
+      title={isEditing ? "Edit DM Auto-Reply" : "New DM Auto-Reply"}
+      description="Automatically reply to Instagram direct messages that match keywords you choose."
       backTo="/communication/instagram/automations"
       backLabel="Back to automations"
       steps={STEPS}
@@ -217,7 +195,7 @@ export function InstagramAutomationWizardPage() {
             </label>
             <Input
               id="trigger_keywords"
-              placeholder="e.g. price, info, discount"
+              placeholder="e.g. price, hours, hi"
               value={keywordsInput}
               onChange={(event) => setKeywordsInput(event.target.value)}
             />
@@ -243,42 +221,16 @@ export function InstagramAutomationWizardPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <ToggleSettingRow
-            icon={Heart}
-            label="Auto-Like"
-            description="Automatically likes the matching comment"
-            checked={autoLike}
-            onCheckedChange={setAutoLike}
-          />
-          <ToggleSettingRow
-            icon={EyeOff}
-            label="Auto-Hide"
-            description="Hides the comment to prevent spam or copycats"
-            checked={autoHide}
-            onCheckedChange={setAutoHide}
-          />
-
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="reply_comment_text" className="text-sm font-medium">
-              Public reply <span className="text-muted-foreground">(optional)</span>
+            <label htmlFor="reply_text" className="text-sm font-medium">
+              Reply message
             </label>
-            <Input
-              id="reply_comment_text"
-              placeholder="e.g. Check your DM for details!"
+            <Textarea
+              id="reply_text"
+              rows={4}
+              placeholder="e.g. Thanks for reaching out! Here's the info you asked for..."
               value={replyText}
               onChange={(event) => setReplyText(event.target.value)}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="dm_text" className="text-sm font-medium">
-              DM reply <span className="text-muted-foreground">(optional)</span>
-            </label>
-            <Input
-              id="dm_text"
-              placeholder="e.g. Thanks! Here's the info you asked for..."
-              value={dmText}
-              onChange={(event) => setDmText(event.target.value)}
             />
           </div>
 

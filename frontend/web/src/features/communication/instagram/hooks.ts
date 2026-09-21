@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as instagramApi from "./api";
-import type { CreateInstagramAutomationPayload, InstagramCommentAutomationConfig } from "./types";
+import type { CreateInstagramAutomationPayload, InstagramAutomationConfig } from "./types";
 
 export const instagramAutomationKeys = {
   all: ["instagram-automations"] as const,
@@ -26,7 +26,7 @@ export function useCreateInstagramAutomation() {
 export function useUpdateInstagramAutomation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, config }: { id: string; config: InstagramCommentAutomationConfig }) =>
+    mutationFn: ({ id, config }: { id: string; config: InstagramAutomationConfig }) =>
       instagramApi.updateInstagramAutomation(id, config),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: instagramAutomationKeys.all });
