@@ -14,7 +14,11 @@ export type ConnectorCategory =
   | "mail"
   | "support_agent"
   | "dashboard"
-  | "feature";
+  | "feature"
+  | "storage"
+  | "social"
+  | "video"
+  | "spreadsheet";
 
 /** Fixed lifecycle state machine - see the plan's "Connector Lifecycle Framework". */
 export type ConnectorState =
@@ -47,6 +51,10 @@ export interface ConnectorType {
   oauth: boolean;
   is_enabled_globally: boolean;
   access_status: ConnectorAccessStatus;
+  // Static, tenant-independent webhook setup instructions (e.g. WhatsApp's
+  // manual verify-token handshake) - null for a provider that doesn't need one.
+  webhook_callback_url: string | null;
+  webhook_verify_token: string | null;
 }
 
 export interface ConnectorAccessRequest {

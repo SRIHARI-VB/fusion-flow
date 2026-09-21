@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Activity, Clock, Lock, RefreshCw, Unplug, Webhook } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@fusion-flow/ui";
 import type { ConnectorInstance, ConnectorType } from "../types";
+import { CONNECTOR_LOGO, CONNECTOR_LOGO_COLOR } from "../connector-logos";
 import {
   CONNECTOR_CATEGORY_ICON,
   CONNECTOR_HEALTH_DISPLAY,
@@ -45,7 +46,14 @@ export function ConnectorCard({
   requestAccessBusy,
 }: ConnectorCardProps) {
   const navigate = useNavigate();
-  const Icon = CONNECTOR_CATEGORY_ICON[connectorType.category];
+  // Real per-provider brand mark when one exists, falling back to a
+  // generic category icon shared by every connector in that category
+  // (e.g. a future connector added before its logo lands) - see
+  // `connector-logos.tsx`'s module docstring.
+  const Icon = CONNECTOR_LOGO[connectorType.key] ?? CONNECTOR_CATEGORY_ICON[connectorType.category];
+  // Only the real brand marks get their own brand color - the generic
+  // category fallback keeps inheriting `text-accent` via `currentColor`.
+  const logoColor = CONNECTOR_LOGO_COLOR[connectorType.key];
   const state = instance?.state;
   const stateDisplay = CONNECTOR_STATE_DISPLAY[state ?? "not_connected"];
   const healthDisplay = instance?.health_status ? CONNECTOR_HEALTH_DISPLAY[instance.health_status] : null;
@@ -57,7 +65,7 @@ export function ConnectorCard({
       <CardHeader className="flex-row items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
-            <Icon className="h-5 w-5" />
+            <Icon className="h-5 w-5" color={logoColor} />
           </div>
           <div>
             <CardTitle>{instance?.display_name ?? connectorType.display_name}</CardTitle>

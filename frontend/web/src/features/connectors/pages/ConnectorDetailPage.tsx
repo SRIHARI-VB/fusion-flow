@@ -1,14 +1,48 @@
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { CheckCircle2, RefreshCw, Unplug } from "lucide-react";
+import { Check, CheckCircle2, Copy, RefreshCw, Unplug } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, cn } from "@fusion-flow/ui";
 import { ConnectorEventsTable } from "../components/ConnectorEventsTable";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { useConnectorEvents, useConnectorInstances, useDisconnectConnector, useTestConnector } from "../hooks";
+import {
+  useConnectorEvents,
+  useConnectorInstances,
+  useConnectorTypes,
+  useDisconnectConnector,
+  useTestConnector,
+} from "../hooks";
 import { CONNECTOR_HEALTH_DISPLAY, CONNECTOR_STATE_DISPLAY, formatRelativeTimestamp } from "../state-display";
 import { CONNECTOR_SETTINGS } from "../settings/registry";
 
 type Tab = "activity" | "settings";
+
+/** A read-only value with a copy-to-clipboard button - used for the
+ * webhook callback URL/verify token, which a tenant needs to paste
+ * verbatim into Meta's dashboard. */
+function CopyableField({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 truncate rounded-md border border-border bg-muted px-2.5 py-1.5 text-xs text-foreground">
+          {value}
+        </code>
+        <Button type="button" variant="outline" size="sm" onClick={handleCopy}>
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * `/connectors/:instanceId` - generic detail page for any connector
@@ -27,6 +61,7 @@ export function ConnectorDetailPage() {
   const justConnected = searchParams.get("connected") === "1";
 
   const { data: instances, isLoading } = useConnectorInstances();
+  const { data: connectorTypes } = useConnectorTypes();
   const { data: events, isLoading: eventsLoading } = useConnectorEvents(instanceId);
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
@@ -53,6 +88,8 @@ export function ConnectorDetailPage() {
   const stateDisplay = CONNECTOR_STATE_DISPLAY[instance.state];
   const healthDisplay = instance.health_status ? CONNECTOR_HEALTH_DISPLAY[instance.health_status] : null;
   const identityEntries = Object.entries(instance.connected_identity ?? {});
+  const connectorType = connectorTypes?.find((t) => t.key === instance.connector_type_key);
+  const needsWebhookSetup = instance.state === "connected" && !!connectorType?.webhook_callback_url;
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,6 +109,24 @@ export function ConnectorDetailPage() {
           <CheckCircle2 className="h-4 w-4" />
           Connected successfully.
         </div>
+      )}
+
+      {needsWebhookSetup && connectorType && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Webhook setup</CardTitle>
+            <CardDescription>
+              Finish this connection by adding a webhook in your own Meta App's dashboard (Webhooks
+              product) with these exact values, so inbound messages and status updates reach you.
+              The verify token is the same for every business connecting here - it's not a secret
+              tied to your account, just a value Meta's one-time setup check expects.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <CopyableField label="Callback URL" value={connectorType.webhook_callback_url!} />
+            <CopyableField label="Verify token" value={connectorType.webhook_verify_token!} />
+          </CardContent>
+        </Card>
       )}
 
       <Card>

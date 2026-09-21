@@ -4,9 +4,13 @@ import {
   Bot,
   Calendar,
   CreditCard,
+  HardDrive,
+  Instagram,
   LayoutDashboard,
   Mail,
   MessageCircle,
+  Table,
+  Video,
   type LucideIcon,
 } from "lucide-react";
 import type { ConnectorCategory, ConnectorHealthStatus, ConnectorState } from "./types";
@@ -35,6 +39,10 @@ export const CONNECTOR_CATEGORY_ICON: Record<ConnectorCategory, LucideIcon> = {
   support_agent: Bot,
   dashboard: LayoutDashboard,
   feature: Blocks,
+  storage: HardDrive,
+  social: Instagram,
+  video: Video,
+  spreadsheet: Table,
 };
 
 /** Whether the "Connect"/"Reconnect" CTA should be offered for this state. */
