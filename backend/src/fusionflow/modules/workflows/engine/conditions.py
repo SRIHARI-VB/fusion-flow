@@ -20,6 +20,8 @@ _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "lt": operator.lt,
     "lte": operator.le,
     "contains": lambda haystack, needle: needle in haystack if haystack is not None else False,
+    "starts_with": lambda haystack, needle: isinstance(haystack, str) and haystack.startswith(needle),
+    "ends_with": lambda haystack, needle: isinstance(haystack, str) and haystack.endswith(needle),
 }
 
 

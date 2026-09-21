@@ -22,9 +22,18 @@ import uuid
 
 from sqlalchemy import select
 
+from fusionflow.db import models as _models  # noqa: F401 - registers every ORM model (see main.py's own import)
 from fusionflow.db.session import async_session_factory
+from fusionflow.modules.connectors.cloudflare_r2.adapter import CONFIG_SCHEMA as R2_CONFIG_SCHEMA
+from fusionflow.modules.connectors.facebook.adapter import CONFIG_SCHEMA as FACEBOOK_CONFIG_SCHEMA
+from fusionflow.modules.connectors.gmail.adapter import CONFIG_SCHEMA as GMAIL_CONFIG_SCHEMA
+from fusionflow.modules.connectors.google_calendar.adapter import CONFIG_SCHEMA as GOOGLE_CALENDAR_CONFIG_SCHEMA
+from fusionflow.modules.connectors.google_meet.adapter import CONFIG_SCHEMA as GOOGLE_MEET_CONFIG_SCHEMA
+from fusionflow.modules.connectors.google_sheets.adapter import CONFIG_SCHEMA as GOOGLE_SHEETS_CONFIG_SCHEMA
+from fusionflow.modules.connectors.instagram.adapter import CONFIG_SCHEMA as INSTAGRAM_CONFIG_SCHEMA
 from fusionflow.modules.connectors.models import ConnectorCategory, ConnectorType
 from fusionflow.modules.connectors.razorpay.adapter import CONFIG_SCHEMA as RAZORPAY_CONFIG_SCHEMA
+from fusionflow.modules.connectors.telegram.adapter import CONFIG_SCHEMA as TELEGRAM_CONFIG_SCHEMA
 from fusionflow.modules.connectors.whatsapp.adapter import CONFIG_SCHEMA as WHATSAPP_CONFIG_SCHEMA
 
 CONNECTOR_TYPES = [
@@ -40,6 +49,62 @@ CONNECTOR_TYPES = [
         "category": ConnectorCategory.PAYMENT,
         "display_name": "Razorpay",
         "config_schema": RAZORPAY_CONFIG_SCHEMA,
+        "oauth": False,
+    },
+    {
+        "key": "cloudflare_r2",
+        "category": ConnectorCategory.STORAGE,
+        "display_name": "Cloudflare R2",
+        "config_schema": R2_CONFIG_SCHEMA,
+        "oauth": False,
+    },
+    {
+        "key": "instagram",
+        "category": ConnectorCategory.SOCIAL,
+        "display_name": "Instagram",
+        "config_schema": INSTAGRAM_CONFIG_SCHEMA,
+        "oauth": False,
+    },
+    {
+        "key": "google_calendar",
+        "category": ConnectorCategory.CALENDAR,
+        "display_name": "Google Calendar",
+        "config_schema": GOOGLE_CALENDAR_CONFIG_SCHEMA,
+        "oauth": True,
+    },
+    {
+        "key": "gmail",
+        "category": ConnectorCategory.MAIL,
+        "display_name": "Gmail",
+        "config_schema": GMAIL_CONFIG_SCHEMA,
+        "oauth": True,
+    },
+    {
+        "key": "google_meet",
+        "category": ConnectorCategory.VIDEO,
+        "display_name": "Google Meet",
+        "config_schema": GOOGLE_MEET_CONFIG_SCHEMA,
+        "oauth": True,
+    },
+    {
+        "key": "google_sheets",
+        "category": ConnectorCategory.SPREADSHEET,
+        "display_name": "Google Sheets",
+        "config_schema": GOOGLE_SHEETS_CONFIG_SCHEMA,
+        "oauth": True,
+    },
+    {
+        "key": "telegram",
+        "category": ConnectorCategory.MESSAGING,
+        "display_name": "Telegram",
+        "config_schema": TELEGRAM_CONFIG_SCHEMA,
+        "oauth": False,
+    },
+    {
+        "key": "facebook",
+        "category": ConnectorCategory.MESSAGING,
+        "display_name": "Facebook",
+        "config_schema": FACEBOOK_CONFIG_SCHEMA,
         "oauth": False,
     },
 ]

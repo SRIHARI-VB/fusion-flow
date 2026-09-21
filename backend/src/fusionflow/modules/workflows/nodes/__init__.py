@@ -3,7 +3,7 @@
 The first three (`manual_test_trigger`, `log_noop`, `condition_field_compare`)
 are fully generic/self-contained — a small set that doesn't depend on any
 other module, so the engine is fully testable in isolation. The next four
-(`whatsapp_message_received`, `order_created`, `send_whatsapp_message`,
+(`whatsapp_message_received`, `order_created`, `whatsapp_send_message`,
 `create_ticket`) are the connector/fixed-connector-backed node types that
 make the plan's M5 sample scenario ("new WhatsApp message → keyword branch
 → create ticket or auto-reply") buildable — they depend on
@@ -20,17 +20,19 @@ next four (`connector_action`, `http_request`, `condition_multi_branch`,
 capability, a new simple third-party API, a new comparison case, or a new
 derived value should reach for one of these (plus, for connector/HTTP
 templates, an admin-managed `WorkflowNodeTemplate` catalog row - see
-`modules/admin/models.py`) rather than a new node type. The last eight
-(`whatsapp_send_media`, `whatsapp_send_location`, `whatsapp_send_contact`,
-`whatsapp_send_interactive_buttons`, `whatsapp_send_interactive_list`,
-`whatsapp_send_template`, `whatsapp_interactive_reply_received`,
-`whatsapp_message_status_updated`) round out WhatsApp's full message
-surface (marketing/utility templates, session media/location/contact/
-interactive messages, and the two new trigger types) — these are
-dedicated node types rather than generic-executor templates *deliberately*
-(see `whatsapp_send_media.py`'s and this phase's plan section for why a
-channel this central gets real, well-typed nodes for its primary
-operations, not just the generic escape hatch). The final four
+`modules/admin/models.py`) rather than a new node type. The next two
+(`whatsapp_interactive_reply_received`, `whatsapp_message_status_updated`)
+round out WhatsApp's full message surface (the two new trigger types for
+interactive replies and delivery-status updates) — dedicated node types
+rather than generic-executor templates *deliberately*, same reasoning as
+`whatsapp_send_message` below. `whatsapp_send_message` originally shipped
+as 7 separate node types (one per content shape: plain text, media,
+location, contact card, template, quick-reply buttons, tap-to-open list)
+and was later merged into this one node whose `content` field is a
+Pydantic discriminated union across those 7 shapes — same "restructure,
+don't migrate" move `whatsapp_ask_choice`'s `source` field pioneered,
+since this product had no live tenant data yet when the merge happened.
+The final four
 (`module_list`, `module_get`, `module_create`, `module_update`) are Phase
 6's generic module-CRUD executors — one node type per CRUD verb, dispatching
 through a per-module `ModuleQueryAdapter` registry (see
@@ -90,16 +92,20 @@ Importing this package registers all of the above with the process-wide
 """
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
+    broadcast_scheduled_send,
     condition_field_compare,
     condition_multi_branch,
     connector_action,
     create_ticket,
     data_transform,
+    facebook_message_received,
     flow_confirm,
     flow_loop,
     flow_parallel,
     flow_try_catch,
     http_request,
+    instagram_comment_received,
+    instagram_message_received,
     log_noop,
     manual_test_trigger,
     module_create,
@@ -113,7 +119,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     payments_send_razorpay_link,
     record_query,
     record_upsert,
-    send_whatsapp_message,
+    telegram_message_received,
     whatsapp_ask_choice,
     whatsapp_ask_for_cart,
     whatsapp_ask_question,
@@ -125,26 +131,25 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     whatsapp_mark_as_read,
     whatsapp_message_received,
     whatsapp_message_status_updated,
-    whatsapp_send_contact,
-    whatsapp_send_interactive_buttons,
-    whatsapp_send_interactive_list,
-    whatsapp_send_location,
-    whatsapp_send_media,
-    whatsapp_send_template,
+    whatsapp_send_message,
     whatsapp_update_business_profile,
 )
 
 __all__ = [
+    "broadcast_scheduled_send",
     "condition_field_compare",
     "condition_multi_branch",
     "connector_action",
     "create_ticket",
     "data_transform",
+    "facebook_message_received",
     "flow_confirm",
     "flow_loop",
     "flow_parallel",
     "flow_try_catch",
     "http_request",
+    "instagram_comment_received",
+    "instagram_message_received",
     "log_noop",
     "manual_test_trigger",
     "module_create",
@@ -158,7 +163,7 @@ __all__ = [
     "payments_send_razorpay_link",
     "record_query",
     "record_upsert",
-    "send_whatsapp_message",
+    "telegram_message_received",
     "whatsapp_ask_choice",
     "whatsapp_ask_for_cart",
     "whatsapp_ask_question",
@@ -170,11 +175,6 @@ __all__ = [
     "whatsapp_mark_as_read",
     "whatsapp_message_received",
     "whatsapp_message_status_updated",
-    "whatsapp_send_contact",
-    "whatsapp_send_interactive_buttons",
-    "whatsapp_send_interactive_list",
-    "whatsapp_send_location",
-    "whatsapp_send_media",
-    "whatsapp_send_template",
+    "whatsapp_send_message",
     "whatsapp_update_business_profile",
 ]

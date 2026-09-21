@@ -20,15 +20,21 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 
 
+#: Shared with `condition.multi_branch`'s `MultiBranchCase.operator` -
+#: every operator a condition node in this codebase can compare with, kept
+#: in exactly one place so the two node types can never drift apart.
+ComparisonOperator = Literal["eq", "neq", "gt", "gte", "lt", "lte", "contains", "starts_with", "ends_with"]
+
+
 class FieldCompareConfig(BaseModel):
     field_path: str = Field(
         min_length=1,
         description=(
-            "Dot-separated path into the run's variable context, e.g. "
-            "'trigger.message.text' or '<node_id>.output_field'."
+            "The value to check - usually the trigger's data or the result of an earlier "
+            "step, e.g. 'Ask a Question -> reply'."
         ),
     )
-    operator: Literal["eq", "neq", "gt", "gte", "lt", "lte", "contains"] = "eq"
+    operator: ComparisonOperator = "eq"
     value: Any = None
 
 

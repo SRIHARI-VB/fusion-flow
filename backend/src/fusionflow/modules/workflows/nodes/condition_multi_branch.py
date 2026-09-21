@@ -27,22 +27,31 @@ from fusionflow.modules.workflows.engine.registry import (
     node_executor_registry,
 )
 from fusionflow.modules.workflows.engine.templating import resolve_path
+from fusionflow.modules.workflows.nodes.condition_field_compare import ComparisonOperator
 
 _OUTPUT_SCHEMA = {"type": "object", "properties": {"matched_case": {"type": "string"}}}
 
 
 class MultiBranchCase(BaseModel):
     label: str = Field(
-        min_length=1, description="Also the output handle id - must be unique among this node's cases."
+        min_length=1, description="What to call this path - must be unique among this node's cases."
     )
-    field_path: str = Field(min_length=1)
-    operator: str = "eq"
+    field_path: str = Field(
+        min_length=1,
+        description=(
+            "The value to check - usually the trigger's data or the result of an earlier "
+            "step, e.g. 'Ask a Question -> reply'."
+        ),
+    )
+    operator: ComparisonOperator = "eq"
     value: Any = None
 
 
 class MultiBranchConfig(BaseModel):
     cases: list[MultiBranchCase] = Field(min_length=1)
-    default_label: str = Field(default="default", description="Handle used when no case matches.")
+    default_label: str = Field(
+        default="default", description="What to call the path used when none of the cases match."
+    )
 
 
 class MultiBranchExecutor(NodeExecutor):
