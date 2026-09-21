@@ -7,7 +7,8 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.predefined_automations.types import (  # noqa: F401
     instagram_comment_automation,
+    instagram_dm_automation,
     whatsapp_appointment_booking,
 )
 
-__all__ = ["instagram_comment_automation", "whatsapp_appointment_booking"]
+__all__ = ["instagram_comment_automation", "instagram_dm_automation", "whatsapp_appointment_booking"]
