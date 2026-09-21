@@ -24,6 +24,7 @@ from fusionflow.modules.admin.models import (
     WorkflowStarterTemplate,
 )
 from fusionflow.modules.auth.models import RefreshToken, User
+from fusionflow.modules.broadcast_campaigns.models import BroadcastCampaign
 from fusionflow.modules.business_objects.models import (
     ObjectFieldDefinition,
     ObjectRecord,
@@ -61,10 +62,14 @@ from fusionflow.modules.custom_fields.models import (
     FieldTemplate,
     FieldType,
 )
-from fusionflow.modules.customers.models import Customer
+from fusionflow.modules.customers.models import Customer, CustomerFieldDefinition
+from fusionflow.modules.inbox.models import Conversation, Message, MessageDirection, MessageSenderType
 from fusionflow.modules.kb.models import KbArticle, KbArticleStatus
+from fusionflow.modules.media_library.models import MediaAsset
 from fusionflow.modules.orders.models import Order, OrderStatus
 from fusionflow.modules.payments.models import Payment, PaymentStatus
+from fusionflow.modules.predefined_automations.models import PredefinedAutomation
+from fusionflow.modules.quick_replies.models import QuickReply
 from fusionflow.modules.tenancy.models import (
     Business,
     BusinessStatus,
@@ -94,6 +99,7 @@ from fusionflow.modules.workflows.models import (
 __all__ = [
     "AuditLog",
     "Base",
+    "BroadcastCampaign",
     "Business",
     "BusinessStatus",
     "BusinessTemplate",
@@ -109,8 +115,10 @@ __all__ = [
     "ConnectorOAuthState",
     "ConnectorState",
     "ConnectorType",
+    "Conversation",
     "Coupon",
     "Customer",
+    "CustomerFieldDefinition",
     "DiscountType",
     "EntityType",
     "FeatureFlag",
@@ -122,8 +130,12 @@ __all__ = [
     "ImpersonationSession",
     "KbArticle",
     "KbArticleStatus",
+    "MediaAsset",
     "Membership",
     "MembershipRole",
+    "Message",
+    "MessageDirection",
+    "MessageSenderType",
     "ObjectFieldDefinition",
     "ObjectRecord",
     "ObjectTypeDefinition",
@@ -135,8 +147,10 @@ __all__ = [
     "Plan",
     "PlanFeatureFlag",
     "PlanResourceLimit",
+    "PredefinedAutomation",
     "ProductService",
     "ProductServiceType",
+    "QuickReply",
     "RefreshToken",
     "ResourceLimitOverride",
     "RunStatus",

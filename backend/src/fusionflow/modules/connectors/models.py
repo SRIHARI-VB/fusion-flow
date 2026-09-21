@@ -50,6 +50,17 @@ class ConnectorCategory(str, enum.Enum):
     MAIL = "mail"
     SUPPORT_AGENT = "support_agent"
     DASHBOARD = "dashboard"
+    # Tenant-owned object storage (e.g. Cloudflare R2) - backs file uploads
+    # for message media/template headers (see connectors.cloudflare_r2.adapter).
+    STORAGE = "storage"
+    # Instagram - direct messages/comments, same shape as MESSAGING but kept
+    # distinct so the frontend can show a dedicated icon/grouping for
+    # social-platform connectors instead of collapsing into WhatsApp's.
+    SOCIAL = "social"
+    # Google Meet - meeting-space creation (connectors.google_meet.adapter).
+    VIDEO = "video"
+    # Google Sheets - row read/append (connectors.google_sheets.adapter).
+    SPREADSHEET = "spreadsheet"
     # Internal fixed feature module (products, orders, tickets, ...) - no
     # adapter, no OAuth, no ConnectorInstance state machine. Entitlement
     # alone (get_connector_access_map == "granted") gates its routes; see

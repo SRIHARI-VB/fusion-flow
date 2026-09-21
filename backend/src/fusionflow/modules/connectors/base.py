@@ -169,6 +169,17 @@ class ConnectorAdapter(abc.ABC):
         """
         raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
+    def webhook_setup_hint(self) -> dict[str, str] | None:
+        """Static, tenant-independent info to show in the UI for completing
+        this provider's own webhook setup (e.g. a manual verify-token
+        handshake step) - not all providers need one. Default `None` (no
+        special instructions to show). Never varies per tenant/instance -
+        see `whatsapp/adapter.py`'s override for why: the value it returns
+        (a fixed verify token) has to be identical for every tenant, since
+        Meta's verification handshake carries no tenant identifier at all.
+        """
+        return None
+
 
 class ConnectorRegistry:
     """Module-level `connector_type_key -> ConnectorAdapter` map.

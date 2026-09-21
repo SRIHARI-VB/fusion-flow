@@ -40,6 +40,11 @@ class ConnectorTypeOut(BaseModel):
     # `service.get_connector_access_map` - never `from_attributes`'d
     # straight off the ORM row, see `service.to_type_out`.
     access_status: str = "granted"
+    # Static, tenant-independent webhook setup instructions (see
+    # `base.ConnectorAdapter.webhook_setup_hint`) - null for a provider
+    # that doesn't need a manual webhook configuration step.
+    webhook_callback_url: str | None = None
+    webhook_verify_token: str | None = None
 
 
 class ConnectorInstanceOut(BaseModel):
@@ -92,6 +97,13 @@ class ConnectRequest(BaseModel):
 class ConnectResponse(BaseModel):
     instance: ConnectorInstanceOut
     redirect_url: str | None = None
+
+
+class MediaUploadOut(BaseModel):
+    """`POST /connectors/{instance_id}/media`'s response - the uploaded
+    object's (provider-hosted) URL."""
+
+    url: str
 
 
 class ConnectorAccessRequestCreate(BaseModel):

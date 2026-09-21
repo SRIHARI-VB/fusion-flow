@@ -1,43 +1,57 @@
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { MessageCircle } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useNavigate } from "react-router-dom";
 import { AxiosError } from "axios";
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@fusion-flow/ui";
+import { MessageCircle } from "lucide-react";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
 import { useConnectConnector } from "../../hooks";
 
 /**
- * WhatsApp's "connect" step: a single embedded-signup launch button.
- *
- * Real Meta Embedded Signup runs a JS SDK popup client-side and posts a
- * short-lived `code` back to us; that SDK integration is out of scope here
- * (per the task brief, "doesn't need real Meta SDK JS") - this button
- * instead calls the backend's connect endpoint directly and follows
- * whatever it returns:
- *  - a real Meta app configured -> backend returns `redirect_url` (Meta's
- *    OAuth dialog) and we do a full-page redirect there; Meta eventually
- *    bounces the browser back to the backend's OAuth callback route, which
- *    itself redirects here (`/connectors/whatsapp/connect?error=...`) or to
- *    the instance detail page on success.
- *  - no Meta app configured (this dev environment) -> the backend's stub
- *    path completes the "connection" synchronously and returns the new
- *    instance with no redirect - we just navigate to its detail page.
+ * WhatsApp's "connect" step: `auth_mode="api_key"`, same shape as
+ * `RazorpayConnectStep` - there is no shared platform Meta app and no OAuth
+ * redirect. Each tenant generates their own permanent access token in their
+ * own Meta Business Manager (WhatsApp > API Setup) and pastes it here along
+ * with their Phone Number ID. The WhatsApp Business Account ID is
+ * deliberately not asked for - the backend derives it from the phone
+ * number ID itself during validation (one less id to copy/paste wrong).
+ * `app_secret` is optional (it lets the backend verify inbound webhook
+ * signatures for this specific instance - see `whatsapp/adapter.py`'s
+ * `resolve_instance_for_webhook`); leaving it blank still connects, it
+ * just means webhook verification falls back to a shared/global secret if
+ * one is configured.
  */
+const whatsappSchema = z.object({
+  access_token: z.string().min(1, "Access token is required"),
+  phone_number_id: z.string().min(1, "Phone Number ID is required"),
+  app_secret: z.string().optional(),
+});
+
+type WhatsAppFormValues = z.infer<typeof whatsappSchema>;
+
 export function WhatsAppConnectStep() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const oauthError = searchParams.get("error");
   const { mutate, isPending, error } = useConnectConnector();
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<WhatsAppFormValues>({ resolver: zodResolver(whatsappSchema) });
 
-  function handleLaunch() {
+  function onSubmit(values: WhatsAppFormValues) {
     mutate(
-      { typeKey: "whatsapp", payload: { params: {} } },
       {
-        onSuccess: (response) => {
-          if (response.redirect_url) {
-            window.location.href = response.redirect_url;
-            return;
-          }
-          navigate(`/connectors/${response.instance.id}?connected=1`);
+        typeKey: "whatsapp",
+        payload: {
+          params: {
+            access_token: values.access_token,
+            phone_number_id: values.phone_number_id,
+            app_secret: values.app_secret || undefined,
+          },
         },
+      },
+      {
+        onSuccess: (response) => navigate(`/connectors/${response.instance.id}?connected=1`),
       },
     );
   }
@@ -52,23 +66,68 @@ export function WhatsAppConnectStep() {
         </div>
         <CardTitle>Connect WhatsApp Business Account</CardTitle>
         <CardDescription>
-          Launch Meta's Embedded Signup to link a WhatsApp Business Account to fusion-flow. You'll be
-          redirected to Meta to grant access, then brought back here automatically.
+          Paste the credentials from your own Meta Business Manager (WhatsApp → API Setup). Your
+          access token is encrypted at rest and is never shown again once saved.
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col items-center gap-4">
-        {(oauthError || mutationError) && (
-          <p className="text-center text-sm text-destructive">
-            {oauthError ?? mutationError?.response?.data?.detail ?? "Could not start the WhatsApp connection."}
-          </p>
-        )}
-        <Button size="lg" onClick={handleLaunch} disabled={isPending}>
-          <MessageCircle className="h-4 w-4" />
-          {isPending ? "Connecting…" : "Connect with WhatsApp"}
-        </Button>
-        <p className="text-center text-xs text-muted-foreground">
-          You'll need admin access to the Meta Business Manager that owns the WhatsApp number.
-        </p>
+      <CardContent>
+        <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="access_token" className="text-sm font-medium">
+              Access token
+            </label>
+            <Input
+              id="access_token"
+              type="password"
+              autoComplete="off"
+              placeholder="A permanent System User access token"
+              error={!!errors.access_token}
+              {...register("access_token")}
+            />
+            {errors.access_token && (
+              <p className="text-xs text-destructive">{errors.access_token.message}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="phone_number_id" className="text-sm font-medium">
+              Phone Number ID
+            </label>
+            <Input
+              id="phone_number_id"
+              autoComplete="off"
+              error={!!errors.phone_number_id}
+              {...register("phone_number_id")}
+            />
+            {errors.phone_number_id && (
+              <p className="text-xs text-destructive">{errors.phone_number_id.message}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="app_secret" className="text-sm font-medium">
+              App secret <span className="text-muted-foreground">(optional)</span>
+            </label>
+            <Input
+              id="app_secret"
+              type="password"
+              autoComplete="off"
+              placeholder="Verifies inbound webhook signatures for this connection"
+              {...register("app_secret")}
+            />
+          </div>
+
+          {mutationError && (
+            <p className="text-sm text-destructive">
+              {mutationError.response?.data?.detail ?? "Could not connect this WhatsApp account."}
+            </p>
+          )}
+
+          <Button type="submit" disabled={isPending} className="mt-2">
+            <MessageCircle className="h-4 w-4" />
+            {isPending ? "Connecting…" : "Connect WhatsApp"}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

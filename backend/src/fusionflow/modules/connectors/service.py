@@ -102,7 +102,12 @@ async def list_connector_types(session: AsyncSession) -> list[ConnectorType]:
 def to_type_out(connector_type: ConnectorType, access_status: str) -> ConnectorTypeOut:
     """`ConnectorTypeOut.model_validate` can't be used here since
     `access_status` isn't a column on `ConnectorType` - it's computed
-    per-tenant by `get_connector_access_map`."""
+    per-tenant by `get_connector_access_map`. `webhook_setup_hint()` is
+    also adapter-computed (static, not stored) - `get_or_none` rather than
+    `get` since an enabled-but-not-yet-adapter-registered type must not
+    500 this list."""
+    adapter = base.registry.get_or_none(connector_type.key)
+    webhook_hint = adapter.webhook_setup_hint() if adapter is not None else None
     return ConnectorTypeOut(
         id=connector_type.id,
         key=connector_type.key,
@@ -112,6 +117,8 @@ def to_type_out(connector_type: ConnectorType, access_status: str) -> ConnectorT
         oauth=connector_type.oauth,
         is_enabled_globally=connector_type.is_enabled_globally,
         access_status=access_status,
+        webhook_callback_url=(webhook_hint or {}).get("callback_url"),
+        webhook_verify_token=(webhook_hint or {}).get("verify_token"),
     )
 
 
@@ -432,7 +439,18 @@ async def connect(
     instance.last_error_message = result.error_message
     await session.flush()
     await commit_and_keep_tenant_context(session)
-    await session.refresh(instance, attribute_names=["connector_type"])
+    # Only `updated_at` needs refreshing here - it's DB-computed
+    # (`onupdate=func.now()`, TimestampMixin), so the in-memory value is
+    # stale post-commit. `connector_type` must NOT be named here: it's
+    # already populated (via `_instance_query()`'s `selectinload` or a
+    # direct constructor assignment) and, with `expire_on_commit=False`,
+    # stays valid post-commit with no refresh needed - explicitly
+    # refreshing it instead marks it unloaded, and the next synchronous
+    # access (`to_instance_out`, called from the router right after this
+    # returns, with no `await` in between) triggers a lazy DB load outside
+    # any async/greenlet context, raising `MissingGreenlet` - the exact
+    # cause of a real 500 on connect/disconnect/test/OAuth-callback.
+    await session.refresh(instance, attribute_names=["updated_at"])
     return instance, result
 
 
@@ -556,7 +574,18 @@ async def complete_oauth_callback(
         payload={"state": result.state.value},
     )
     await commit_and_keep_tenant_context(session)
-    await session.refresh(instance, attribute_names=["connector_type"])
+    # Only `updated_at` needs refreshing here - it's DB-computed
+    # (`onupdate=func.now()`, TimestampMixin), so the in-memory value is
+    # stale post-commit. `connector_type` must NOT be named here: it's
+    # already populated (via `_instance_query()`'s `selectinload` or a
+    # direct constructor assignment) and, with `expire_on_commit=False`,
+    # stays valid post-commit with no refresh needed - explicitly
+    # refreshing it instead marks it unloaded, and the next synchronous
+    # access (`to_instance_out`, called from the router right after this
+    # returns, with no `await` in between) triggers a lazy DB load outside
+    # any async/greenlet context, raising `MissingGreenlet` - the exact
+    # cause of a real 500 on connect/disconnect/test/OAuth-callback.
+    await session.refresh(instance, attribute_names=["updated_at"])
     return instance, result
 
 
@@ -584,7 +613,18 @@ async def test_connection(
         payload={"health_status": result.health_status.value, "detail": result.detail},
     )
     await commit_and_keep_tenant_context(session)
-    await session.refresh(instance, attribute_names=["connector_type"])
+    # Only `updated_at` needs refreshing here - it's DB-computed
+    # (`onupdate=func.now()`, TimestampMixin), so the in-memory value is
+    # stale post-commit. `connector_type` must NOT be named here: it's
+    # already populated (via `_instance_query()`'s `selectinload` or a
+    # direct constructor assignment) and, with `expire_on_commit=False`,
+    # stays valid post-commit with no refresh needed - explicitly
+    # refreshing it instead marks it unloaded, and the next synchronous
+    # access (`to_instance_out`, called from the router right after this
+    # returns, with no `await` in between) triggers a lazy DB load outside
+    # any async/greenlet context, raising `MissingGreenlet` - the exact
+    # cause of a real 500 on connect/disconnect/test/OAuth-callback.
+    await session.refresh(instance, attribute_names=["updated_at"])
     return instance
 
 
@@ -618,7 +658,18 @@ async def disconnect(
     instance.disconnected_at = datetime.now(timezone.utc)
     instance.health_status = None
     await commit_and_keep_tenant_context(session)
-    await session.refresh(instance, attribute_names=["connector_type"])
+    # Only `updated_at` needs refreshing here - it's DB-computed
+    # (`onupdate=func.now()`, TimestampMixin), so the in-memory value is
+    # stale post-commit. `connector_type` must NOT be named here: it's
+    # already populated (via `_instance_query()`'s `selectinload` or a
+    # direct constructor assignment) and, with `expire_on_commit=False`,
+    # stays valid post-commit with no refresh needed - explicitly
+    # refreshing it instead marks it unloaded, and the next synchronous
+    # access (`to_instance_out`, called from the router right after this
+    # returns, with no `await` in between) triggers a lazy DB load outside
+    # any async/greenlet context, raising `MissingGreenlet` - the exact
+    # cause of a real 500 on connect/disconnect/test/OAuth-callback.
+    await session.refresh(instance, attribute_names=["updated_at"])
     return instance
 
 

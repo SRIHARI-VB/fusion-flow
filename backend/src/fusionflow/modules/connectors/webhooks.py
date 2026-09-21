@@ -32,18 +32,23 @@ from datetime import datetime, timezone
 from typing import Mapping
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from sqlalchemy import select
 
 from fusionflow.core.deps import SessionDep
 from fusionflow.db.session import set_tenant_context, unscoped_session_factory
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
+from fusionflow.modules.connectors.models import ConnectorInstance, ConnectorType
 
 # Imported for their registration side effect (see base.registry) - this
 # module can be mounted independently of router.py's authenticated
 # `/connectors` router, so it needs its own copy of these imports rather
 # than relying on router.py having run first.
+from fusionflow.modules.connectors.facebook import adapter as _facebook_adapter  # noqa: F401
+from fusionflow.modules.connectors.instagram import adapter as _instagram_adapter  # noqa: F401
 from fusionflow.modules.connectors.razorpay import adapter as _razorpay_adapter  # noqa: F401
+from fusionflow.modules.connectors.telegram import adapter as _telegram_adapter  # noqa: F401
 from fusionflow.modules.connectors.whatsapp import adapter as _whatsapp_adapter  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -133,3 +138,107 @@ async def whatsapp_webhook_verify(
 @router.post("/razorpay")
 async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, object]:
     return await _dispatch("razorpay", request, session)
+
+
+@router.post("/instagram")
+async def instagram_webhook(request: Request, session: SessionDep) -> dict[str, object]:
+    return await _dispatch("instagram", request, session)
+
+
+async def _instagram_verify_token_matches_any_instance(token: str) -> bool:
+    """Check `token` against every connected Instagram instance's own
+    stored `webhook_verify_token` - see `instagram/adapter.py`'s module
+    docstring for why a per-tenant value is honored here, unlike
+    WhatsApp's single global token (Meta's GET handshake carries no
+    tenant identifier, so the only way to support a per-tenant value at
+    all is to check the inbound token against every candidate). Runs on
+    `unscoped_session_factory` (no tenant context exists yet during this
+    handshake, same chicken-and-egg problem `_dispatch`'s instance
+    resolution has) - read-only, never mutates anything, and the number
+    of connected Instagram instances is small enough that a full scan per
+    handshake call (a rare, one-time-per-app-setup event) is not a
+    concern.
+    """
+    async with unscoped_session_factory() as session:
+        rows = await session.execute(
+            select(ConnectorInstance)
+            .join(ConnectorType, ConnectorType.id == ConnectorInstance.connector_type_id)
+            .where(ConnectorType.key == "instagram")
+        )
+        for instance in rows.scalars().all():
+            secret = await connector_service.get_credential_secret(session, instance=instance)
+            if secret and secret.get("webhook_verify_token") and secret["webhook_verify_token"] == token:
+                return True
+    return False
+
+
+@router.get("/instagram")
+async def instagram_webhook_verify(
+    hub_mode: str = Query(alias="hub.mode"),
+    hub_verify_token: str = Query(alias="hub.verify_token"),
+    hub_challenge: str = Query(alias="hub.challenge"),
+) -> Response:
+    """Meta's one-time GET handshake performed when a webhook subscription
+    is configured in the App Dashboard - must echo `hub.challenge` back as
+    plain text iff `hub.verify_token` matches either the platform's own
+    default (`INSTAGRAM_WEBHOOK_VERIFY_TOKEN`) or some connected tenant's
+    own per-instance token (see `_instagram_verify_token_matches_any_instance`).
+    """
+    if hub_mode != "subscribe":
+        raise HTTPException(status_code=403, detail="Verification token mismatch")
+    if hub_verify_token == settings.INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
+        return Response(content=hub_challenge, media_type="text/plain")
+    if await _instagram_verify_token_matches_any_instance(hub_verify_token):
+        return Response(content=hub_challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+
+@router.post("/facebook")
+async def facebook_webhook(request: Request, session: SessionDep) -> dict[str, object]:
+    return await _dispatch("facebook", request, session)
+
+
+async def _facebook_verify_token_matches_any_instance(token: str) -> bool:
+    """Same per-instance-then-global handshake check as
+    `_instagram_verify_token_matches_any_instance` - see that function's
+    docstring for the full rationale (Meta's GET handshake carries no
+    tenant identifier, so a per-tenant `webhook_verify_token` can only be
+    supported by checking every connected instance)."""
+    async with unscoped_session_factory() as session:
+        rows = await session.execute(
+            select(ConnectorInstance)
+            .join(ConnectorType, ConnectorType.id == ConnectorInstance.connector_type_id)
+            .where(ConnectorType.key == "facebook")
+        )
+        for instance in rows.scalars().all():
+            secret = await connector_service.get_credential_secret(session, instance=instance)
+            if secret and secret.get("webhook_verify_token") and secret["webhook_verify_token"] == token:
+                return True
+    return False
+
+
+@router.get("/facebook")
+async def facebook_webhook_verify(
+    hub_mode: str = Query(alias="hub.mode"),
+    hub_verify_token: str = Query(alias="hub.verify_token"),
+    hub_challenge: str = Query(alias="hub.challenge"),
+) -> Response:
+    """Meta's one-time GET handshake - see `instagram_webhook_verify`'s
+    identical shape/docstring."""
+    if hub_mode != "subscribe":
+        raise HTTPException(status_code=403, detail="Verification token mismatch")
+    if hub_verify_token == settings.FACEBOOK_WEBHOOK_VERIFY_TOKEN:
+        return Response(content=hub_challenge, media_type="text/plain")
+    if await _facebook_verify_token_matches_any_instance(hub_verify_token):
+        return Response(content=hub_challenge, media_type="text/plain")
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+
+@router.post("/telegram")
+async def telegram_webhook(request: Request, session: SessionDep) -> dict[str, object]:
+    """No matching `GET /webhooks/telegram` handshake route - unlike Meta's
+    providers, Telegram has no GET-based verification step at all; this
+    adapter self-registers its own webhook (with a `secret_token` and a
+    `?instance_id=` query param baked into the URL) via `setWebhook` inside
+    `initiate_connect` - see `telegram/adapter.py`'s module docstring."""
+    return await _dispatch("telegram", request, session)

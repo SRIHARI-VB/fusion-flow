@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
 from fusionflow.modules.connectors.schemas import (
@@ -33,15 +34,30 @@ from fusionflow.modules.connectors.schemas import (
     ConnectorTypeOut,
     ConnectRequest,
     ConnectResponse,
+    MediaUploadOut,
 )
 from fusionflow.modules.connectors.service import ConnectorError
+from fusionflow.modules.media_library import service as media_library_service
 
 # Imported for their registration side effect - see module docstring.
+from fusionflow.modules.connectors.cloudflare_r2 import adapter as _cloudflare_r2_adapter  # noqa: F401
+from fusionflow.modules.connectors.facebook import adapter as _facebook_adapter  # noqa: F401
+from fusionflow.modules.connectors.gmail import adapter as _gmail_adapter  # noqa: F401
+from fusionflow.modules.connectors.google_calendar import adapter as _google_calendar_adapter  # noqa: F401
+from fusionflow.modules.connectors.google_meet import adapter as _google_meet_adapter  # noqa: F401
+from fusionflow.modules.connectors.google_sheets import adapter as _google_sheets_adapter  # noqa: F401
+from fusionflow.modules.connectors.instagram import adapter as _instagram_adapter  # noqa: F401
 from fusionflow.modules.connectors.razorpay import adapter as _razorpay_adapter  # noqa: F401
+from fusionflow.modules.connectors.telegram import adapter as _telegram_adapter  # noqa: F401
 from fusionflow.modules.connectors.whatsapp import adapter as _whatsapp_adapter  # noqa: F401
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 settings = get_connector_settings()
+
+# No pre-existing upload-size convention anywhere in this codebase (this is
+# the first file-upload endpoint) - an explicit 16MB cap rather than an
+# unbounded read of the request body.
+_MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 
 
 def _http(exc: ConnectorError) -> HTTPException:
@@ -186,6 +202,59 @@ async def disconnect_connector(
     except ConnectorError as exc:
         raise _http(exc) from exc
     return connector_service.to_instance_out(instance)
+
+
+@router.post("/{instance_id}/media", response_model=MediaUploadOut)
+async def upload_media(
+    instance_id: uuid.UUID,
+    context: TenantContextDep,
+    session: SessionDep,
+    file: UploadFile = File(...),
+) -> MediaUploadOut:
+    """Uploads `file` to the tenant's connected Cloudflare R2 bucket and
+    returns its (provider-hosted) URL.
+
+    The first general file-upload endpoint in this codebase - unrelated to
+    WhatsApp's own `media_id` concept (Meta-hosted media reachable only
+    through Meta's Graph API). 404s for a missing instance or one that
+    isn't a `cloudflare_r2` connector, same instance-scoped-lookup
+    convention as `test_connector`/`disconnect_connector` above.
+    """
+    instance = await connector_service.get_instance(session, tenant_id=context.tenant_id, instance_id=instance_id)
+    if instance is None or instance.connector_type.key != _cloudflare_r2_adapter.adapter.connector_type_key:
+        raise HTTPException(status_code=404, detail="Cloudflare R2 connector instance not found")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413, detail=f"File exceeds the {_MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit"
+        )
+
+    try:
+        url = await _cloudflare_r2_adapter.adapter.upload_object(
+            instance=instance,
+            session=session,
+            file_bytes=file_bytes,
+            filename=file.filename or "upload",
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except Exception as exc:  # noqa: BLE001 - same rationale as connect_connector: surface a clean 400
+        # rather than a raw 500 for a provider-side upload failure (bad/rotated credentials, bucket
+        # deleted, network unreachable, ...).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await media_library_service.create_media_asset(
+        session,
+        tenant_id=context.tenant_id,
+        url=url,
+        filename=file.filename or "upload",
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=len(file_bytes),
+        source="cloudflare_r2",
+    )
+    await commit_and_keep_tenant_context(session)
+
+    return MediaUploadOut(url=url)
 
 
 @router.get("/{instance_id}/events", response_model=list[ConnectorEventOut])

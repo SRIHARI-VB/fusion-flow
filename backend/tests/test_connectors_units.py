@@ -23,9 +23,9 @@ import pytest
 
 from fusionflow.modules.connectors import base
 from fusionflow.modules.connectors.config import ConnectorSettings
-from fusionflow.modules.connectors.models import ConnectorState, HealthStatus
+from fusionflow.modules.connectors.models import ConnectorCategory, ConnectorState, ConnectorType, HealthStatus
 from fusionflow.modules.connectors.razorpay.adapter import RazorpayAdapter
-from fusionflow.modules.connectors.service import ConnectorError, _RECONNECTABLE_STATES
+from fusionflow.modules.connectors.service import ConnectorError, _RECONNECTABLE_STATES, to_type_out
 from fusionflow.modules.connectors.whatsapp.adapter import WhatsAppAdapter
 from fusionflow.modules.payments.models import Payment
 
@@ -51,6 +51,53 @@ def test_registry_raises_lookup_error_for_unknown_key() -> None:
         registry.get("does-not-exist")
 
 
+def test_whatsapp_to_type_out_surfaces_webhook_setup_hint(monkeypatch) -> None:
+    """Static, tenant-independent webhook setup instructions (callback URL
+    + verify token) surface through the tenant-facing `/connectors/types`
+    catalog - see `base.ConnectorAdapter.webhook_setup_hint`."""
+    from fusionflow.modules.connectors import router as _router  # noqa: F401 - registers both adapters
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.whatsapp.adapter.settings",
+        ConnectorSettings(BACKEND_PUBLIC_BASE_URL="https://example.test", WHATSAPP_WEBHOOK_VERIFY_TOKEN="tok-xyz"),
+    )
+    connector_type = ConnectorType(
+        id=uuid.uuid4(),
+        key="whatsapp",
+        category=ConnectorCategory.MESSAGING,
+        display_name="WhatsApp",
+        config_schema={},
+        oauth=False,
+        is_enabled_globally=True,
+    )
+
+    out = to_type_out(connector_type, "granted")
+
+    assert out.webhook_callback_url == "https://example.test/api/v1/webhooks/whatsapp"
+    assert out.webhook_verify_token == "tok-xyz"
+
+
+def test_razorpay_to_type_out_has_no_webhook_setup_hint() -> None:
+    """Razorpay's webhook secret is entered per-instance in its own connect
+    form, not a fixed platform-wide value - nothing to surface here."""
+    from fusionflow.modules.connectors import router as _router  # noqa: F401
+
+    connector_type = ConnectorType(
+        id=uuid.uuid4(),
+        key="razorpay",
+        category=ConnectorCategory.PAYMENT,
+        display_name="Razorpay",
+        config_schema={},
+        oauth=False,
+        is_enabled_globally=True,
+    )
+
+    out = to_type_out(connector_type, "granted")
+
+    assert out.webhook_callback_url is None
+    assert out.webhook_verify_token is None
+
+
 def test_module_level_registry_has_both_phase_1_adapters() -> None:
     """Importing router.py registers both - see its module docstring."""
     from fusionflow.modules.connectors import router as _router  # noqa: F401
@@ -58,7 +105,7 @@ def test_module_level_registry_has_both_phase_1_adapters() -> None:
     assert set(base.registry.registered_keys()) >= {"whatsapp", "razorpay"}
     whatsapp_adapter = base.registry.get("whatsapp")
     razorpay_adapter = base.registry.get("razorpay")
-    assert whatsapp_adapter.auth_mode == "oauth"
+    assert whatsapp_adapter.auth_mode == "api_key"
     assert razorpay_adapter.auth_mode == "api_key"
 
 
@@ -113,19 +160,132 @@ def test_whatsapp_verify_webhook_signature_dev_fallback_when_unconfigured(monkey
     assert adapter.verify_webhook_signature(raw_payload=b"{}", headers={}) is True
 
 
-async def test_whatsapp_stub_connected_result_shape() -> None:
-    """Stub-mode fallback (no WHATSAPP_APP_ID/SECRET) returns a fully-formed,
-    safe-allowlist ConnectResult - exercised directly since the full
-    initiate_connect path needs a DB session for the OAuth state row."""
+async def test_whatsapp_validate_credentials_falls_back_to_stub_when_network_unreachable(monkeypatch) -> None:
     adapter = WhatsAppAdapter()
-    result = await adapter._stub_connected_result()
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_RaisingTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+    is_stub, detail, identity = await adapter._validate_credentials(
+        access_token="tok", phone_number_id="phone-1"
+    )
+    assert is_stub is True
+    assert detail is not None
+    assert set(identity) <= {"display_phone_number", "verified_name", "waba_id"}
+    assert identity["waba_id"].startswith("stub-waba-")
+
+
+async def test_whatsapp_validate_credentials_rejects_real_401(monkeypatch) -> None:
+    adapter = WhatsAppAdapter()
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_FixedResponseTransport(401), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+    with pytest.raises(ValueError, match="rejected"):
+        await adapter._validate_credentials(access_token="bad-token", phone_number_id="phone-1")
+
+
+async def test_whatsapp_validate_credentials_accepts_real_200(monkeypatch) -> None:
+    adapter = WhatsAppAdapter()
+
+    class _FixedJsonTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "display_phone_number": "+1 555-0100",
+                    "verified_name": "Real Biz",
+                    "whatsapp_business_account": {"id": "waba-real-1"},
+                },
+                request=request,
+            )
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_FixedJsonTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+    is_stub, detail, identity = await adapter._validate_credentials(
+        access_token="real-token", phone_number_id="phone-1"
+    )
+    assert is_stub is False
+    assert detail is None
+    assert identity["display_phone_number"] == "+1 555-0100"
+    assert identity["verified_name"] == "Real Biz"
+    assert identity["waba_id"] == "waba-real-1"
+
+
+async def test_whatsapp_validate_credentials_raises_when_no_waba_found(monkeypatch) -> None:
+    adapter = WhatsAppAdapter()
+
+    class _NoWabaTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, json={"display_phone_number": "+1 555-0100", "verified_name": "Real Biz"}, request=request
+            )
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_NoWabaTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+    with pytest.raises(ValueError, match="no WhatsApp Business Account"):
+        await adapter._validate_credentials(access_token="real-token", phone_number_id="phone-1")
+
+
+async def test_whatsapp_initiate_connect_stores_credential_and_returns_connected(monkeypatch) -> None:
+    adapter = WhatsAppAdapter()
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_RaisingTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+    upserted: dict = {}
+
+    async def _fake_upsert_credential(session, *, instance, secret) -> None:
+        upserted["secret"] = secret
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.whatsapp.adapter.connector_service.upsert_credential",
+        _fake_upsert_credential,
+    )
+
+    result = await adapter.initiate_connect(
+        tenant_id=uuid.uuid4(),
+        instance=_FakeWhatsAppInstance(),
+        params={"access_token": "real-token-abc", "phone_number_id": "phone-123"},
+        session=None,
+    )
 
     assert result.state == ConnectorState.CONNECTED
-    assert result.health_status == HealthStatus.HEALTHY
-    assert "waba_id" in result.connected_identity
-    assert result.provider_ref_ids["waba_id"] == result.connected_identity["waba_id"]
-    # Never leaks anything secret-shaped - just the display allowlist.
-    assert set(result.connected_identity) <= {"display_phone_number", "verified_name", "waba_id"}
+    assert result.provider_ref_ids["phone_number_id"] == "phone-123"
+    # Network-unreachable in this test (RaisingTransport) -> derived via the
+    # stub fallback, not asked for as a separate field - no `waba_id` key
+    # was ever in `params` above.
+    assert result.provider_ref_ids["waba_id"].startswith("stub-waba-")
+    assert result.connected_identity["waba_id"] == result.provider_ref_ids["waba_id"]
+    assert upserted["secret"]["access_token"] == "real-token-abc"
+
+
+async def test_whatsapp_initiate_connect_requires_all_fields() -> None:
+    adapter = WhatsAppAdapter()
+    with pytest.raises(ValueError, match="access_token and phone_number_id"):
+        await adapter.initiate_connect(
+            tenant_id=uuid.uuid4(),
+            instance=_FakeWhatsAppInstance(),
+            params={"access_token": "tok"},
+            session=None,
+        )
 
 
 async def test_whatsapp_handle_webhook_parses_json_payload() -> None:
@@ -157,7 +317,8 @@ async def test_whatsapp_handle_webhook_parses_json_payload() -> None:
 
 
 # --------------------------------------------------------------------------
-# WhatsApp: rich message send methods (stub mode - no real Meta credentials)
+# WhatsApp: rich message send methods (each tenant's own stored credential,
+# falling back to a no-op when the network is unreachable - this sandbox)
 # --------------------------------------------------------------------------
 
 
@@ -167,11 +328,29 @@ class _FakeWhatsAppInstance:
     provider_ref_ids = {"waba_id": "waba-1", "phone_number_id": "phone-1"}
 
 
-async def test_whatsapp_send_media_message_stub_mode_is_a_noop() -> None:
+def _patch_whatsapp_network_unreachable(monkeypatch) -> None:
+    """A tenant HAS connected (a credential is stored), but the real Graph
+    API call can't be reached - falls back to a logged no-op, same
+    convention as `razorpay/adapter.py::create_payment_link`."""
+
+    async def _fake_get_credential_secret(session, *, instance):
+        return {"access_token": "real-token", "app_secret": ""}
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.whatsapp.adapter.connector_service.get_credential_secret",
+        _fake_get_credential_secret,
+    )
+
+    def _fake_async_client(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return _RealAsyncClient(*args, transport=_RaisingTransport(), **kwargs)
+
+    monkeypatch.setattr("fusionflow.modules.connectors.whatsapp.adapter.httpx.AsyncClient", _fake_async_client)
+
+
+async def test_whatsapp_send_media_message_noop_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
-    # Ambient module `settings` in this test environment has no
-    # WHATSAPP_APP_ID/SECRET configured - whatsapp_configured is False,
-    # so this must return cleanly without a session/credential lookup.
     await adapter.send_media_message(
         instance=_FakeWhatsAppInstance(), to="15551234567", media_type="image",
         media_url="https://example.com/pic.jpg", session=None,
@@ -186,14 +365,31 @@ async def test_whatsapp_send_media_message_requires_url_or_id() -> None:
         )
 
 
-async def test_whatsapp_send_location_message_stub_mode_is_a_noop() -> None:
+async def test_whatsapp_send_message_raises_when_no_credential_stored(monkeypatch) -> None:
+    async def _fake_get_credential_secret(session, *, instance):
+        return None
+
+    monkeypatch.setattr(
+        "fusionflow.modules.connectors.whatsapp.adapter.connector_service.get_credential_secret",
+        _fake_get_credential_secret,
+    )
+    adapter = WhatsAppAdapter()
+    with pytest.raises(RuntimeError, match="no credential stored"):
+        await adapter.send_location_message(
+            instance=_FakeWhatsAppInstance(), to="15551234567", latitude=1.0, longitude=2.0, session=None
+        )
+
+
+async def test_whatsapp_send_location_message_noop_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     await adapter.send_location_message(
         instance=_FakeWhatsAppInstance(), to="15551234567", latitude=1.0, longitude=2.0, session=None
     )
 
 
-async def test_whatsapp_send_contact_message_stub_mode_is_a_noop() -> None:
+async def test_whatsapp_send_contact_message_noop_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     await adapter.send_contact_message(
         instance=_FakeWhatsAppInstance(), to="15551234567", contacts=[{"name": "Asha", "phone": "15551230000"}],
@@ -201,7 +397,8 @@ async def test_whatsapp_send_contact_message_stub_mode_is_a_noop() -> None:
     )
 
 
-async def test_whatsapp_send_interactive_message_stub_mode_is_a_noop() -> None:
+async def test_whatsapp_send_interactive_message_noop_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     await adapter.send_interactive_message(
         instance=_FakeWhatsAppInstance(), to="15551234567", body_text="Pick one",
@@ -209,7 +406,8 @@ async def test_whatsapp_send_interactive_message_stub_mode_is_a_noop() -> None:
     )
 
 
-async def test_whatsapp_send_template_message_stub_mode_is_a_noop() -> None:
+async def test_whatsapp_send_template_message_noop_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     await adapter.send_template_message(
         instance=_FakeWhatsAppInstance(), to="15551234567", template_name="order_confirmation",
@@ -217,7 +415,38 @@ async def test_whatsapp_send_template_message_stub_mode_is_a_noop() -> None:
     )
 
 
-async def test_whatsapp_sync_templates_stub_mode_returns_canned_examples() -> None:
+async def test_whatsapp_send_template_message_with_media_header_and_buttons_noop_when_network_unreachable(
+    monkeypatch,
+) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
+    adapter = WhatsAppAdapter()
+    await adapter.send_template_message(
+        instance=_FakeWhatsAppInstance(), to="15551234567", template_name="seasonal_promo",
+        language_code="en_US", header_media_type="image", header_media_url="https://example.com/promo.jpg",
+        button_url_params=["abc123"], session=None,
+    )
+
+
+async def test_whatsapp_send_template_message_rejects_text_and_media_header_together() -> None:
+    adapter = WhatsAppAdapter()
+    with pytest.raises(ValueError):
+        await adapter.send_template_message(
+            instance=_FakeWhatsAppInstance(), to="15551234567", template_name="x", language_code="en_US",
+            header_variable="Asha", header_media_type="image", header_media_url="https://x", session=None,
+        )
+
+
+async def test_whatsapp_send_template_message_rejects_media_header_without_url_or_id() -> None:
+    adapter = WhatsAppAdapter()
+    with pytest.raises(ValueError):
+        await adapter.send_template_message(
+            instance=_FakeWhatsAppInstance(), to="15551234567", template_name="x", language_code="en_US",
+            header_media_type="image", session=None,
+        )
+
+
+async def test_whatsapp_sync_templates_returns_canned_examples_when_network_unreachable(monkeypatch) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     templates = await adapter.sync_templates(instance=_FakeWhatsAppInstance(), session=None)
     assert len(templates) >= 1
@@ -234,7 +463,8 @@ async def test_whatsapp_sync_templates_stub_mode_returns_canned_examples() -> No
         ("send_template_message", {"to": "1", "template_name": "x", "language_code": "en_US"}),
     ],
 )
-async def test_whatsapp_perform_action_dispatches_every_new_action(action, params) -> None:
+async def test_whatsapp_perform_action_dispatches_every_new_action(monkeypatch, action, params) -> None:
+    _patch_whatsapp_network_unreachable(monkeypatch)
     adapter = WhatsAppAdapter()
     result = await adapter.perform_action(
         action=action, params=params, instance=_FakeWhatsAppInstance(), session=None
