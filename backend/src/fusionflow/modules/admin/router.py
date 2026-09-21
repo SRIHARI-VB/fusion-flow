@@ -689,6 +689,12 @@ async def set_connector_access_override(
     except AdminError as exc:
         raise _http(exc) from exc
     await session.commit()
+    # `updated_at` is DB-computed (`onupdate=func.now()`) and left expired
+    # after an UPDATE flush (this is an upsert, so both the create and
+    # toggle-existing paths land here) - see
+    # `predefined_automations/router.py`'s identical fix for the full
+    # explanation of the MissingGreenlet crash this avoids.
+    await session.refresh(override, attribute_names=["updated_at"])
     return ConnectorAccessOverrideOut.model_validate(override)
 
 

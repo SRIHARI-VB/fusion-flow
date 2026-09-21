@@ -98,6 +98,11 @@ async def update_object_type(
     object_type = await _get_type_or_404(session, context.tenant_id, type_id)
     object_type = await business_objects_service.update_object_type(session, object_type, payload)
     await commit_and_keep_tenant_context(session)
+    # `updated_at` is DB-computed (`onupdate=func.now()`) and left expired
+    # after an UPDATE flush - see `predefined_automations/router.py`'s
+    # identical fix for the full explanation of the MissingGreenlet crash
+    # this avoids.
+    await session.refresh(object_type, attribute_names=["updated_at"])
     return ObjectTypeOut.model_validate(object_type)
 
 
@@ -228,6 +233,8 @@ async def update_record(
         session, record, field_defs=field_defs, payload=payload.payload, customer_id=payload.customer_id
     )
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `update_object_type` above.
+    await session.refresh(record, attribute_names=["updated_at"])
     return ObjectRecordOut.model_validate(record)
 
 

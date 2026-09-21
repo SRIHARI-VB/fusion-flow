@@ -91,6 +91,13 @@ async def set_campaign_active(
     except BroadcastCampaignError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # `updated_at` is DB-computed (`onupdate=func.now()`) - an UPDATE flush
+    # leaves it expired (unlike an INSERT's server_default, which SQLAlchemy
+    # fetches eagerly via RETURNING), so a synchronous access below would
+    # otherwise trigger a lazy load outside any async/greenlet context
+    # (`MissingGreenlet`) - see `predefined_automations/router.py`'s
+    # identical fix for the full explanation.
+    await session.refresh(campaign, attribute_names=["updated_at"])
     return await _to_out(session, campaign)
 
 

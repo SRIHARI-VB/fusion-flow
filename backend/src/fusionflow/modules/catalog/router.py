@@ -119,6 +119,11 @@ def _build_product_service_router(
             )
         item = await catalog_service.update_product_service(session, item, payload, custom_fields)
         await commit_and_keep_tenant_context(session)
+        # `updated_at` is DB-computed (`onupdate=func.now()`) and left
+        # expired after an UPDATE flush - see
+        # `predefined_automations/router.py`'s identical fix for the full
+        # explanation of the MissingGreenlet crash this avoids.
+        await session.refresh(item, attribute_names=["updated_at"])
         return ProductServiceOut.model_validate(item)
 
     @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -200,6 +205,8 @@ async def update_coupon(
         )
     coupon = await catalog_service.update_coupon(session, coupon, payload, custom_fields)
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `update_item` above.
+    await session.refresh(coupon, attribute_names=["updated_at"])
     return CouponOut.model_validate(coupon)
 
 
@@ -259,6 +266,8 @@ async def update_offer(
         )
     offer = await catalog_service.update_offer(session, offer, payload, custom_fields)
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `update_item` above.
+    await session.refresh(offer, attribute_names=["updated_at"])
     return OfferOut.model_validate(offer)
 
 

@@ -84,6 +84,11 @@ async def update_whatsapp_template(
     except ConnectorError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # `updated_at` is DB-computed (`onupdate=func.now()`) and left expired
+    # after an UPDATE flush - see `predefined_automations/router.py`'s
+    # identical fix for the full explanation of the MissingGreenlet crash
+    # this avoids.
+    await session.refresh(template, attribute_names=["updated_at"])
     return WhatsAppTemplateOut.model_validate(template)
 
 
@@ -109,4 +114,8 @@ async def sync_whatsapp_templates(
     except ConnectorError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `update_whatsapp_template` above - sync
+    # upserts (creates or updates) each template row.
+    for t in templates:
+        await session.refresh(t, attribute_names=["updated_at"])
     return [WhatsAppTemplateOut.model_validate(t) for t in templates]

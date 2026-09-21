@@ -119,6 +119,14 @@ async def update_automation(
     except PredefinedAutomationError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # `updated_at` is DB-computed (`onupdate=func.now()`, TimestampMixin) -
+    # unlike an INSERT's server_default, SQLAlchemy does not eagerly fetch
+    # an UPDATE's onupdate value via RETURNING, so it's left expired after
+    # flush/commit. Left alone, `model_validate` below triggers a lazy
+    # load for it outside any async/greenlet context the instant Pydantic
+    # touches it - `MissingGreenlet` - a real 500 seen in production. Same
+    # fix as `connectors/service.py::connect()`'s identical bug.
+    await session.refresh(automation, attribute_names=["updated_at"])
     return PredefinedAutomationOut.model_validate(automation)
 
 
@@ -141,6 +149,9 @@ async def set_automation_active(
     except PredefinedAutomationError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `update_automation` above - `set_active`
+    # also flushes an UPDATE that touches the onupdate column.
+    await session.refresh(automation, attribute_names=["updated_at"])
     return PredefinedAutomationOut.model_validate(automation)
 
 

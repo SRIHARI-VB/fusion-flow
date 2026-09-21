@@ -81,6 +81,11 @@ async def mark_conversation_read(
     except InboxError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # `updated_at` is DB-computed (`onupdate=func.now()`) and left expired
+    # after an UPDATE flush - see `predefined_automations/router.py`'s
+    # identical fix for the full explanation of the MissingGreenlet crash
+    # this avoids.
+    await session.refresh(conversation, attribute_names=["updated_at"])
     return inbox_service.to_conversation_out(conversation)
 
 
@@ -101,4 +106,6 @@ async def assign_conversation_agent(
     except InboxError as exc:
         raise _http(exc) from exc
     await commit_and_keep_tenant_context(session)
+    # Same `updated_at` refresh as `mark_conversation_read` above.
+    await session.refresh(conversation, attribute_names=["updated_at"])
     return inbox_service.to_conversation_out(conversation)
