@@ -36,13 +36,19 @@ def decrypt_secret(ciphertext: bytes, key_version: int = CURRENT_KEY_VERSION) ->
         raise ValueError("could not decrypt secret: invalid token or wrong key version") from exc
 
 
+_PREVIEW_MASK = "*" * 6
+
+
 def redact_preview(plaintext: str) -> str:
     """Return a display-safe preview: first 3 + last 4 chars, rest masked.
 
-    Used for `connector_credentials.redacted_preview` (a later wave) so a
-    provider secret can be shown in the UI without ever exposing it in
-    full via an API response.
+    The masked middle is a fixed-length run of asterisks regardless of
+    `plaintext`'s length - long provider secrets (e.g. Instagram/Google
+    OAuth tokens, 150+ chars) must still fit in
+    `connector_credentials.redacted_preview` (VARCHAR(200), holding a
+    JSON object of one preview per credential field), and the actual
+    secret length isn't information worth exposing anyway.
     """
     if len(plaintext) <= 7:
         return "*" * len(plaintext)
-    return f"{plaintext[:3]}{'*' * (len(plaintext) - 7)}{plaintext[-4:]}"
+    return f"{plaintext[:3]}{_PREVIEW_MASK}{plaintext[-4:]}"
