@@ -35,8 +35,8 @@ class ConnectorSettings(BaseSettings):
     # Token Meta echoes back during the one-time GET webhook subscription
     # handshake (hub.verify_token).
     WHATSAPP_WEBHOOK_VERIFY_TOKEN: str = "dev-only-whatsapp-verify-token"
-    WHATSAPP_GRAPH_API_BASE_URL: str = "https://graph.facebook.com/v20.0"
-    WHATSAPP_OAUTH_DIALOG_URL: str = "https://www.facebook.com/v20.0/dialog/oauth"
+    WHATSAPP_GRAPH_API_BASE_URL: str = "https://graph.facebook.com/v25.0"
+    WHATSAPP_OAUTH_DIALOG_URL: str = "https://www.facebook.com/v25.0/dialog/oauth"
 
     # --- Google (Calendar / Gmail / Meet / Sheets) ---
     # One platform-level Google Cloud OAuth app shared by all four
@@ -71,7 +71,7 @@ class ConnectorSettings(BaseSettings):
     # graph.facebook.com with one 400s ("could not reach" it is not -
     # the request does land, Meta just rejects the token/endpoint
     # combination outright).
-    INSTAGRAM_GRAPH_API_BASE_URL: str = "https://graph.instagram.com/v20.0"
+    INSTAGRAM_GRAPH_API_BASE_URL: str = "https://graph.instagram.com/v25.0"
     # App-level secret used to verify X-Hub-Signature-256 on inbound
     # webhooks, when a tenant doesn't supply their own `app_secret` at
     # connect time - mirrors WHATSAPP_WEBHOOK_APP_SECRET exactly.
@@ -106,7 +106,7 @@ class ConnectorSettings(BaseSettings):
     # `whatsapp`/`instagram`: each tenant pastes their own Facebook Page id
     # + Page access token (generated in their own Meta Business Suite) -
     # no platform-level Meta app id/secret needed for the connect step.
-    FACEBOOK_GRAPH_API_BASE_URL: str = "https://graph.facebook.com/v20.0"
+    FACEBOOK_GRAPH_API_BASE_URL: str = "https://graph.facebook.com/v25.0"
     # App-level secret used to verify X-Hub-Signature-256 on inbound
     # webhooks, when a tenant doesn't supply their own `app_secret` at
     # connect time - mirrors WHATSAPP_WEBHOOK_APP_SECRET/
