@@ -37,6 +37,7 @@ class LoopConfig(BaseModel):
             "Resolves to the list to iterate, e.g. '{{trigger.line_items}}'. "
             "A non-list resolved value iterates zero times."
         ),
+        json_schema_extra={"format": "auto_ref", "ref_suffix": "recipients"},
     )
     max_iterations: int = Field(
         default=200,

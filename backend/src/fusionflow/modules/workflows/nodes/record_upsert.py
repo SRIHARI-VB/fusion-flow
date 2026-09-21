@@ -32,7 +32,7 @@ _OUTPUT_SCHEMA = {"type": "object", "properties": {"item": {"type": "object"}}}
 class RecordUpsertConfig(BaseModel):
     module: str = Field(min_length=1, description="Which kind of record - a fixed module or one of your own.")
     operation: Literal["create", "update"] = "create"
-    item_id: str | None = Field(default=None, description="Record id. Required when operation='update'.")
+    item_id: str | None = Field(default=None, description="Record id. Required when updating an existing record.")
     fields: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -45,6 +45,9 @@ class RecordUpsertExecutor(NodeExecutor):
     label = "Create or Update a Record"
     description = "Creates a new record, or updates an existing one, in any of your modules - Orders, Customers, or one you created yourself."
     config_model = RecordUpsertConfig
+    # A generic write, useful for per-recipient personalization inside a
+    # broadcast's loop too, not just one-conversation automation.
+    applicable_purposes = ["automation", "broadcast"]
     output_schema = _OUTPUT_SCHEMA
     retryable = True
     max_retries = 2

@@ -9,9 +9,9 @@ import type { ModuleCatalogEntry } from "../types";
  * through to plain `"text"`, which would corrupt this field into a bare
  * string on save). Same "hand-written for a fixed, small, nested shape"
  * precedent `EdgeConfigDrawer.tsx` already establishes, rather than
- * generalizing `jsonSchemaForm.ts` for one field. `NodeConfigDrawer.tsx`
+ * generalizing `jsonSchemaForm.ts` for one field. `NodeInlineForm.tsx`
  * hides the generic auto-resolved row for this key and renders this
- * instead, wiring its value through React Hook Form via `setValue`.
+ * instead, wiring its value through a plain `value`/`onChange` pair.
  */
 
 export interface StaticOption {

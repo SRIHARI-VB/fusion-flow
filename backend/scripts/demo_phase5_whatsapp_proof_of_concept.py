@@ -7,20 +7,20 @@ Builds one workflow for the "Srihari" tenant:
 
     whatsapp.interactive_reply_received (customer tapped a button)
       -> condition.multi_branch on interactive.id
-           "confirm_order" -> whatsapp.send_template (UTILITY: order_confirmation)
-           "see_offers"    -> whatsapp.send_template (MARKETING: weekend_sale)
-           default          -> send_whatsapp_message (plain session text reply)
+           "confirm_order" -> whatsapp.send_message (content_type=template, UTILITY: order_confirmation)
+           "see_offers"    -> whatsapp.send_message (content_type=template, MARKETING: weekend_sale)
+           default          -> whatsapp.send_message (content_type=text, plain session text reply)
 
 This exercises, in one real published/simulated workflow:
   - the new whatsapp.interactive_reply_received trigger (Part C)
   - condition.multi_branch keyed on a real interactive-reply payload shape
-  - whatsapp.send_template for BOTH a utility and a marketing category
-    template (Part A/B/C together - the send node cross-checks the
-    variable count against the local WhatsAppTemplate catalog row before
-    calling Meta)
-  - the pre-existing send_whatsapp_message node for a normal session
-    message, proving the new pieces compose with what already shipped in
-    earlier phases rather than replacing it
+  - whatsapp.send_message's template content for BOTH a utility and a
+    marketing category template (Part A/B/C together - the send node
+    cross-checks the variable count against the local WhatsAppTemplate
+    catalog row before calling Meta)
+  - whatsapp.send_message's plain text content for a normal session
+    message, proving the unified send node's content branches compose with
+    what already shipped in earlier phases rather than replacing it
 
 Requires `seed_workflow_node_templates.py`'s catalog rows are NOT needed
 here (this demo uses the dedicated WhatsApp node types directly, not the
@@ -81,33 +81,39 @@ def build_graph(whatsapp_instance_id: uuid.UUID) -> dict:
             ),
             _node(
                 "send_confirmation",
-                "whatsapp.send_template",
+                "whatsapp.send_message",
                 {
                     "connector_instance_id": instance_id,
                     "to": "{{trigger.from}}",
-                    "template_name": "order_confirmation",
-                    "language_code": "en_US",
-                    "body_variables": ["{{trigger.from}}", "#1234"],
+                    "content": {
+                        "content_type": "template",
+                        "template_name": "order_confirmation",
+                        "language_code": "en_US",
+                        "body_variables": ["{{trigger.from}}", "#1234"],
+                    },
                 },
             ),
             _node(
                 "send_promo",
-                "whatsapp.send_template",
+                "whatsapp.send_message",
                 {
                     "connector_instance_id": instance_id,
                     "to": "{{trigger.from}}",
-                    "template_name": "weekend_sale",
-                    "language_code": "en_US",
-                    "body_variables": ["{{trigger.from}}"],
+                    "content": {
+                        "content_type": "template",
+                        "template_name": "weekend_sale",
+                        "language_code": "en_US",
+                        "body_variables": ["{{trigger.from}}"],
+                    },
                 },
             ),
             _node(
                 "send_fallback",
-                "send_whatsapp_message",
+                "whatsapp.send_message",
                 {
                     "connector_instance_id": instance_id,
                     "to": "{{trigger.from}}",
-                    "body": "Thanks for reaching out! How can we help?",
+                    "content": {"content_type": "text", "body": "Thanks for reaching out! How can we help?"},
                 },
             ),
         ],

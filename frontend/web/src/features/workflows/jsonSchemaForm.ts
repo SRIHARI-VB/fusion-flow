@@ -1,14 +1,13 @@
-import { z } from "zod";
 import type { JsonSchema, JsonSchemaProperty } from "./types";
 
 /**
  * Turns one node type's `config_schema` (raw JSON Schema, as produced by
  * `pydantic.BaseModel.model_json_schema()` on the backend) into enough
- * structure to render + validate a dynamic form with React Hook Form +
- * Zod — the "reuse the dynamic-form approach conceptually" instruction,
- * applied to node config instead of custom fields
- * (see `features/custom-fields/DynamicCustomFieldsFields.tsx` for the
- * sibling implementation this one is modeled after).
+ * structure to render every field directly inline on its card (see
+ * `NodeInlineForm.tsx`) - no React Hook Form/Zod involved on this path
+ * anymore; every field commits straight into `data.config` via plain
+ * `value`/`onChange` (see `DraftFields.tsx` for why free-text fields buffer
+ * locally before committing).
  *
  * This is a pragmatic subset of JSON Schema, not a general compiler: it
  * covers what pydantic actually emits for the node config models in this
@@ -28,7 +27,9 @@ export type FieldKind =
   | "array_text"
   | "array_object"
   | "json_object"
-  | "suggested_select";
+  | "suggested_select"
+  | "recipient"
+  | "auto_ref";
 
 export interface ResolvedField {
   key: string;
@@ -47,6 +48,18 @@ export interface ResolvedField {
    * `{value, label}` options computed server-side (`NodeType.field_suggestions`),
    * e.g. connected connector instances or granted modules. */
   suggestedOptions?: { value: string; label: string }[];
+  /** Only set when `kind === "auto_ref"` - mirrors `JsonSchemaProperty.ref_suffix`,
+   * the upstream output leaf key (e.g. `"recipients"`, `"message_id"`) this
+   * field should auto-resolve a reference to - see `NodeInlineForm.tsx`'s
+   * `"auto_ref"` render branch. */
+  ref_suffix?: string;
+  /** The backend's own declared `maxLength` (pydantic `Field(max_length=...)`),
+   * e.g. a WhatsApp interactive button's 20-character title limit - surfaced
+   * so a `"text"`/`"textarea"` input can enforce it natively and show a live
+   * character counter instead of only failing at publish/send time.
+   * `undefined` when the backend hasn't declared one - no counter is shown
+   * in that case, since we shouldn't invent a limit the backend didn't set. */
+  maxLength?: number;
 }
 
 /** Per-config-field precomputed option lists, as returned by the backend
@@ -98,6 +111,13 @@ function fieldKind(schema: JsonSchema, prop: JsonSchemaProperty): FieldKind {
   // single-line value - checked last, after every other shape-based kind,
   // so it only ever applies to what would otherwise be a plain "text" field.
   if (prop.format === "textarea") return "textarea";
+  if (prop.format === "recipient") return "recipient";
+  // Backend hint for a plain string field whose real value should be an
+  // upstream reference (`{{node_id.<ref_suffix>}}`) the author almost
+  // always wants auto-filled rather than typed by hand (e.g. `flow.loop`'s
+  // `items_path`, `whatsapp.mark_as_read`'s `message_id`) - see
+  // `NodeInlineForm.tsx`'s `"auto_ref"` render branch.
+  if (prop.format === "auto_ref") return "auto_ref";
   return "text";
 }
 
@@ -120,6 +140,8 @@ function resolveField(
     default: prop.default,
   };
   if (suggested) field.suggestedOptions = suggested;
+  if (prop.ref_suffix) field.ref_suffix = prop.ref_suffix;
+  if (typeof prop.maxLength === "number") field.maxLength = prop.maxLength;
   if (kind === "array_object") {
     const itemSchema = resolveItemsSchema(schema, prop.items);
     if (itemSchema?.properties) {
@@ -137,99 +159,6 @@ export function resolveFields(schema: JsonSchema, fieldSuggestions?: FieldSugges
   return Object.entries(schema.properties ?? {}).map(([key, prop]) =>
     resolveField(schema, key, prop, required, fieldSuggestions),
   );
-}
-
-function zodForField(field: ResolvedField): z.ZodTypeAny {
-  switch (field.kind) {
-    case "boolean":
-      return z.boolean();
-    case "number":
-      return field.required ? z.coerce.number() : z.coerce.number().optional();
-    case "array_text": {
-      let arr: z.ZodTypeAny = z.array(z.string());
-      if (field.required) arr = (arr as z.ZodArray<z.ZodString>).min(1, `${field.label} requires at least one item`);
-      return arr;
-    }
-    case "array_object": {
-      const subShape: Record<string, z.ZodTypeAny> = {};
-      for (const sub of field.itemFields ?? []) {
-        subShape[sub.key] = zodForField(sub);
-      }
-      let arr: z.ZodTypeAny = z.array(z.object(subShape).passthrough());
-      if (field.required) arr = (arr as z.ZodArray<z.ZodTypeAny>).min(1, `${field.label} requires at least one item`);
-      return arr;
-    }
-    case "json_object":
-      return z.record(z.string(), z.unknown());
-    case "select":
-    case "suggested_select":
-    case "text":
-    case "textarea":
-    default: {
-      let zodField: z.ZodTypeAny = z.string();
-      if (field.required) zodField = (zodField as z.ZodString).min(1, `${field.label} is required`);
-      return zodField;
-    }
-  }
-}
-
-/** Builds a `z.object(...)` shape from the resolved fields — required
- * fields must be non-empty; everything else is optional/nullable
- * (arrays are optional-only, never nullable - an empty array, not
- * `null`, is the "nothing entered yet" value `useFieldArray` expects). */
-export function buildZodSchema(schema: JsonSchema, fieldSuggestions?: FieldSuggestions): z.ZodTypeAny {
-  const fields = resolveFields(schema, fieldSuggestions);
-  const shape: Record<string, z.ZodTypeAny> = {};
-
-  for (const field of fields) {
-    let zodField = zodForField(field);
-    const isArray = field.kind === "array_text" || field.kind === "array_object";
-    if (!field.required && field.kind !== "number" && !isArray) {
-      zodField = zodField.optional().nullable();
-    } else if (!field.required && isArray) {
-      zodField = zodField.optional();
-    }
-    shape[field.key] = zodField;
-  }
-
-  return z.object(shape).passthrough();
-}
-
-function defaultForField(field: ResolvedField, existing: unknown): unknown {
-  if (existing !== undefined) return existing;
-  if (field.default !== undefined) return field.default;
-  if (field.kind === "boolean") return false;
-  if (field.kind === "array_text" || field.kind === "array_object") return [];
-  if (field.kind === "json_object") return {};
-  return "";
-}
-
-/** Default form values: existing config wins, falling back to the
- * schema's own defaults, falling back to a kind-appropriate empty value.
- * For `array_object`, each existing row's own sub-fields are defaulted
- * the same recursive way, so a partially-filled saved row doesn't lose
- * its own defaults. */
-export function buildDefaultValues(
-  schema: JsonSchema,
-  config: Record<string, unknown>,
-  fieldSuggestions?: FieldSuggestions,
-): Record<string, unknown> {
-  const fields = resolveFields(schema, fieldSuggestions);
-  const values: Record<string, unknown> = {};
-  for (const field of fields) {
-    if (field.kind === "array_object" && Array.isArray(config[field.key])) {
-      values[field.key] = (config[field.key] as Array<Record<string, unknown>>).map((row) => {
-        const rowValues: Record<string, unknown> = {};
-        for (const sub of field.itemFields ?? []) {
-          rowValues[sub.key] = defaultForField(sub, row[sub.key]);
-        }
-        return rowValues;
-      });
-    } else {
-      values[field.key] = defaultForField(field, config[field.key]);
-    }
-  }
-  return values;
 }
 
 /** Walks a node type's `output_schema` (same JSON-Schema-lite shape as

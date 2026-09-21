@@ -22,7 +22,9 @@ from fusionflow.modules.workflows.nodes.whatsapp_ask_question import AskQuestion
 class CollectTextConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(
-        min_length=1, description="Recipient wa_id, typically {{trigger.from}}. Also the suspend's correlation key."
+        min_length=1,
+        description="The customer's WhatsApp number to send the question to (usually {{trigger.from}}).",
+        json_schema_extra={"format": "recipient"},
     )
     question: str = Field(
         min_length=1,
@@ -43,11 +45,17 @@ class CollectTextExecutor(NodeExecutor):
     subcategory = "Ask"
     palette_group = "Talk to Customer"
     icon = "message-square-text"
-    label = "Ask for Information"
-    description = "Asks a free-text question (name, address, notes, ...) and pauses until the customer replies."
+    label = "Ask for a Text Reply"
+    description = (
+        "A simpler version of 'Ask a Question' locked to plain-text answers (name, address, notes, ...). "
+        "Use 'Ask a Question' instead if you need quick-reply buttons or a list."
+    )
     config_model = CollectTextConfig
     output_schema = _OUTPUT_SCHEMA
     can_suspend = True
+    # See whatsapp_ask_question.py's applicable_purposes comment - pausing
+    # for one reply can't work inside a broadcast's flow.loop fan-out.
+    applicable_purposes = ["automation"]
     required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2

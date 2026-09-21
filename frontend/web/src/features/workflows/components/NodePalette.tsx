@@ -4,6 +4,7 @@ import { cn } from "@fusion-flow/ui";
 import type { ConnectorInstance } from "../../connectors/types";
 import type { NodeKind, NodeType } from "../types";
 import { ChannelFilterBar } from "./ChannelFilterBar";
+import { GROUP_COLORS, DEFAULT_GROUP_COLOR } from "../nodes/cardSummaries";
 
 /**
  * Right-hand collapsible palette, grouped into labeled task-oriented
@@ -26,19 +27,6 @@ import { ChannelFilterBar } from "./ChannelFilterBar";
 const KIND_ICON: Record<NodeKind, typeof Zap> = { trigger: Zap, action: PlayCircle, condition: GitBranch };
 const KIND_LABEL: Record<NodeKind, string> = { trigger: "Trigger", action: "Action", condition: "Condition" };
 
-/** Left-border accent per palette group, purely for scannability - an
- * unmapped group falls back to `DEFAULT_GROUP_COLOR`, never breaking for
- * a future group this map hasn't caught up with yet. */
-const GROUP_COLORS: Record<string, string> = {
-  Triggers: "border-l-red-500",
-  "Talk to Customer": "border-l-emerald-500",
-  Records: "border-l-blue-500",
-  Payments: "border-l-amber-500",
-  "Flow Control": "border-l-slate-500",
-  Advanced: "border-l-gray-400",
-};
-const DEFAULT_GROUP_COLOR = "border-l-gray-400";
-
 /** Fixed display order for the known palette groups - "Triggers" leads
  * (an author reaches for a trigger first when building from scratch),
  * then task-oriented groups roughly in the order a guided conversation
@@ -52,6 +40,21 @@ function paletteGroupOrder(group: string): number {
   const index = GROUP_ORDER.indexOf(group);
   return index === -1 ? GROUP_ORDER.length : index;
 }
+
+/** Fixed, curated set of node types pinned in the "Quick Start" section for
+ * a non-technical author building their first flow - the most common
+ * building blocks across a typical WhatsApp guided conversation, in the
+ * order they're usually reached for. Filtered down to whichever of these
+ * are actually present in `nodeTypes` (a key here may not exist yet, e.g.
+ * a node type still landing from a parallel backend change), so this list
+ * silently degrades rather than erroring or showing a placeholder. */
+const QUICK_START_NODE_TYPES = [
+  "whatsapp.send_message",
+  "whatsapp.ask_question",
+  "whatsapp.ask_choice",
+  "condition.field_compare",
+  "flow.confirm",
+];
 
 interface NodePaletteProps {
   nodeTypes: NodeType[];
@@ -142,17 +145,25 @@ function buildGroups(nodeTypes: NodeType[]): PaletteGroupSection[] {
 
 function PaletteItem({ nodeType, onDragStartNodeType }: { nodeType: NodeType; onDragStartNodeType: NodePaletteProps["onDragStartNodeType"] }) {
   const KindIcon = KIND_ICON[nodeType.kind];
+  const groupAccent = (GROUP_COLORS[nodeType.palette_group] ?? DEFAULT_GROUP_COLOR).border;
+  const hasDescription = Boolean(nodeType.description && nodeType.description.trim().length > 0);
   return (
     <div
       draggable
       onDragStart={(event) => onDragStartNodeType(nodeType, event)}
       title={nodeType.description}
       className={cn(
-        "flex cursor-grab items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5",
+        "flex cursor-grab items-start gap-2 rounded-md border border-l-2 border-border bg-background px-2 py-1.5",
         "text-xs text-foreground hover:border-accent hover:bg-accent-soft active:cursor-grabbing",
+        groupAccent,
       )}
     >
-      <span className="truncate">{nodeType.label}</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate font-medium leading-snug">{nodeType.label}</span>
+        {hasDescription && (
+          <span className="line-clamp-2 text-[10px] leading-snug text-muted-foreground">{nodeType.description}</span>
+        )}
+      </div>
       <span
         className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
         title={KIND_LABEL[nodeType.kind]}
@@ -173,8 +184,39 @@ export function NodePalette({
 }: NodePaletteProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
 
   const groups = useMemo(() => buildGroups(nodeTypes), [nodeTypes]);
+
+  const trimmedSearch = search.trim().toLowerCase();
+
+  const filteredNodeTypes = useMemo(() => {
+    if (!trimmedSearch) return [];
+    return nodeTypes
+      .filter(
+        (nodeType) =>
+          nodeType.label.toLowerCase().includes(trimmedSearch) ||
+          nodeType.description.toLowerCase().includes(trimmedSearch),
+      )
+      .sort(
+        (a, b) =>
+          paletteGroupOrder(a.palette_group) - paletteGroupOrder(b.palette_group) ||
+          a.label.localeCompare(b.label),
+      );
+  }, [nodeTypes, trimmedSearch]);
+
+  // "Quick Start" pins the handful of building blocks a non-technical
+  // author reaches for first, above the full grouped catalog below (which
+  // stays exactly as-is - this section never suppresses an item from its
+  // normal group). Hidden entirely while searching, and hidden if none of
+  // the curated node types happen to be registered yet.
+  const quickStartItems = useMemo(() => {
+    if (trimmedSearch) return [];
+    const byNodeType = new Map(nodeTypes.map((nodeType) => [nodeType.node_type, nodeType]));
+    return QUICK_START_NODE_TYPES.map((nodeType) => byNodeType.get(nodeType)).filter(
+      (nodeType): nodeType is NodeType => Boolean(nodeType),
+    );
+  }, [nodeTypes, trimmedSearch]);
 
   // Every group starts open the first time its node types load, so the
   // whole palette is usable without an extra click - except "Advanced"
@@ -243,63 +285,104 @@ export function NodePalette({
         </button>
       </div>
 
+      <div className="border-b border-border px-3 py-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search nodes..."
+          aria-label="Search nodes"
+          className={cn(
+            "w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground",
+            "placeholder:text-muted-foreground focus:border-accent focus:outline-none",
+          )}
+        />
+      </div>
+
       <div className="flex-1 overflow-y-auto px-2 py-2">
-        {groups.map(({ group, categories, showCategoryHeaders }) => {
-          const open = openGroups.has(group);
+        {trimmedSearch ? (
+          <div className="flex flex-col gap-1">
+            {filteredNodeTypes.length === 0 ? (
+              <p className="px-2 py-4 text-xs text-muted-foreground">No matching nodes.</p>
+            ) : (
+              filteredNodeTypes.map((nodeType) => (
+                <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+              ))
+            )}
+          </div>
+        ) : (
+          <>
+            {quickStartItems.length > 0 && (
+              <div className="mb-3 rounded-md bg-accent-soft/30 p-1.5">
+                <span className="mb-1 block px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Quick Start
+                </span>
+                <div className="flex flex-col gap-1">
+                  {quickStartItems.map((nodeType) => (
+                    <PaletteItem key={`quick-start-${nodeType.node_type}`} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                  ))}
+                </div>
+              </div>
+            )}
 
-          return (
-            <div key={group} className={cn("mb-2 border-l-4 pl-1", GROUP_COLORS[group] ?? DEFAULT_GROUP_COLOR)}>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left"
-                onClick={() => toggleGroup(group)}
-              >
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group}</span>
-                {open ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                )}
-              </button>
+            {groups.map(({ group, categories, showCategoryHeaders }) => {
+              const open = openGroups.has(group);
 
-              {open && (
-                <div className="flex flex-col gap-2 px-1 pb-1">
-                  {categories.map(({ category, directItems, subgroups }) => (
-                    <div key={category} className="flex flex-col gap-1">
-                      {showCategoryHeaders && (
-                        <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
-                          {category}
-                        </span>
-                      )}
+              return (
+                <div key={group} className={cn("mb-2 border-l-4 pl-1", (GROUP_COLORS[group] ?? DEFAULT_GROUP_COLOR).border)}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left"
+                    onClick={() => toggleGroup(group)}
+                  >
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group}</span>
+                    {open ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </button>
 
-                      {directItems.length > 0 && (
-                        <div className="flex flex-col gap-1">
-                          {directItems.map((nodeType) => (
-                            <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
-                          ))}
-                        </div>
-                      )}
+                  {open && (
+                    <div className="flex flex-col gap-2 px-1 pb-1">
+                      {categories.map(({ category, directItems, subgroups }) => (
+                        <div key={category} className="flex flex-col gap-1">
+                          {showCategoryHeaders && (
+                            <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/80">
+                              {category}
+                            </span>
+                          )}
 
-                      {subgroups.map(({ subcategory, items }) => (
-                        <div key={subcategory} className="flex flex-col gap-1 pl-2">
-                          <span className="pl-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
-                            {subcategory}
-                          </span>
-                          {items.map((nodeType) => (
-                            <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                          {directItems.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                              {directItems.map((nodeType) => (
+                                <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                              ))}
+                            </div>
+                          )}
+
+                          {subgroups.map(({ subcategory, items }) => (
+                            <div key={subcategory} className="flex flex-col gap-1 pl-2">
+                              <span className="pl-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                                {subcategory}
+                              </span>
+                              {items.map((nodeType) => (
+                                <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                              ))}
+                            </div>
                           ))}
                         </div>
                       ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
 
-        {nodeTypes.length === 0 && (
-          <p className="px-2 py-4 text-xs text-muted-foreground">No node types available.</p>
+            {nodeTypes.length === 0 && (
+              <p className="px-2 py-4 text-xs text-muted-foreground">No node types available.</p>
+            )}
+          </>
         )}
       </div>
     </div>

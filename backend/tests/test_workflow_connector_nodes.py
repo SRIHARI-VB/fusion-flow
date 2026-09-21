@@ -1,12 +1,13 @@
 """Offline unit tests for the 4 connector/fixed-connector-backed workflow
 node executors added to close plan item 3 ("Workflow node set for the
 sample scenario"): `whatsapp.message_received`, `order.created`,
-`send_whatsapp_message`, `create_ticket`.
+`whatsapp.send_message` (text content), `create_ticket`.
 
 Same "no Postgres required" philosophy as `test_workflows_engine.py` — the
 two action nodes' DB-touching dependencies (`connector_service.get_instance`,
-`whatsapp_adapter.send_text_message`, `tickets_service.create_ticket`) are
-monkeypatched rather than exercised against a real session.
+via `_whatsapp_common.resolve_whatsapp_instance`, `whatsapp_adapter.
+send_text_message`, `tickets_service.create_ticket`) are monkeypatched
+rather than exercised against a real session.
 """
 
 from __future__ import annotations
@@ -20,11 +21,12 @@ from pydantic import ValidationError
 from fusionflow.modules.connectors.models import ConnectorInstance, ConnectorState
 from fusionflow.modules.tickets.models import Ticket, TicketStatus
 from fusionflow.modules.workflows.engine.registry import ExecutionContext, Failure, Success
+from fusionflow.modules.workflows.nodes import _whatsapp_common
 from fusionflow.modules.workflows.nodes import create_ticket as create_ticket_node
 from fusionflow.modules.workflows.nodes import order_created as order_created_node
 from fusionflow.modules.workflows.nodes import payment_captured as payment_captured_node
-from fusionflow.modules.workflows.nodes import send_whatsapp_message as send_whatsapp_node
 from fusionflow.modules.workflows.nodes import whatsapp_message_received as whatsapp_trigger_node
+from fusionflow.modules.workflows.nodes import whatsapp_send_message as send_whatsapp_node
 
 pytestmark = pytest.mark.asyncio
 
@@ -105,7 +107,7 @@ async def test_payment_captured_registered_with_required_connector_type() -> Non
 
 
 # --------------------------------------------------------------------------
-# Action: send_whatsapp_message
+# Action: whatsapp.send_message (text content)
 # --------------------------------------------------------------------------
 
 
@@ -121,16 +123,22 @@ def _fake_connector_instance(tenant_id: uuid.UUID) -> ConnectorInstance:
 
 
 async def test_send_whatsapp_message_config_requires_fields() -> None:
-    executor = send_whatsapp_node.SendWhatsAppMessageExecutor()
+    executor = send_whatsapp_node.SendMessageExecutor()
     executor.validate_config(
-        {"connector_instance_id": str(uuid.uuid4()), "to": "{{trigger.from}}", "body": "hi"}
+        {
+            "connector_instance_id": str(uuid.uuid4()),
+            "to": "{{trigger.from}}",
+            "content": {"content_type": "text", "body": "hi"},
+        }
     )
     with pytest.raises(ValidationError):
-        executor.validate_config({"to": "x", "body": "y"})  # missing connector_instance_id
+        executor.validate_config(
+            {"to": "x", "content": {"content_type": "text", "body": "y"}}
+        )  # missing connector_instance_id
 
 
 async def test_send_whatsapp_message_interpolates_and_calls_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    executor = send_whatsapp_node.SendWhatsAppMessageExecutor()
+    executor = send_whatsapp_node.SendMessageExecutor()
     tenant_id = uuid.uuid4()
     instance = _fake_connector_instance(tenant_id)
 
@@ -143,7 +151,7 @@ async def test_send_whatsapp_message_interpolates_and_calls_adapter(monkeypatch:
     async def fake_send_text_message(*, instance: ConnectorInstance, to: str, body: str, session: Any) -> None:
         calls.append({"to": to, "body": body})
 
-    monkeypatch.setattr(send_whatsapp_node.connector_service, "get_instance", fake_get_instance)
+    monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
     monkeypatch.setattr(send_whatsapp_node.whatsapp_adapter, "send_text_message", fake_send_text_message)
 
     context = ExecutionContext(
@@ -154,7 +162,10 @@ async def test_send_whatsapp_message_interpolates_and_calls_adapter(monkeypatch:
         config={
             "connector_instance_id": str(instance.id),
             "to": "{{trigger.from}}",
-            "body": "Thanks {{trigger.from}}, we got your message: {{trigger.text}}",
+            "content": {
+                "content_type": "text",
+                "body": "Thanks {{trigger.from}}, we got your message: {{trigger.text}}",
+            },
         },
         variables={"trigger": {"from": "15551234567", "text": "refund please"}},
     )
@@ -173,7 +184,7 @@ async def test_send_whatsapp_message_propagates_adapter_exception(monkeypatch: p
     retry-with-backoff (this node is `retryable = True`) actually gets a
     chance to retry it instead of the node swallowing it into a single,
     permanent `Failure` before retry logic ever sees it."""
-    executor = send_whatsapp_node.SendWhatsAppMessageExecutor()
+    executor = send_whatsapp_node.SendMessageExecutor()
     assert executor.retryable is True
     assert executor.max_retries == 2
     tenant_id = uuid.uuid4()
@@ -185,7 +196,7 @@ async def test_send_whatsapp_message_propagates_adapter_exception(monkeypatch: p
     async def fake_send_text_message(**kwargs: Any) -> None:
         raise RuntimeError("no credential stored")
 
-    monkeypatch.setattr(send_whatsapp_node.connector_service, "get_instance", fake_get_instance)
+    monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
     monkeypatch.setattr(send_whatsapp_node.whatsapp_adapter, "send_text_message", fake_send_text_message)
 
     context = ExecutionContext(
@@ -193,7 +204,11 @@ async def test_send_whatsapp_message_propagates_adapter_exception(monkeypatch: p
         tenant_id=tenant_id,
         run_id=uuid.uuid4(),
         node_id="send",
-        config={"connector_instance_id": str(instance.id), "to": "123", "body": "hi"},
+        config={
+            "connector_instance_id": str(instance.id),
+            "to": "123",
+            "content": {"content_type": "text", "body": "hi"},
+        },
         variables={},
     )
 
@@ -204,14 +219,21 @@ async def test_send_whatsapp_message_propagates_adapter_exception(monkeypatch: p
 async def test_send_whatsapp_message_missing_connector_instance_is_a_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executor = send_whatsapp_node.SendWhatsAppMessageExecutor()
+    executor = send_whatsapp_node.SendMessageExecutor()
 
     async def fake_get_instance(session: Any, *, tenant_id: uuid.UUID, instance_id: uuid.UUID) -> None:
         return None
 
-    monkeypatch.setattr(send_whatsapp_node.connector_service, "get_instance", fake_get_instance)
+    monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
 
-    context = _context({"connector_instance_id": str(uuid.uuid4()), "to": "123", "body": "hi"}, {})
+    context = _context(
+        {
+            "connector_instance_id": str(uuid.uuid4()),
+            "to": "123",
+            "content": {"content_type": "text", "body": "hi"},
+        },
+        {},
+    )
 
     result = await executor.execute(context)
 

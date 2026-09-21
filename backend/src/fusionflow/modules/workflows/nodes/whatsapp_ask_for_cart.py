@@ -58,7 +58,9 @@ _OUTPUT_SCHEMA = {
 class AskForCartConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(
-        min_length=1, description="Recipient wa_id, typically {{trigger.from}}. Also the suspend's correlation key."
+        min_length=1,
+        description="The customer's WhatsApp number to send the catalog to (usually {{trigger.from}}).",
+        json_schema_extra={"format": "recipient"},
     )
     catalog_id: str = Field(
         min_length=1, description="Meta Commerce Catalog id connected to this WhatsApp Business Account."
@@ -86,6 +88,9 @@ class AskForCartExecutor(NodeExecutor):
     config_model = AskForCartConfig
     output_schema = _OUTPUT_SCHEMA
     can_suspend = True
+    # See whatsapp_ask_question.py's applicable_purposes comment - pausing
+    # for one reply can't work inside a broadcast's flow.loop fan-out.
+    applicable_purposes = ["automation"]
     required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2

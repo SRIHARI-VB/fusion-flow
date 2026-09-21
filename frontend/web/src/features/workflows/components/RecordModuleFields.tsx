@@ -1,5 +1,4 @@
-import type { UseFormSetValue, UseFormWatch } from "react-hook-form";
-import { Input } from "@fusion-flow/ui";
+import { DraftInput } from "./DraftFields";
 import type { ModuleCatalogEntry } from "../types";
 
 /**
@@ -10,25 +9,27 @@ import type { ModuleCatalogEntry } from "../types";
  * tenant custom object types) and `filters`/`fields` as raw JSON
  * textareas - the exact "developer affordance a non-technical author
  * shouldn't need to open" this redesign exists to remove for the most
- * common node types. `NodeConfigDrawer.tsx` hides those generic rows for
- * these two node types and renders this instead.
+ * common node types. `NodeInlineForm.tsx` hides those generic rows for
+ * these two node types and renders this instead. Plain `config`/`onChange`
+ * props, not React Hook Form - see `NodeInlineForm.tsx`'s own docstring
+ * for why.
  */
 
 interface RecordModuleFieldsProps {
   nodeType: "records.query" | "records.upsert";
   modules: ModuleCatalogEntry[];
-  watch: UseFormWatch<Record<string, unknown>>;
-  setValue: UseFormSetValue<Record<string, unknown>>;
+  config: Record<string, unknown>;
+  onChange: (patch: Record<string, unknown>) => void;
 }
 
-export function RecordModuleFields({ nodeType, modules, watch, setValue }: RecordModuleFieldsProps) {
-  const moduleKey = String(watch("module") ?? "");
+export function RecordModuleFields({ nodeType, modules, config, onChange }: RecordModuleFieldsProps) {
+  const moduleKey = String(config.module ?? "");
   const defaultOperation = nodeType === "records.query" ? "list" : "create";
-  const operation = String(watch("operation") ?? defaultOperation);
+  const operation = String(config.operation ?? defaultOperation);
   const selectedModule = modules.find((m) => m.key === moduleKey);
 
   const dataKey = nodeType === "records.query" ? "filters" : "fields";
-  const dataValue = (watch(dataKey) as Record<string, unknown> | undefined) ?? {};
+  const dataValue = (config[dataKey] as Record<string, unknown> | undefined) ?? {};
 
   const showItemId =
     (nodeType === "records.query" && operation === "get") || (nodeType === "records.upsert" && operation === "update");
@@ -36,7 +37,7 @@ export function RecordModuleFields({ nodeType, modules, watch, setValue }: Recor
     !(nodeType === "records.query" && operation === "get") && !!selectedModule && selectedModule.fields.length > 0;
 
   function updateDataField(key: string, fieldValue: unknown) {
-    setValue(dataKey, { ...dataValue, [key]: fieldValue }, { shouldDirty: true });
+    onChange({ [dataKey]: { ...dataValue, [key]: fieldValue } });
   }
 
   return (
@@ -47,9 +48,9 @@ export function RecordModuleFields({ nodeType, modules, watch, setValue }: Recor
         </label>
         <select
           id="record-module"
-          className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
+          className="nodrag h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
           value={moduleKey}
-          onChange={(e) => setValue("module", e.target.value, { shouldDirty: true })}
+          onChange={(e) => onChange({ module: e.target.value })}
         >
           <option value="">-- choose a module --</option>
           {modules.map((m) => (
@@ -66,10 +67,10 @@ export function RecordModuleFields({ nodeType, modules, watch, setValue }: Recor
           <label className="text-xs font-medium text-foreground" htmlFor="record-item-id">
             Record id
           </label>
-          <Input
+          <DraftInput
             id="record-item-id"
-            value={String(watch("item_id") ?? "")}
-            onChange={(e) => setValue("item_id", e.target.value, { shouldDirty: true })}
+            value={String(config.item_id ?? "")}
+            onCommit={(next) => onChange({ item_id: next })}
             placeholder="e.g. {{previous_step.reply.id}}"
           />
         </div>
@@ -89,13 +90,13 @@ export function RecordModuleFields({ nodeType, modules, watch, setValue }: Recor
               {field.field_type === "boolean" ? (
                 <input
                   type="checkbox"
-                  className="h-4 w-4"
+                  className="nodrag h-4 w-4"
                   checked={Boolean(dataValue[field.key])}
                   onChange={(e) => updateDataField(field.key, e.target.checked)}
                 />
               ) : field.field_type === "select" && field.options ? (
                 <select
-                  className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                  className="nodrag h-9 rounded-md border border-input bg-card px-2 text-sm"
                   value={String(dataValue[field.key] ?? "")}
                   onChange={(e) => updateDataField(field.key, e.target.value)}
                 >
@@ -107,10 +108,10 @@ export function RecordModuleFields({ nodeType, modules, watch, setValue }: Recor
                   ))}
                 </select>
               ) : (
-                <Input
+                <DraftInput
                   type={field.field_type === "number" ? "number" : "text"}
                   value={String(dataValue[field.key] ?? "")}
-                  onChange={(e) => updateDataField(field.key, e.target.value)}
+                  onCommit={(next) => updateDataField(field.key, field.field_type === "number" ? Number(next) || 0 : next)}
                 />
               )}
             </div>

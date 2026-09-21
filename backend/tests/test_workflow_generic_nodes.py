@@ -163,6 +163,10 @@ async def test_http_request_interpolates_and_returns_parsed_json(monkeypatch: py
         return _FakeHttpResponse(200, json_body={"ok": True})
 
     monkeypatch.setattr(http_request_node.httpx.AsyncClient, "request", fake_request)
+    # This test is about interpolation/response-parsing, not the SSRF
+    # guard (covered separately below) - stub it out rather than depend on
+    # real DNS resolution of "example.com" in CI.
+    monkeypatch.setattr(http_request_node, "ensure_public_http_url", lambda url: None)
 
     context = _context(
         {
@@ -189,6 +193,7 @@ async def test_http_request_4xx_is_a_failure_not_an_exception(monkeypatch: pytes
         return _FakeHttpResponse(404, text="not found")
 
     monkeypatch.setattr(http_request_node.httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(http_request_node, "ensure_public_http_url", lambda url: None)
 
     context = _context({"url": "https://example.com/missing"}, {})
     result = await http_request_node.HttpRequestExecutor().execute(context)
@@ -202,10 +207,42 @@ async def test_http_request_5xx_raises_for_retry(monkeypatch: pytest.MonkeyPatch
         return _FakeHttpResponse(503)
 
     monkeypatch.setattr(http_request_node.httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(http_request_node, "ensure_public_http_url", lambda url: None)
 
     context = _context({"url": "https://example.com/flaky"}, {})
     with pytest.raises(RuntimeError, match="503"):
         await http_request_node.HttpRequestExecutor().execute(context)
+
+
+async def test_http_request_blocks_ssrf_against_a_private_address() -> None:
+    """No monkeypatch of `ensure_public_http_url` here - this is the guard
+    itself under test, against a literal IP (no real DNS needed)."""
+    context = _context({"url": "http://169.254.169.254/latest/meta-data/"}, {})
+    result = await http_request_node.HttpRequestExecutor().execute(context)
+
+    assert isinstance(result, Failure)
+    assert "not allowed" in result.error or "non-public" in result.error
+
+
+async def test_http_request_blocks_loopback_and_private_ranges() -> None:
+    for url in (
+        "http://127.0.0.1/admin",
+        "http://localhost/admin",
+        "http://10.0.0.5/internal",
+        "http://192.168.1.1/router",
+        "http://[::1]/admin",
+    ):
+        context = _context({"url": url}, {})
+        result = await http_request_node.HttpRequestExecutor().execute(context)
+        assert isinstance(result, Failure), f"expected {url!r} to be blocked"
+
+
+async def test_http_request_blocks_non_http_schemes() -> None:
+    context = _context({"url": "ftp://example.com/file"}, {})
+    result = await http_request_node.HttpRequestExecutor().execute(context)
+
+    assert isinstance(result, Failure)
+    assert "scheme" in result.error
 
 
 # --------------------------------------------------------------------------
@@ -217,6 +254,19 @@ async def test_multi_branch_config_requires_at_least_one_case() -> None:
     executor = multi_branch_node.MultiBranchExecutor()
     with pytest.raises(ValidationError):
         executor.validate_config({"cases": []})
+
+
+async def test_multi_branch_case_rejects_an_invalid_operator() -> None:
+    # `MultiBranchCase.operator` used to be a plain `str` - the only node in
+    # this codebase letting a workflow author type an unvalidated operator
+    # string. It's now the same `Literal[...]` `condition.field_compare`
+    # already uses (`ComparisonOperator`), so a bad value is rejected at
+    # config-validation time instead of silently never matching at runtime.
+    executor = multi_branch_node.MultiBranchExecutor()
+    with pytest.raises(ValidationError):
+        executor.validate_config(
+            {"cases": [{"label": "x", "field_path": "trigger.amount", "operator": "not_a_real_operator"}]}
+        )
 
 
 async def test_multi_branch_declared_output_handles_reflects_config() -> None:

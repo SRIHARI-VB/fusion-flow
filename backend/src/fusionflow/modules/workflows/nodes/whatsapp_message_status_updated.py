@@ -56,6 +56,7 @@ class WhatsAppMessageStatusUpdatedExecutor(NodeExecutor):
     config_model = WhatsAppMessageStatusUpdatedConfig
     required_connector_type_key = "whatsapp"
     output_schema = _OUTPUT_SCHEMA
+    applicable_purposes = ["automation"]
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         return Success(output=dict(context.variables.get("trigger", {})))
@@ -72,5 +73,6 @@ trigger_registry.register(
         config_model=_executor.config_model,
         required_connector_type_key=_executor.required_connector_type_key,
         output_schema=_executor.output_schema,
+        applicable_purposes=_executor.applicable_purposes,
     )
 )

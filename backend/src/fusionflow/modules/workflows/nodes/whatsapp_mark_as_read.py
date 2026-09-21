@@ -23,7 +23,9 @@ from fusionflow.modules.workflows.nodes._whatsapp_common import resolve_whatsapp
 class MarkAsReadConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     message_id: str = Field(
-        min_length=1, description="Inbound message id, typically '{{trigger.message_id}}'."
+        min_length=1,
+        description="Inbound message id, typically '{{trigger.message_id}}'.",
+        json_schema_extra={"format": "auto_ref", "ref_suffix": "message_id"},
     )
 
 
@@ -36,6 +38,12 @@ class MarkAsReadExecutor(NodeExecutor):
     description = "Marks an inbound WhatsApp message as read."
     config_model = MarkAsReadConfig
     required_connector_type_key = "whatsapp"
+    # Read-receipt bookkeeping, not conversation content - see
+    # whatsapp_find_or_create_customer.py's palette_group for the same reasoning.
+    palette_group = "Advanced"
+    # Only meaningful reacting to an inbound message - no inbound message
+    # exists in a broadcast context.
+    applicable_purposes = ["automation"]
     retryable = True
     max_retries = 2
 

@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { NodeType, WorkflowGraphEdge, WorkflowGraphJson, WorkflowGraphNode, WorkflowNodeData } from "./types";
+import { CONTAINER_HEADER_HEIGHT, CONTAINER_MIN_HEIGHT, CONTAINER_MIN_WIDTH } from "./nodes/ContainerNode";
 
 /** The extra, client-only field denormalized onto every node's `data` so
  * `CardNode`/`ContainerNode` can render an icon/label/ports without a
@@ -84,4 +85,63 @@ export function toGraphJson(nodes: Node<CardNodeData>[], edges: Edge[]): Workflo
       ...(edge.data ? { data: edge.data } : {}),
     })),
   };
+}
+
+/** Gap kept between a container's fitted edge and its farthest child's own
+ * right/bottom edge, so a snug-fit container doesn't clip a child's own
+ * border/shadow. Applied once (not per side) since a child's `position` is
+ * already relative to the container's top-left — this only pads the far
+ * edge the bounding-box walk actually measures. */
+const CONTAINER_FIT_PADDING = 24;
+
+/** Fallback size for a child whose `measured` dimensions haven't been
+ * reported yet (before React Flow's first `ResizeObserver` pass — e.g.
+ * right after hydration or right after a fresh drop) — 256 matches
+ * `CardNode`'s own fixed `w-64` width; 80 is a compact unconfigured card's
+ * typical rendered height (header + one summary line). */
+const CHILD_FALLBACK_WIDTH = 256;
+const CHILD_FALLBACK_HEIGHT = 80;
+
+/** Pure "does this container need to grow/shrink to fit its children"
+ * calculation for the container auto-fit-to-children feature — walks every
+ * node whose `parentId` is `containerId`, finds the bounding box of their
+ * `position` + `measured` (or fallback) size, and returns the container
+ * size that would snugly wrap them with `CONTAINER_FIT_PADDING` room to
+ * spare and `CONTAINER_HEADER_HEIGHT` reserved above them for the
+ * container's own header chrome. Returns `null` — "no resize needed" — when
+ * the container has no children, isn't found, or the computed size already
+ * matches its current `width`/`height`, so a caller that always applies a
+ * non-null result can't get stuck in a resize -> children move -> resize
+ * loop. Never mutates `nodes`; the caller (`WorkflowEditorPage.tsx`'s
+ * auto-fit effect) is responsible for actually calling `setNodes`. */
+export function fitContainerToChildren(
+  containerId: string,
+  nodes: Node<CardNodeData>[],
+): { width: number; height: number } | null {
+  const container = nodes.find((n) => n.id === containerId);
+  if (!container) return null;
+
+  const children = nodes.filter((n) => n.parentId === containerId);
+  if (children.length === 0) return null;
+
+  let maxRight = 0;
+  let maxBottom = 0;
+  for (const child of children) {
+    const width = child.measured?.width ?? CHILD_FALLBACK_WIDTH;
+    const height = child.measured?.height ?? CHILD_FALLBACK_HEIGHT;
+    maxRight = Math.max(maxRight, child.position.x + width);
+    maxBottom = Math.max(maxBottom, child.position.y + height);
+  }
+
+  const width = Math.max(CONTAINER_MIN_WIDTH, Math.round(maxRight + CONTAINER_FIT_PADDING));
+  const height = Math.max(
+    CONTAINER_MIN_HEIGHT,
+    Math.round(maxBottom + CONTAINER_FIT_PADDING + CONTAINER_HEADER_HEIGHT),
+  );
+
+  const currentWidth = container.width ?? CONTAINER_MIN_WIDTH;
+  const currentHeight = container.height ?? CONTAINER_MIN_HEIGHT;
+  if (width === currentWidth && height === currentHeight) return null;
+
+  return { width, height };
 }

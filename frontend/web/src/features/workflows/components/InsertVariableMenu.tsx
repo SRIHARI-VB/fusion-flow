@@ -3,9 +3,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 /**
  * Small "insert variable" popover attached next to a freeform config field
- * (`text`/`json_object` - see `NodeConfigDrawer.tsx`/`DynamicArrayFields.tsx`)
+ * (`text`/`json_object` - see `NodeInlineForm.tsx`/`DynamicArrayFields.tsx`)
  * - lists every upstream node's declared `output_schema` leaf paths
- * (`WorkflowEditorPage.tsx`'s backward-BFS-derived `upstreamSuggestions`,
+ * (`WorkflowEditorPage.tsx`'s backward-BFS-derived `upstreamSuggestionsByNode`,
  * flattened via `jsonSchemaForm.ts::flattenOutputPaths`), each rendered as
  * a clickable `{{path}}` row. Renders nothing when there's nothing to
  * offer (a node with no upstream nodes, or none of them declaring an

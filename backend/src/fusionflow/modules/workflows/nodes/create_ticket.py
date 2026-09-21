@@ -59,7 +59,7 @@ class CreateTicketConfig(BaseModel):
     customer_id: str | None = Field(
         default=None,
         description=(
-            "Optional existing customer id (UUID, may reference the run context). "
+            "Optional existing customer id (may reference the run context). "
             "Leave unset when the triggering event doesn't identify a known customer."
         ),
     )
@@ -73,6 +73,9 @@ class CreateTicketExecutor(NodeExecutor):
     description = "Creates a support ticket for this business, optionally linked to an existing customer."
     config_model = CreateTicketConfig
     required_connector_type_key = "tickets"
+    # A support ticket for one active conversation - not a fit for a
+    # broadcast's fan-out to many recipients at once.
+    applicable_purposes = ["automation"]
     output_schema = _OUTPUT_SCHEMA
     # A transient DB hiccup during the insert is the retry target here -
     # see send_whatsapp_message.py's matching comment for why the service

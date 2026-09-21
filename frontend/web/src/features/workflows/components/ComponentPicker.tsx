@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Blocks, X, type LucideIcon } from "lucide-react";
+import { Blocks, Check, X, type LucideIcon } from "lucide-react";
 import { Badge, Button, cn } from "@fusion-flow/ui";
 import { listComponents } from "../api";
 import type { WorkflowComponent } from "../types";
 import { NODE_ICONS } from "../nodes/cardSummaries";
+import { useConnectorInstances } from "../../connectors/hooks";
+
+function connectorLabel(key: string): string {
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
 
 /**
  * "Insert a Component" — a floating overlay (same treatment
@@ -30,6 +35,8 @@ export function ComponentPicker({ onSelect, onClose, isInserting }: ComponentPic
     queryKey: ["workflow-components"],
     queryFn: listComponents,
   });
+  const { data: connectorInstances = [] } = useConnectorInstances();
+  const connectedKeys = new Set(connectorInstances.map((c) => c.connector_type_key));
 
   return (
     <div className="absolute inset-0 z-20 flex items-start justify-center overflow-y-auto bg-background/70 p-6">
@@ -82,6 +89,30 @@ export function ComponentPicker({ onSelect, onClose, isInserting }: ComponentPic
                 <span className="text-sm font-medium text-foreground">{component.name}</span>
                 {component.description && (
                   <span className="text-xs text-muted-foreground">{component.description}</span>
+                )}
+                {component.required_connector_type_keys && component.required_connector_type_keys.length > 0 && (
+                  <span className="flex flex-wrap gap-1">
+                    {component.required_connector_type_keys.map((key) => {
+                      const connected = connectedKeys.has(key);
+                      return (
+                        <span
+                          key={key}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px]",
+                            connected
+                              ? "border-success/40 bg-success/10 text-success"
+                              : "border-border bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {connected && <Check className="h-2.5 w-2.5" />}
+                          {connectorLabel(key)}
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
+                {component.setup_notes && (
+                  <span className="text-[11px] italic text-muted-foreground">{component.setup_notes}</span>
                 )}
               </button>
             );

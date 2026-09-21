@@ -10,6 +10,7 @@ import {
   Globe,
   LifeBuoy,
   ListChecks,
+  Megaphone,
   MessageCircle,
   MessageSquareText,
   Package,
@@ -20,18 +21,19 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-
 /**
- * Human-readable card summaries + real per-node-type icons + dynamic
- * output-port derivation for the composable-builder redesign — the pieces
- * that make `CardNode.tsx` show "Ask: 'Would you like fries?' (2 options)"
- * instead of a raw `question: Would you like fries?` config line, and a
- * distinct icon per node concept instead of only 3 shared kind badges.
+ * Real per-node-type icons + dynamic output-port derivation for the
+ * composable-builder redesign — the pieces that give each node concept a
+ * distinct icon (instead of only 3 shared kind badges) and show exactly
+ * the output ports a node instance's compiled graph will actually wire
+ * (`whatsapp.ask_choice`/`flow.confirm`/`condition.multi_branch`'s
+ * config-dependent branches).
  *
- * Kept as its own module (not inlined into `CardNode.tsx`) so the ~7
- * bespoke-summary node types don't clutter the component itself, and so
- * `deriveOutputHandles`'s dispatch table sits next to the summaries it's
- * conceptually paired with.
+ * The one-line config summary this module used to also provide
+ * (`summarizeNodeConfig`) was retired once every field rendered inline on
+ * the card itself (see `NodeInlineForm.tsx`) - showing a truncated preview
+ * above the real, fully-editable field was redundant once that field is
+ * always visible, not hidden behind a drawer.
  */
 
 /** kebab-case `icon` key (matches this codebase's `WorkflowNodeTemplate`/
@@ -59,77 +61,34 @@ export const NODE_ICONS: Record<string, LucideIcon> = {
   bell: Bell,
   star: Star,
   calendar: Calendar,
+  megaphone: Megaphone,
 };
 
-export type ConnectorInstanceLabelFn = (connectorInstanceId: string) => string | undefined;
-
-function resolveConnectorLabel(
-  config: Record<string, unknown>,
-  key: string,
-  connectorInstanceLabel?: ConnectorInstanceLabelFn,
-): string | undefined {
-  const raw = config[key];
-  if (typeof raw !== "string" || !raw) return undefined;
-  return connectorInstanceLabel?.(raw) ?? raw;
+/** Left-edge accent + icon-badge colors per `NodeType.palette_group` — the
+ * single source of truth imported by both `CardNode.tsx` (per-card accent)
+ * and `NodePalette.tsx` (palette row/group accent, via `.border`), so a
+ * canvas full of cards and the palette that spawned them are consistently
+ * pattern-matchable by category. An unmapped group falls back to
+ * `DEFAULT_GROUP_COLOR`, never breaking for a future group this map hasn't
+ * caught up with yet. */
+export interface GroupColorTokens {
+  border: string;
+  iconBg: string;
+  iconText: string;
 }
+
+export const GROUP_COLORS: Record<string, GroupColorTokens> = {
+  Triggers: { border: "border-l-red-500", iconBg: "bg-red-100", iconText: "text-red-600" },
+  "Talk to Customer": { border: "border-l-emerald-500", iconBg: "bg-emerald-100", iconText: "text-emerald-600" },
+  Records: { border: "border-l-blue-500", iconBg: "bg-blue-100", iconText: "text-blue-600" },
+  Payments: { border: "border-l-amber-500", iconBg: "bg-amber-100", iconText: "text-amber-600" },
+  "Flow Control": { border: "border-l-slate-500", iconBg: "bg-slate-100", iconText: "text-slate-600" },
+  Advanced: { border: "border-l-gray-400", iconBg: "bg-gray-100", iconText: "text-gray-600" },
+};
+export const DEFAULT_GROUP_COLOR: GroupColorTokens = GROUP_COLORS.Advanced;
 
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
-}
-
-/** One-line, human-readable summary of a node's current config, for the
- * ~7 new composite node types this redesign introduces. Returns `null`
- * for every other (pre-existing) node type - `CardNode.tsx` falls back to
- * its own existing raw key:value preview in that case, so none of the
- * other ~60 node types change behavior. Never throws - a config shape
- * this function doesn't expect just falls through to `null` rather than
- * crashing the canvas (`CardNode.tsx` wraps the call in try/catch too, as
- * a second line of defense). */
-export function summarizeNodeConfig(
-  nodeType: string,
-  config: Record<string, unknown>,
-  connectorInstanceLabel?: ConnectorInstanceLabelFn,
-): string | null {
-  switch (nodeType) {
-    case "whatsapp.ask_choice": {
-      const question = asString(config.question);
-      const source = config.source as { kind?: string; options?: { id?: string }[]; module?: string } | undefined;
-      const countLabel =
-        source?.kind === "static"
-          ? `${source.options?.length ?? 0} option${(source.options?.length ?? 0) === 1 ? "" : "s"}`
-          : source?.kind === "module"
-            ? `from ${source.module || "a module"}`
-            : "no options yet";
-      const channel = resolveConnectorLabel(config, "connector_instance_id", connectorInstanceLabel);
-      return `Ask${channel ? ` (${channel})` : ""}: "${question}" (${countLabel})`;
-    }
-    case "flow.confirm": {
-      const question = asString(config.question);
-      const channel = resolveConnectorLabel(config, "connector_instance_id", connectorInstanceLabel);
-      return `Confirm${channel ? ` (${channel})` : ""}: "${question}"`;
-    }
-    case "whatsapp.collect_text": {
-      const question = asString(config.question);
-      const channel = resolveConnectorLabel(config, "connector_instance_id", connectorInstanceLabel);
-      return `Collect a reply${channel ? ` (${channel})` : ""} to: "${question}"`;
-    }
-    case "records.query":
-    case "records.upsert": {
-      const operation = asString(config.operation, "?");
-      const module = asString(config.module, "a");
-      const verb = operation ? operation.charAt(0).toUpperCase() + operation.slice(1) : "?";
-      return `${verb} ${module} record${operation === "list" ? "s" : ""}`;
-    }
-    case "payments.send_razorpay_link": {
-      const amount = config.amount;
-      const currency = asString(config.currency, "INR");
-      const channel = resolveConnectorLabel(config, "whatsapp_connector_instance_id", connectorInstanceLabel);
-      const amountLabel = amount === undefined || amount === null || amount === "" ? "?" : String(amount);
-      return `Send a payment link${channel ? ` via ${channel}` : ""} for ${amountLabel} ${currency}`;
-    }
-    default:
-      return null;
-  }
 }
 
 /** Which output ports a node instance should show, given its own config -

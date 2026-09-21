@@ -42,7 +42,11 @@ _OUTPUT_SCHEMA = {
 
 
 class FindOrCreateCustomerConfig(BaseModel):
-    phone: str = Field(min_length=1, description="Phone number, typically '{{trigger.from}}'.")
+    phone: str = Field(
+        min_length=1,
+        description="Phone number, typically '{{trigger.from}}'.",
+        json_schema_extra={"format": "recipient"},
+    )
     name: str | None = Field(
         default=None, description="Fallback name to use if a new customer must be created."
     )
@@ -57,6 +61,15 @@ class FindOrCreateCustomerExecutor(NodeExecutor):
     description = "Looks up a Customer by phone number (e.g. the WhatsApp sender), creating one if none exists."
     config_model = FindOrCreateCustomerConfig
     required_connector_type_key = "customers"
+    # Account/CRM utility, not conversation content - keep it out of "Talk to
+    # Customer" (the daily-use group for a WhatsApp-flow builder) so that
+    # group stays focused on messages a customer actually sees.
+    palette_group = "Advanced"
+    # Per-recipient identity resolution is legitimate inside a broadcast's
+    # loop too (e.g. resolve/create a Customer record per recipient before
+    # personalizing a send) - explicit "both", not just left unset, for
+    # clarity next to its automation-only siblings in this same file family.
+    applicable_purposes = ["automation", "broadcast"]
     output_schema = _OUTPUT_SCHEMA
     retryable = True
     max_retries = 2

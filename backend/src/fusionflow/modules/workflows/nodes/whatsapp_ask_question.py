@@ -6,11 +6,11 @@ until this same customer's next reply arrives on the same channel. The
 (size, then shipping address, then color, ...) — see `engine/run_loop.py`'s
 `Suspend`/`RunSuspended`/`resume_run`.
 
-Sends via the same adapter calls as `send_whatsapp_message.py`/
-`whatsapp_send_interactive_buttons.py`/`whatsapp_send_interactive_list.py`;
-`buttons`/`sections` reuse those two node types' own config row shapes
-(`ButtonEntry`/`ListSection`) so an author reuses a familiar field
-vocabulary here rather than a new one. Both fields are shown unconditionally
+Sends via the same adapter calls as `whatsapp_send_message.py`'s
+text/buttons/list content branches; `buttons`/`sections` reuse that node's
+own config row shapes (`ButtonEntry`/`ListSection`, now homed in
+`_whatsapp_common.py`) so an author reuses a familiar field vocabulary
+here rather than a new one. Both fields are shown unconditionally
 regardless of `input_type` (no conditional-field UI infrastructure needed
 this phase) — an author simply ignores whichever doesn't apply to their
 chosen `input_type`.
@@ -32,26 +32,25 @@ from fusionflow.modules.workflows.engine.registry import (
     node_executor_registry,
 )
 from fusionflow.modules.workflows.engine.templating import interpolate
-from fusionflow.modules.workflows.nodes._whatsapp_common import resolve_whatsapp_instance
-from fusionflow.modules.workflows.nodes.whatsapp_send_interactive_buttons import ButtonEntry
-from fusionflow.modules.workflows.nodes.whatsapp_send_interactive_list import ListSection
+from fusionflow.modules.workflows.nodes._whatsapp_common import ButtonEntry, ListSection, resolve_whatsapp_instance
 
 
 class AskQuestionConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(
         min_length=1,
-        description="Recipient wa_id, typically {{trigger.from}}. Also becomes the suspend's correlation key.",
+        description="The customer's WhatsApp number to send the question to (usually {{trigger.from}}).",
+        json_schema_extra={"format": "recipient"},
     )
     input_type: Literal["text", "buttons", "list"]
     question: str = Field(
         min_length=1, description="The question's body text.", json_schema_extra={"format": "textarea"}
     )
     buttons: list[ButtonEntry] | None = Field(
-        default=None, description="Only meaningful when input_type='buttons' (up to 3, per Meta's own limit)."
+        default=None, description="Only used when the input type is 'buttons' (up to 3, per WhatsApp's own limit)."
     )
     sections: list[ListSection] | None = Field(
-        default=None, description="Only meaningful when input_type='list' (up to 10 rows total)."
+        default=None, description="Only used when the input type is 'list' (up to 10 rows total)."
     )
 
 
@@ -64,6 +63,11 @@ class AskQuestionExecutor(NodeExecutor):
     description = "Sends a question, then pauses the run until this customer's next reply arrives."
     config_model = AskQuestionConfig
     can_suspend = True
+    # Pausing a run to wait for one reply can't work inside a broadcast's
+    # `flow.loop` fan-out (the validator already rejects any `can_suspend`
+    # node inside a container - see `validation.py`'s "no suspend in
+    # container" rule) - automation-only, not just a UX preference.
+    applicable_purposes = ["automation"]
     required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2

@@ -37,9 +37,9 @@ _OUTPUT_SCHEMA = {"type": "object"}
 class RecordQueryConfig(BaseModel):
     module: str = Field(min_length=1, description="Which kind of record - a fixed module or one of your own.")
     operation: Literal["list", "get"] = "list"
-    filters: dict[str, Any] = Field(default_factory=dict, description="Only used when operation='list'.")
-    limit: int = Field(default=DEFAULT_LIST_LIMIT, ge=1, le=MAX_LIST_LIMIT, description="Only used when operation='list'.")
-    item_id: str | None = Field(default=None, description="Record id. Required when operation='get'.")
+    filters: dict[str, Any] = Field(default_factory=dict, description="Only used when looking up a list of records.")
+    limit: int = Field(default=DEFAULT_LIST_LIMIT, ge=1, le=MAX_LIST_LIMIT, description="Only used when looking up a list of records.")
+    item_id: str | None = Field(default=None, description="Record id. Required when looking up a single record.")
 
 
 class RecordQueryExecutor(NodeExecutor):
@@ -51,6 +51,9 @@ class RecordQueryExecutor(NodeExecutor):
     label = "Find or Get a Record"
     description = "Looks up records (a list, or one by id) from any of your modules - Products, Orders, or one you created yourself."
     config_model = RecordQueryConfig
+    # A generic read, useful for per-recipient personalization inside a
+    # broadcast's loop too, not just one-conversation automation.
+    applicable_purposes = ["automation", "broadcast"]
     output_schema = _OUTPUT_SCHEMA
 
     async def execute(self, context: ExecutionContext) -> NodeResult:

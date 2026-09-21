@@ -47,10 +47,14 @@ _LINK_PLACEHOLDER = "{{link}}"
 class SendRazorpayLinkConfig(BaseModel):
     razorpay_connector_instance_id: str = Field(min_length=1)
     whatsapp_connector_instance_id: str = Field(min_length=1)
-    to: str = Field(min_length=1, description="WhatsApp recipient wa_id for the payment-link message.")
+    to: str = Field(
+        min_length=1,
+        description="WhatsApp recipient wa_id for the payment-link message.",
+        json_schema_extra={"format": "recipient"},
+    )
     amount: str = Field(min_length=1, description="Templatable; parsed as a decimal, e.g. '{{order.total_amount}}'.")
     currency: str = Field(default="INR")
-    order_id: str = Field(min_length=1, description="Templatable; parsed as a UUID, e.g. '{{create_order.order_id}}'.")
+    order_id: str = Field(min_length=1, description="Templatable; the order this payment is for, e.g. '{{create_order.order_id}}'.")
     customer_contact: str = Field(min_length=1, description="Templatable phone/email Razorpay requires.")
     message_template: str = Field(
         default=f"Please complete your payment: {_LINK_PLACEHOLDER}",
@@ -76,6 +80,9 @@ class SendRazorpayLinkExecutor(NodeExecutor):
     label = "Send Payment Link"
     description = "Creates a Razorpay payment link and sends it to the customer over WhatsApp."
     config_model = SendRazorpayLinkConfig
+    # Tied to a single active conversation's payment - not a fit for a
+    # broadcast's fan-out to many recipients at once.
+    applicable_purposes = ["automation"]
     output_schema = _OUTPUT_SCHEMA
     retryable = True
     max_retries = 2

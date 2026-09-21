@@ -32,6 +32,9 @@ class GetBusinessProfileExecutor(NodeExecutor):
     description = "Reads the connected WhatsApp number's business profile (about, address, description, ...)."
     config_model = GetBusinessProfileConfig
     required_connector_type_key = "whatsapp"
+    # One-time account setup, not conversation content - see
+    # whatsapp_find_or_create_customer.py's palette_group for the same reasoning.
+    palette_group = "Advanced"
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
         config = GetBusinessProfileConfig.model_validate(context.config)

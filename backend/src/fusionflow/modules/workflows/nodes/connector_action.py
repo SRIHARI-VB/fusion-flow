@@ -40,10 +40,10 @@ from fusionflow.modules.workflows.engine.templating import resolve_template_valu
 
 class ConnectorActionConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
-    action: str = Field(min_length=1, description="Adapter-specific action name, e.g. 'send_text_message'.")
+    action: str = Field(min_length=1, description="Which action to run on the connected integration, e.g. 'send_text_message'.")
     params: dict[str, Any] = Field(
         default_factory=dict,
-        description="Passed to the adapter's perform_action. String values may use '{{dot.path}}' templating.",
+        description="The settings for that action. String values may use '{{dot.path}}' templating.",
     )
 
 

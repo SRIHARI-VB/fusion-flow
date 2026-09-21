@@ -42,7 +42,9 @@ _OPTIONS = [{"id": "yes", "label": "Yes"}, {"id": "no", "label": "No"}]
 class ConfirmConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     to: str = Field(
-        min_length=1, description="Recipient wa_id, typically {{trigger.from}}. Also the suspend's correlation key."
+        min_length=1,
+        description="The customer's WhatsApp number to send the question to (usually {{trigger.from}}).",
+        json_schema_extra={"format": "recipient"},
     )
     question: str = Field(min_length=1, json_schema_extra={"format": "textarea"})
 
@@ -61,6 +63,9 @@ class ConfirmExecutor(NodeExecutor):
     config_model = ConfirmConfig
     output_schema = _OUTPUT_SCHEMA
     can_suspend = True
+    # See whatsapp_ask_question.py's applicable_purposes comment - pausing
+    # for one reply can't work inside a broadcast's flow.loop fan-out.
+    applicable_purposes = ["automation"]
     required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2

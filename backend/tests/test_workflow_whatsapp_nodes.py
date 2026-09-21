@@ -1,7 +1,8 @@
-"""Offline unit tests for Phase 5's 8 new WhatsApp workflow node executors:
+"""Offline unit tests for Phase 5's new WhatsApp workflow node executors:
 2 triggers (`whatsapp.interactive_reply_received`, `whatsapp.message_status_updated`)
-and 6 actions (`whatsapp.send_media`, `.send_location`, `.send_contact`,
-`.send_interactive_buttons`, `.send_interactive_list`, `.send_template`).
+and the unified `whatsapp.send_message` action's non-text content branches
+(media, location, contact, buttons, list, template) - the text branch is
+covered in `test_workflow_connector_nodes.py`.
 
 Same "no Postgres required" philosophy as `test_workflow_connector_nodes.py`:
 `connector_service.get_instance` (via `_whatsapp_common.resolve_whatsapp_instance`)
@@ -21,12 +22,7 @@ from fusionflow.modules.workflows.engine.registry import ExecutionContext, Failu
 from fusionflow.modules.workflows.nodes import _whatsapp_common
 from fusionflow.modules.workflows.nodes import whatsapp_interactive_reply_received as interactive_trigger_node
 from fusionflow.modules.workflows.nodes import whatsapp_message_status_updated as status_trigger_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_contact as send_contact_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_interactive_buttons as send_buttons_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_interactive_list as send_list_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_location as send_location_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_media as send_media_node
-from fusionflow.modules.workflows.nodes import whatsapp_send_template as send_template_node
+from fusionflow.modules.workflows.nodes import whatsapp_send_message as send_message_node
 
 pytestmark = pytest.mark.asyncio
 
@@ -81,14 +77,20 @@ async def test_message_status_updated_echoes_trigger_payload() -> None:
 
 
 # --------------------------------------------------------------------------
-# whatsapp.send_media
+# whatsapp.send_message - content_type="media"
 # --------------------------------------------------------------------------
 
 
 async def test_send_media_requires_url_or_id() -> None:
-    executor = send_media_node.SendMediaExecutor()
+    executor = send_message_node.SendMessageExecutor()
     with pytest.raises(ValidationError):
-        executor.validate_config({"connector_instance_id": str(uuid.uuid4()), "to": "1", "media_type": "image"})
+        executor.validate_config(
+            {
+                "connector_instance_id": str(uuid.uuid4()),
+                "to": "1",
+                "content": {"content_type": "media", "media_type": "image"},
+            }
+        )
 
 
 async def test_send_media_calls_adapter_with_interpolated_fields(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,18 +105,21 @@ async def test_send_media_calls_adapter_with_interpolated_fields(monkeypatch: py
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_media_node.whatsapp_adapter, "send_media_message", fake_send_media_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_media_message", fake_send_media_message)
 
     context = ExecutionContext(
         session=None, tenant_id=tenant_id, run_id=uuid.uuid4(), node_id="n",
         config={
-            "connector_instance_id": str(instance.id), "to": "{{trigger.from}}", "media_type": "image",
-            "media_url": "https://example.com/pic.jpg", "caption": "hi {{trigger.from}}",
+            "connector_instance_id": str(instance.id), "to": "{{trigger.from}}",
+            "content": {
+                "content_type": "media", "media_type": "image",
+                "media_url": "https://example.com/pic.jpg", "caption": "hi {{trigger.from}}",
+            },
         },
         variables={"trigger": {"from": "15551234567"}},
     )
 
-    result = await send_media_node.SendMediaExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["to"] == "15551234567"
@@ -129,16 +134,20 @@ async def test_send_media_missing_connector_instance_is_a_failure(monkeypatch: p
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
 
     context = _context(
-        {"connector_instance_id": str(uuid.uuid4()), "to": "1", "media_type": "image", "media_url": "https://x/y.jpg"}, {}
+        {
+            "connector_instance_id": str(uuid.uuid4()), "to": "1",
+            "content": {"content_type": "media", "media_type": "image", "media_url": "https://x/y.jpg"},
+        },
+        {},
     )
-    result = await send_media_node.SendMediaExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Failure)
     assert "not found" in result.error
 
 
 # --------------------------------------------------------------------------
-# whatsapp.send_location
+# whatsapp.send_message - content_type="location"
 # --------------------------------------------------------------------------
 
 
@@ -154,27 +163,36 @@ async def test_send_location_calls_adapter(monkeypatch: pytest.MonkeyPatch) -> N
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_location_node.whatsapp_adapter, "send_location_message", fake_send_location_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_location_message", fake_send_location_message)
 
     context = _context(
-        {"connector_instance_id": str(instance.id), "to": "1", "latitude": 12.9, "longitude": 77.5}, {},
+        {
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {"content_type": "location", "latitude": 12.9, "longitude": 77.5},
+        },
+        {},
         session=None,
     )
-    result = await send_location_node.SendLocationExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["latitude"] == 12.9
 
 
 # --------------------------------------------------------------------------
-# whatsapp.send_contact
+# whatsapp.send_message - content_type="contact"
 # --------------------------------------------------------------------------
 
 
 async def test_send_contact_requires_at_least_one_contact() -> None:
-    executor = send_contact_node.SendContactExecutor()
+    executor = send_message_node.SendMessageExecutor()
     with pytest.raises(ValidationError):
-        executor.validate_config({"connector_instance_id": str(uuid.uuid4()), "to": "1", "contacts": []})
+        executor.validate_config(
+            {
+                "connector_instance_id": str(uuid.uuid4()), "to": "1",
+                "content": {"content_type": "contact", "contacts": []},
+            }
+        )
 
 
 async def test_send_contact_calls_adapter_with_contact_list(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,29 +207,36 @@ async def test_send_contact_calls_adapter_with_contact_list(monkeypatch: pytest.
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_contact_node.whatsapp_adapter, "send_contact_message", fake_send_contact_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_contact_message", fake_send_contact_message)
 
     context = _context(
-        {"connector_instance_id": str(instance.id), "to": "1", "contacts": [{"name": "Asha", "phone": "1"}]}, {},
+        {
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {"content_type": "contact", "contacts": [{"name": "Asha", "phone": "1"}]},
+        },
+        {},
     )
-    result = await send_contact_node.SendContactExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["contacts"] == [{"name": "Asha", "phone": "1"}]
 
 
 # --------------------------------------------------------------------------
-# whatsapp.send_interactive_buttons / send_interactive_list
+# whatsapp.send_message - content_type="buttons" / "list"
 # --------------------------------------------------------------------------
 
 
 async def test_send_interactive_buttons_rejects_more_than_three() -> None:
-    executor = send_buttons_node.SendInteractiveButtonsExecutor()
+    executor = send_message_node.SendMessageExecutor()
     with pytest.raises(ValidationError):
         executor.validate_config(
             {
-                "connector_instance_id": str(uuid.uuid4()), "to": "1", "body_text": "pick",
-                "buttons": [{"id": str(i), "title": str(i)} for i in range(4)],
+                "connector_instance_id": str(uuid.uuid4()), "to": "1",
+                "content": {
+                    "content_type": "buttons", "body_text": "pick",
+                    "buttons": [{"id": str(i), "title": str(i)} for i in range(4)],
+                },
             }
         )
 
@@ -228,16 +253,19 @@ async def test_send_interactive_buttons_calls_adapter(monkeypatch: pytest.Monkey
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_buttons_node.whatsapp_adapter, "send_interactive_message", fake_send_interactive_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_interactive_message", fake_send_interactive_message)
 
     context = _context(
         {
-            "connector_instance_id": str(instance.id), "to": "1", "body_text": "pick one",
-            "buttons": [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}],
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {
+                "content_type": "buttons", "body_text": "pick one",
+                "buttons": [{"id": "yes", "title": "Yes"}, {"id": "no", "title": "No"}],
+            },
         },
         {},
     )
-    result = await send_buttons_node.SendInteractiveButtonsExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["interactive_type"] == "button"
@@ -245,15 +273,18 @@ async def test_send_interactive_buttons_calls_adapter(monkeypatch: pytest.Monkey
 
 
 async def test_send_interactive_list_rejects_more_than_ten_rows_total() -> None:
-    executor = send_list_node.SendInteractiveListExecutor()
+    executor = send_message_node.SendMessageExecutor()
     with pytest.raises(ValidationError):
         executor.validate_config(
             {
-                "connector_instance_id": str(uuid.uuid4()), "to": "1", "body_text": "pick",
-                "sections": [
-                    {"title": "A", "rows": [{"id": str(i), "title": str(i)} for i in range(6)]},
-                    {"title": "B", "rows": [{"id": str(i), "title": str(i)} for i in range(6, 11)]},
-                ],
+                "connector_instance_id": str(uuid.uuid4()), "to": "1",
+                "content": {
+                    "content_type": "list", "body_text": "pick",
+                    "sections": [
+                        {"title": "A", "rows": [{"id": str(i), "title": str(i)} for i in range(6)]},
+                        {"title": "B", "rows": [{"id": str(i), "title": str(i)} for i in range(6, 11)]},
+                    ],
+                },
             }
         )
 
@@ -270,16 +301,19 @@ async def test_send_interactive_list_calls_adapter(monkeypatch: pytest.MonkeyPat
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_list_node.whatsapp_adapter, "send_interactive_message", fake_send_interactive_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_interactive_message", fake_send_interactive_message)
 
     context = _context(
         {
-            "connector_instance_id": str(instance.id), "to": "1", "body_text": "pick",
-            "sections": [{"title": "Support", "rows": [{"id": "billing", "title": "Billing"}]}],
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {
+                "content_type": "list", "body_text": "pick",
+                "sections": [{"title": "Support", "rows": [{"id": "billing", "title": "Billing"}]}],
+            },
         },
         {},
     )
-    result = await send_list_node.SendInteractiveListExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["interactive_type"] == "list"
@@ -287,7 +321,7 @@ async def test_send_interactive_list_calls_adapter(monkeypatch: pytest.MonkeyPat
 
 
 # --------------------------------------------------------------------------
-# whatsapp.send_template
+# whatsapp.send_message - content_type="template"
 # --------------------------------------------------------------------------
 
 
@@ -315,21 +349,88 @@ async def test_send_template_calls_adapter_when_no_local_template_recorded(monke
         calls.append(kwargs)
 
     monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
-    monkeypatch.setattr(send_template_node.whatsapp_adapter, "send_template_message", fake_send_template_message)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_template_message", fake_send_template_message)
 
     context = _context(
         {
-            "connector_instance_id": str(instance.id), "to": "1", "template_name": "order_confirmation",
-            "language_code": "en_US", "body_variables": ["Asha", "#1234"],
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {
+                "content_type": "template", "template_name": "order_confirmation",
+                "language_code": "en_US", "body_variables": ["Asha", "#1234"],
+            },
         },
         {},
         session=_FakeSessionNoTemplate(),
     )
-    result = await send_template_node.SendTemplateExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Success)
     assert calls[0]["template_name"] == "order_confirmation"
     assert calls[0]["body_variables"] == ["Asha", "#1234"]
+
+
+async def test_send_template_passes_through_media_header_and_button_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    tenant_id = uuid.uuid4()
+    instance = _fake_instance(tenant_id)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_get_instance(session: Any, *, tenant_id: uuid.UUID, instance_id: uuid.UUID) -> ConnectorInstance:
+        return instance
+
+    async def fake_send_template_message(**kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(_whatsapp_common.connector_service, "get_instance", fake_get_instance)
+    monkeypatch.setattr(send_message_node.whatsapp_adapter, "send_template_message", fake_send_template_message)
+
+    context = _context(
+        {
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {
+                "content_type": "template", "template_name": "seasonal_promo",
+                "language_code": "en_US", "header_media_type": "image",
+                "header_media_url": "https://example.com/promo.jpg",
+                "button_url_params": ["abc123"],
+            },
+        },
+        {},
+        session=_FakeSessionNoTemplate(),
+    )
+    result = await send_message_node.SendMessageExecutor().execute(context)
+
+    assert isinstance(result, Success)
+    assert calls[0]["header_media_type"] == "image"
+    assert calls[0]["header_media_url"] == "https://example.com/promo.jpg"
+    assert calls[0]["header_variable"] is None
+    assert calls[0]["button_url_params"] == ["abc123"]
+
+
+async def test_template_content_rejects_text_and_media_header_together() -> None:
+    with pytest.raises(ValidationError):
+        send_message_node.SendMessageConfig.model_validate(
+            {
+                "connector_instance_id": str(uuid.uuid4()),
+                "to": "1",
+                "content": {
+                    "content_type": "template", "template_name": "x", "language_code": "en_US",
+                    "header_variable": "Asha", "header_media_type": "image", "header_media_url": "https://x",
+                },
+            }
+        )
+
+
+async def test_template_content_rejects_media_header_without_url_or_id() -> None:
+    with pytest.raises(ValidationError):
+        send_message_node.SendMessageConfig.model_validate(
+            {
+                "connector_instance_id": str(uuid.uuid4()),
+                "to": "1",
+                "content": {
+                    "content_type": "template", "template_name": "x", "language_code": "en_US",
+                    "header_media_type": "image",
+                },
+            }
+        )
 
 
 class _FakeTemplate:
@@ -356,13 +457,16 @@ async def test_send_template_fails_clean_on_variable_count_mismatch(monkeypatch:
 
     context = _context(
         {
-            "connector_instance_id": str(instance.id), "to": "1", "template_name": "order_confirmation",
-            "language_code": "en_US", "body_variables": ["OnlyOne"],
+            "connector_instance_id": str(instance.id), "to": "1",
+            "content": {
+                "content_type": "template", "template_name": "order_confirmation",
+                "language_code": "en_US", "body_variables": ["OnlyOne"],
+            },
         },
         {},
         session=_FakeSessionWithTemplate(),
     )
-    result = await send_template_node.SendTemplateExecutor().execute(context)
+    result = await send_message_node.SendMessageExecutor().execute(context)
 
     assert isinstance(result, Failure)
     assert "expects 2 body variable" in result.error

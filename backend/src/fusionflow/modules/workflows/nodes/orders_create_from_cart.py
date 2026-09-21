@@ -59,7 +59,7 @@ _OUTPUT_SCHEMA = {
 
 
 class CreateOrderFromCartConfig(BaseModel):
-    customer_id: str = Field(min_length=1, description="Customer id (UUID), may reference the run context.")
+    customer_id: str = Field(min_length=1, description="Customer id, may reference the run context.")
     cart_items_path: str = Field(
         min_length=1,
         description=(
@@ -84,6 +84,9 @@ class CreateOrderFromCartExecutor(NodeExecutor):
     )
     config_model = CreateOrderFromCartConfig
     required_connector_type_key = "orders"
+    # Assumes an active, singular cart being built in one conversation - not
+    # a fit for a broadcast's fan-out to many recipients at once.
+    applicable_purposes = ["automation"]
     output_schema = _OUTPUT_SCHEMA
     retryable = True
     max_retries = 2

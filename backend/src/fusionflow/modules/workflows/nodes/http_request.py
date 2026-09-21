@@ -13,6 +13,7 @@ simpler cases, not a replacement for the adapter framework).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 import httpx
@@ -27,6 +28,7 @@ from fusionflow.modules.workflows.engine.registry import (
     node_executor_registry,
 )
 from fusionflow.modules.workflows.engine.templating import interpolate, resolve_template_value
+from fusionflow.modules.workflows.engine.url_safety import UnsafeUrlError, ensure_public_http_url
 
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 
@@ -65,6 +67,16 @@ class HttpRequestExecutor(NodeExecutor):
         url = interpolate(config.url, context.variables)
         headers = {k: interpolate(v, context.variables) for k, v in config.headers.items()}
         body = _interpolate_body(config.body, context.variables)
+
+        # SSRF guard - `url` is fully tenant-controlled (see url_safety.py's
+        # docstring). A blocked destination is a config error, not a
+        # transient fault, so it's a Failure (never retried), not a raised
+        # exception. DNS resolution is blocking, so it's offloaded to a
+        # thread rather than stalling the event loop.
+        try:
+            await asyncio.to_thread(ensure_public_http_url, url)
+        except UnsafeUrlError as exc:
+            return Failure(str(exc))
 
         # A network-level exception (timeout, connection refused, ...) is
         # deliberately left un-caught here, not turned into a Failure -

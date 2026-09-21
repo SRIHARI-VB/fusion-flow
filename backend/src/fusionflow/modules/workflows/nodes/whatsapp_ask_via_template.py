@@ -69,7 +69,11 @@ _OUTPUT_SCHEMA = {
 
 class AskViaTemplateConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
-    to: str = Field(min_length=1, description="Recipient wa_id. May reference the run context.")
+    to: str = Field(
+        min_length=1,
+        description="The customer's WhatsApp number to send the template to. May reference the run context.",
+        json_schema_extra={"format": "recipient"},
+    )
     template_name: str = Field(min_length=1)
     language_code: str = Field(min_length=1, description="e.g. 'en_US' - must match the approved template exactly.")
     header_variable: str | None = Field(default=None, description="Only if the template's header has a {{1}} placeholder.")
@@ -93,6 +97,9 @@ class AskViaTemplateExecutor(NodeExecutor):
     config_model = AskViaTemplateConfig
     output_schema = _OUTPUT_SCHEMA
     can_suspend = True
+    # See whatsapp_ask_question.py's applicable_purposes comment - pausing
+    # for one reply can't work inside a broadcast's flow.loop fan-out.
+    applicable_purposes = ["automation"]
     required_connector_type_key = "whatsapp"
     retryable = True
     max_retries = 2

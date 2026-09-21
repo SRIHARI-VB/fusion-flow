@@ -10,9 +10,9 @@ a phone number ->
          the sender's phone - Part D)
       -> module.list (orders, filtered by that customer's id + status,
          capped at 5 - Part B, dispatched through the OrdersQueryAdapter)
-      -> whatsapp.send_template (utility "order_confirmation", using the
-         found/created customer's name and the matched order count as the
-         two body variables)
+      -> whatsapp.send_message (content_type=template, utility
+         "order_confirmation", using the found/created customer's name and
+         the matched order count as the two body variables)
 
 This exercises, in one real published/simulated workflow:
   - `whatsapp.find_or_create_customer` (Part D) actually finding an
@@ -22,9 +22,10 @@ This exercises, in one real published/simulated workflow:
     filtering by `customer_id` interpolated from a prior step's output
     (`{{find_customer.customer.id}}`) and by `status`, capped by the
     server-enforced pagination ceiling
-  - `whatsapp.send_template` composing with `module.list`'s numeric
-    `count` output as a template body variable - proving the module-query
-    nodes and WhatsApp nodes compose in one real run
+  - `whatsapp.send_message`'s template content composing with
+    `module.list`'s numeric `count` output as a template body variable -
+    proving the module-query nodes and WhatsApp nodes compose in one real
+    run
 
 Also directly exercises (outside the simulated workflow, since both are
 negative/boundary cases, not part of the "happy path" scenario) the two
@@ -91,13 +92,16 @@ def build_graph(whatsapp_instance_id: uuid.UUID) -> dict:
             ),
             _node(
                 "send_confirmation",
-                "whatsapp.send_template",
+                "whatsapp.send_message",
                 {
                     "connector_instance_id": instance_id,
                     "to": "{{trigger.from}}",
-                    "template_name": "order_confirmation",
-                    "language_code": "en_US",
-                    "body_variables": ["{{find_customer.customer.name}}", "{{recent_orders.count}}"],
+                    "content": {
+                        "content_type": "template",
+                        "template_name": "order_confirmation",
+                        "language_code": "en_US",
+                        "body_variables": ["{{find_customer.customer.name}}", "{{recent_orders.count}}"],
+                    },
                 },
             ),
         ],

@@ -1,9 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, type LucideIcon } from "lucide-react";
+import { Check, Sparkles, type LucideIcon } from "lucide-react";
 import { Card, CardContent, cn } from "@fusion-flow/ui";
 import { listStarterTemplates } from "../api";
-import type { WorkflowStarterTemplate } from "../types";
+import type { WorkflowPurpose, WorkflowStarterTemplate } from "../types";
 import { NODE_ICONS } from "../nodes/cardSummaries";
+import { useConnectorInstances } from "../../connectors/hooks";
+
+function connectorLabel(key: string): string {
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
 
 /**
  * "Start from a template" step of the New Workflow flow (composable-
@@ -14,22 +19,41 @@ import { NODE_ICONS } from "../nodes/cardSummaries";
  * ordinary node the author can freely edit, remove, or add more of
  * afterward, same as `WorkflowsListPage.tsx`'s own "Cancel" always did for
  * a blank workflow.
+ *
+ * `purpose` (the "Automation" vs. "Broadcast" choice made one step earlier
+ * in the New Workflow flow) narrows the grid to templates whose own
+ * `purpose` is either unset (shown for either purpose) or matches — the
+ * same `template.purpose` the backend now computes server-side straight
+ * from each template's own stored graph (its root trigger's registered
+ * `applicable_purposes`; see `admin.service.compute_workflow_purpose`), so
+ * no new DB column or admin-authored field was needed to close this gap.
+ * "Start from scratch" is always shown regardless of purpose.
  */
 
 interface StarterTemplatePickerProps {
+  purpose: WorkflowPurpose;
   onSelect: (template: WorkflowStarterTemplate | null) => void;
   onCancel: () => void;
+  /** Optional back-navigation to the previous step (`WorkflowsListPage.tsx`'s
+   * "purpose" step) - mirrors the Back/Cancel pairing the "name" step
+   * already uses to go back to this one. Omit to hide the affordance. */
+  onBack?: () => void;
 }
 
 function templateIcon(icon: string | null | undefined): LucideIcon {
   return (icon && NODE_ICONS[icon]) || Sparkles;
 }
 
-export function StarterTemplatePicker({ onSelect, onCancel }: StarterTemplatePickerProps) {
+export function StarterTemplatePicker({ purpose, onSelect, onCancel, onBack }: StarterTemplatePickerProps) {
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ["workflow-starter-templates"],
     queryFn: listStarterTemplates,
   });
+  const { data: connectorInstances = [] } = useConnectorInstances();
+  const connectedKeys = new Set(connectorInstances.map((c) => c.connector_type_key));
+  const visibleTemplates = purpose
+    ? templates.filter((template) => template.purpose == null || template.purpose === purpose)
+    : templates;
 
   return (
     <Card>
@@ -62,7 +86,7 @@ export function StarterTemplatePicker({ onSelect, onCancel }: StarterTemplatePic
             <p className="col-span-full text-xs text-muted-foreground">Loading templates…</p>
           )}
 
-          {templates.map((template) => {
+          {visibleTemplates.map((template) => {
             const Icon = templateIcon(template.icon);
             return (
               <button
@@ -81,12 +105,45 @@ export function StarterTemplatePicker({ onSelect, onCancel }: StarterTemplatePic
                 {template.description && (
                   <span className="text-xs text-muted-foreground">{template.description}</span>
                 )}
+                {template.required_connector_type_keys && template.required_connector_type_keys.length > 0 && (
+                  <span className="flex flex-wrap gap-1">
+                    {template.required_connector_type_keys.map((key) => {
+                      const connected = connectedKeys.has(key);
+                      return (
+                        <span
+                          key={key}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px]",
+                            connected
+                              ? "border-success/40 bg-success/10 text-success"
+                              : "border-border bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {connected && <Check className="h-2.5 w-2.5" />}
+                          {connectorLabel(key)}
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
+                {template.setup_notes && (
+                  <span className="text-[11px] italic text-muted-foreground">{template.setup_notes}</span>
+                )}
               </button>
             );
           })}
         </div>
 
-        <div className="flex justify-end border-t border-border pt-3">
+        <div className="flex justify-end gap-4 border-t border-border pt-3">
+          {onBack && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+              onClick={onBack}
+            >
+              Back
+            </button>
+          )}
           <button
             type="button"
             className="text-xs text-muted-foreground hover:text-foreground hover:underline"

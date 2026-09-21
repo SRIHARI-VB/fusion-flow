@@ -25,7 +25,7 @@ class UpdateBusinessProfileConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
     profile_fields: dict[str, Any] = Field(
         default_factory=dict,
-        description="Any of about/address/description/email/websites/vertical.",
+        description="Any of about/address/description/email/websites/business category.",
     )
 
 
@@ -38,6 +38,9 @@ class UpdateBusinessProfileExecutor(NodeExecutor):
     description = "Updates the connected WhatsApp number's business profile."
     config_model = UpdateBusinessProfileConfig
     required_connector_type_key = "whatsapp"
+    # One-time account setup, not conversation content - see
+    # whatsapp_find_or_create_customer.py's palette_group for the same reasoning.
+    palette_group = "Advanced"
     retryable = True
     max_retries = 2
 

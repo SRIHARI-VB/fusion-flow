@@ -5,10 +5,13 @@ import type { EdgeFilter, WorkflowGraphEdgeData } from "../types";
 
 /**
  * Selecting an edge (not a node) opens this drawer in the same right-hand
- * column slot `NodeConfigDrawer` uses for nodes — the "edge inspector"
- * from the plan. Edge data (`{filter, label}`) is a small, fixed, nested
- * shape rather than a per-node-type JSON Schema, so unlike
- * `NodeConfigDrawer` this is hand-written fields, not the dynamic
+ * column slot the node palette otherwise occupies — the "edge inspector"
+ * from the plan. A node's own config renders inline on its card now (see
+ * `NodeInlineForm.tsx`), never in a side panel, but an edge has no card of
+ * its own to render into, so it keeps this one drawer. Edge data
+ * (`{filter, label}`) is a small, fixed, nested shape rather than a
+ * per-node-type JSON Schema, so unlike `NodeInlineForm.tsx` this is
+ * hand-written fields, not the dynamic
  * `jsonSchemaForm.ts` machinery (which only supports flat top-level
  * properties today, not a nested `filter` object) — a deliberate, small
  * scope reduction from a literal "zero new code" reading of the plan,

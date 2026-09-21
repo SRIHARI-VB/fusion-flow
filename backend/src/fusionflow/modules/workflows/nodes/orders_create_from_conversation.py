@@ -83,7 +83,7 @@ class LineItem(BaseModel):
 
 
 class CreateOrderFromConversationConfig(BaseModel):
-    customer_id: str = Field(min_length=1, description="Customer id (UUID), may reference the run context.")
+    customer_id: str = Field(min_length=1, description="Customer id, may reference the run context.")
     line_items: list[LineItem] = Field(min_length=1)
     currency: str = Field(default="USD", min_length=3, max_length=3)
     payment_method: str = Field(pattern="^(cod|prepaid)$")
@@ -100,6 +100,9 @@ class CreateOrderFromConversationExecutor(NodeExecutor):
     )
     config_model = CreateOrderFromConversationConfig
     required_connector_type_key = "orders"
+    # A conversation that has already been converted to a confirmed order -
+    # not a fit for a broadcast's fan-out to many recipients at once.
+    applicable_purposes = ["automation"]
     output_schema = _OUTPUT_SCHEMA
     # Mirrors create_ticket.py's reasoning: the retry target is a transient
     # DB hiccup on the insert, not a config problem - config/parse errors

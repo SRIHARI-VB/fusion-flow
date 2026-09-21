@@ -1,7 +1,9 @@
 import { Handle, NodeResizer, Position, type Node, type NodeProps, useNodeConnections } from "@xyflow/react";
-import { GitBranch, PlayCircle, Repeat, Shuffle } from "lucide-react";
+import { ChevronDown, ChevronUp, GitBranch, PlayCircle, Repeat, Shuffle, Trash2 } from "lucide-react";
 import { cn } from "@fusion-flow/ui";
 import type { CardNodeData } from "../graphUtils";
+import { NodeSummaryLine, collapsedPreviewRowClass } from "./NodePreview";
+import { NodeInlineForm } from "../components/NodeInlineForm";
 
 /**
  * Renders any node type whose executor opts into embedding
@@ -14,6 +16,13 @@ import type { CardNodeData } from "../graphUtils";
  * `parentId` set to this node's id — React Flow positions/clips them
  * relative to this card automatically; this component only renders the
  * frame, header, and ports, never its children directly.
+ *
+ * Whatever config fields the container's own node type declares (e.g.
+ * `flow.loop`'s `items_path`/`max_iterations`) render inline in the header
+ * area via `NodeInlineForm.tsx` - same collapsed-by-default/click-to-expand
+ * treatment `CardNode.tsx` gives a leaf node (see its own docstring),
+ * gated by `hasOwnConfig`/`expanded` below. The resizable child drop-zone
+ * body is a separate concern and is never affected by that toggle.
  */
 
 const CHILD_ROLE_ICON: Record<string, typeof Repeat> = {
@@ -27,6 +36,14 @@ const CHILD_ROLE_ICON: Record<string, typeof Repeat> = {
 // magic numbers.
 export const CONTAINER_MIN_WIDTH = 360;
 export const CONTAINER_MIN_HEIGHT = 220;
+
+// The header row's own rendered height (icon badge + vertical padding +
+// border) isn't exposed anywhere else — `graphUtils.fitContainerToChildren`
+// needs this duplicated magic number to reserve room for it above the
+// children's own bounding box when computing a snug auto-fit size. Grows
+// with the container's own inline config fields (if any), so this is a
+// floor, not an exact height.
+export const CONTAINER_HEADER_HEIGHT = 48;
 
 function PortHandle({
   type,
@@ -58,10 +75,37 @@ function PortHandle({
   );
 }
 
-export function ContainerNode({ data, selected }: NodeProps<Node<CardNodeData>>) {
+interface ContainerNodeProps extends NodeProps<Node<CardNodeData>> {
+  /** Notifies the page-level auto-fit-to-children effect
+   * (`WorkflowEditorPage.tsx`'s `containerResizingRef`) that this
+   * container's own `NodeResizer` drag is in progress, so that effect
+   * doesn't fight a manual resize mid-drag. */
+  onResizeActiveChange?: (active: boolean) => void;
+  onConfigChange?: (nodeId: string, patch: Record<string, unknown>) => void;
+  onDeleteNode?: (nodeId: string) => void;
+  upstreamSuggestions?: { path: string; label: string }[];
+  /** Same collapsed-by-default toggle `CardNode.tsx` uses - only gates
+   * this container's own inline config (e.g. `flow.loop`'s `items_path`),
+   * never the child drop-zone body below it. */
+  expanded?: boolean;
+  onToggleExpand?: (nodeId: string) => void;
+}
+
+export function ContainerNode({
+  id,
+  data,
+  selected,
+  onResizeActiveChange,
+  onConfigChange,
+  onDeleteNode,
+  upstreamSuggestions,
+  expanded = false,
+  onToggleExpand,
+}: ContainerNodeProps) {
   const meta = data.__meta;
   const Icon = (meta?.child_role && CHILD_ROLE_ICON[meta.child_role]) || PlayCircle;
   const title = data.label || meta?.label || data.nodeType;
+  const hasOwnConfig = Object.keys(meta?.config_schema?.properties ?? {}).length > 0;
   // Optional handles (Try/Catch) render alongside any required ones so an
   // author sees every possible exit even before wiring it.
   const outputHandles = [...(meta?.output_handles ?? []), ...(meta?.optional_output_handles ?? [])];
@@ -74,20 +118,60 @@ export function ContainerNode({ data, selected }: NodeProps<Node<CardNodeData>>)
       )}
       style={{ minWidth: CONTAINER_MIN_WIDTH, minHeight: CONTAINER_MIN_HEIGHT }}
     >
-      <NodeResizer minWidth={CONTAINER_MIN_WIDTH} minHeight={CONTAINER_MIN_HEIGHT} isVisible={selected} lineClassName="!border-accent" />
+      <NodeResizer
+        minWidth={CONTAINER_MIN_WIDTH}
+        minHeight={CONTAINER_MIN_HEIGHT}
+        isVisible={selected}
+        lineClassName="!border-accent"
+        onResizeStart={() => onResizeActiveChange?.(true)}
+        onResizeEnd={() => onResizeActiveChange?.(false)}
+      />
 
       <PortHandle type="target" position={Position.Left} style={{ top: 22 }} />
 
-      <div className="flex items-center gap-2 rounded-t-lg border-b border-dashed border-border bg-card px-3 py-2">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">{title}</p>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Flow control · {data.nodeType}
-          </p>
+      <div className="flex flex-col gap-2 rounded-t-lg border-b border-dashed border-border bg-card px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-foreground">{title}</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Flow control · {data.nodeType}
+            </p>
+          </div>
+          {hasOwnConfig && (
+            <button
+              type="button"
+              aria-label={expanded ? "Collapse node" : "Expand node"}
+              className="nodrag shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-muted"
+              onClick={() => onToggleExpand?.(id)}
+            >
+              {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="Delete container"
+            className="nodrag shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => onDeleteNode?.(id)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         </div>
+        {meta && hasOwnConfig && expanded && (
+          <NodeInlineForm
+            nodeType={meta}
+            config={data.config ?? {}}
+            onConfigChange={(patch) => onConfigChange?.(id, patch)}
+            upstreamSuggestions={upstreamSuggestions}
+          />
+        )}
+        {meta && hasOwnConfig && !expanded && (
+          <button type="button" className={collapsedPreviewRowClass} onClick={() => onToggleExpand?.(id)}>
+            <NodeSummaryLine nodeType={data.nodeType} config={data.config ?? {}} />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 px-3 py-2 text-xs italic text-muted-foreground">
