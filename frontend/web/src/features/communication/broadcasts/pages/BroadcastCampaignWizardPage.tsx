@@ -15,6 +15,11 @@ const STEPS = ["Message", "Schedule"];
 /** Connector types a broadcast campaign can currently send over. */
 const BROADCASTABLE_CONNECTOR_TYPES = new Set(["whatsapp", "instagram"]);
 
+/** Hard cap enforced server-side (`recipient_phone_numbers`'s `max_length`)
+ * - a campaign send fans out through a `flow.loop` node bounded at the same
+ * 200 iterations, so going over this never actually sends, it just 422s. */
+const RECIPIENT_CAP = 200;
+
 const BASE_TIPS = [
   "This is a one-time send — for a recurring campaign, use the full Workflow builder instead.",
 ];
@@ -140,6 +145,7 @@ export function BroadcastCampaignWizardPage() {
   }, [knownContacts, recipientSearch, selectedRecipientIds]);
 
   const recipients = selectedRecipientIds;
+  const isOverRecipientCap = recipients.length > RECIPIENT_CAP;
 
   function addRecipient(id: string) {
     const trimmed = id.trim();
@@ -178,6 +184,10 @@ export function BroadcastCampaignWizardPage() {
     }
     if (recipients.length === 0) {
       setStepError(isInstagram ? "Add at least one recipient Instagram user ID." : "Add at least one recipient phone number.");
+      return;
+    }
+    if (isOverRecipientCap) {
+      setStepError("Maximum 200 recipients per campaign — remove some before sending.");
       return;
     }
     if (attachmentMode === "location" && !selectedLocation) {
@@ -318,7 +328,7 @@ export function BroadcastCampaignWizardPage() {
             <Button variant="outline" onClick={() => setCurrentStepIndex(0)}>
               Back
             </Button>
-            <Button onClick={handleCreate} disabled={createMutation.isPending}>
+            <Button onClick={handleCreate} disabled={createMutation.isPending || isOverRecipientCap}>
               {createMutation.isPending ? "Creating…" : "Create Campaign"}
             </Button>
           </>
@@ -370,12 +380,22 @@ export function BroadcastCampaignWizardPage() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Recipients</label>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium">Recipients</label>
+              <span className={`text-xs font-medium ${isOverRecipientCap ? "text-destructive" : "text-muted-foreground"}`}>
+                {recipients.length} / {RECIPIENT_CAP} recipients
+              </span>
+            </div>
             <p className="text-xs text-muted-foreground">
               {isInstagram
                 ? "Pick from contacts who've already messaged this Instagram account, by username."
                 : "Pick from contacts who've already messaged this WhatsApp number."}
             </p>
+            {isOverRecipientCap && (
+              <p className="text-xs text-destructive">
+                Maximum 200 recipients per campaign — remove some before sending.
+              </p>
+            )}
 
             {recipients.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -459,9 +479,6 @@ export function BroadcastCampaignWizardPage() {
                 Add
               </Button>
             </div>
-            {recipients.length > 0 && (
-              <p className="text-xs text-muted-foreground">{recipients.length} recipient(s) selected.</p>
-            )}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -516,6 +533,9 @@ export function BroadcastCampaignWizardPage() {
           />
           <p className="text-xs text-muted-foreground">
             The campaign sends automatically at this date and time. Must be in the future.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Scheduled sends run on a daily check and may go out up to 24 hours after your chosen time.
           </p>
         </div>
       )}
