@@ -6,7 +6,14 @@ import { MessageCircle, Search, Send, UserRound } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, cn } from "@fusion-flow/ui";
 import { CONNECTOR_LOGO, CONNECTOR_LOGO_COLOR } from "../../../connectors/connector-logos";
 import { formatRelativeTimestamp } from "../../../connectors/state-display";
-import { useAssignAgent, useConversations, useMarkRead, useMessages, useSendMessage } from "../hooks";
+import {
+  useAssignAgent,
+  useConversations,
+  useMarkRead,
+  useMessages,
+  useSendMessage,
+  useSetConversationAutomationPaused,
+} from "../hooks";
 import type { Conversation } from "../types";
 
 /**
@@ -80,6 +87,7 @@ export function InboxPage() {
   const markReadMutation = useMarkRead();
   const sendMessageMutation = useSendMessage();
   const assignAgentMutation = useAssignAgent();
+  const setAutomationPausedMutation = useSetConversationAutomationPaused();
 
   const selectedConversation = conversations.find((c) => c.id === selectedConversationId) ?? null;
   const { data: messages = [], isLoading: messagesLoading } = useMessages(selectedConversationId ?? undefined);
@@ -145,6 +153,11 @@ export function InboxPage() {
     if (!selectedConversation) return;
     setAgentIdInput("");
     assignAgentMutation.mutate({ conversationId: selectedConversation.id, agentId: null });
+  }
+
+  function handleResumeAutomation() {
+    if (!selectedConversation) return;
+    setAutomationPausedMutation.mutate({ conversationId: selectedConversation.id, paused: false });
   }
 
   return (
@@ -250,9 +263,24 @@ export function InboxPage() {
                     <p className="text-xs text-muted-foreground">{selectedConversation.external_contact_id}</p>
                   </div>
                 </div>
-                <Badge variant="outline" className="capitalize">
-                  {channelLabel(selectedConversation.connector_type_key)}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {selectedConversation.automation_paused && (
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="destructive">Automation Paused</Badge>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleResumeAutomation}
+                        disabled={setAutomationPausedMutation.isPending}
+                      >
+                        Resume
+                      </Button>
+                    </div>
+                  )}
+                  <Badge variant="outline" className="capitalize">
+                    {channelLabel(selectedConversation.connector_type_key)}
+                  </Badge>
+                </div>
               </CardHeader>
 
               <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-4">

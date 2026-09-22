@@ -1,6 +1,21 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, Instagram, MessageCircle, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  AtSign,
+  ChevronDown,
+  Heart,
+  Instagram,
+  LayoutGrid,
+  Link2,
+  MessageCircle,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Settings,
+  ShieldAlert,
+  Trash2,
+  UserCog,
+} from "lucide-react";
 import {
   Badge,
   Button,
@@ -12,6 +27,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   Table,
   TableBody,
@@ -24,25 +41,156 @@ import { Switch } from "../../wizard";
 import { ConfirmDialog } from "../../../connectors/components/ConfirmDialog";
 import { useDeleteInstagramAutomation, useInstagramAutomations, useSetInstagramAutomationActive } from "../hooks";
 import { MATCHING_METHOD_LABELS } from "../constants";
-import { isCommentAutomationConfig, type PredefinedAutomation } from "../types";
+import type { InstagramMatchingMethod, PredefinedAutomation } from "../types";
 
-function automationTypeLabel(automation: PredefinedAutomation): string {
-  return isCommentAutomationConfig(automation) ? "Comment Automation" : "DM Auto-Reply";
+/** Every Instagram automation type this list page knows how to display and
+ * link to, keyed by the backend's `automation_type` string. Each new
+ * automation type built against this feature (see the sibling wizard
+ * pages) only needs one entry added here - the rest of this file is
+ * generic across all of them. `automation.config`'s real shape differs
+ * per type (the shared `PredefinedAutomation.config` union in `types.ts`
+ * only covers the two oldest types), so `summary`/`matchingMethod` below
+ * read it as `Record<string, unknown>` rather than fighting a stricter
+ * type per row. */
+interface AutomationTypeMeta {
+  label: string;
+  icon: typeof MessageSquare;
+  newPath: string;
+  editPath: (id: string) => string;
+  summary: (config: Record<string, unknown>) => string;
+  matchingMethod: (config: Record<string, unknown>) => string | null;
 }
 
-function editPathFor(automation: PredefinedAutomation): string {
-  return isCommentAutomationConfig(automation)
-    ? `/communication/instagram/automations/${automation.id}/edit`
-    : `/communication/instagram/dm-automations/${automation.id}/edit`;
+function keywordSummary(config: Record<string, unknown>): string {
+  const keywords = config.trigger_keywords;
+  return Array.isArray(keywords) && keywords.length > 0 ? keywords.join(", ") : "—";
+}
+
+function matchingMethodLabel(config: Record<string, unknown>): string | null {
+  const method = config.matching_method as InstagramMatchingMethod | undefined;
+  return method ? MATCHING_METHOD_LABELS[method] : null;
+}
+
+const AUTOMATION_TYPE_META: Record<string, AutomationTypeMeta> = {
+  "instagram.comment_automation": {
+    label: "Comment Automation",
+    icon: MessageSquare,
+    newPath: "/communication/instagram/automations/new",
+    editPath: (id) => `/communication/instagram/automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.dm_automation": {
+    label: "DM Auto-Reply",
+    icon: MessageCircle,
+    newPath: "/communication/instagram/dm-automations/new",
+    editPath: (id) => `/communication/instagram/dm-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.mention_automation": {
+    label: "Mention Auto-Reply",
+    icon: AtSign,
+    newPath: "/communication/instagram/mention-automations/new",
+    editPath: (id) => `/communication/instagram/mention-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.comment_moderation": {
+    label: "Comment Moderation",
+    icon: ShieldAlert,
+    newPath: "/communication/instagram/moderation-automations/new",
+    editPath: (id) => `/communication/instagram/moderation-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.story_reply_automation": {
+    label: "Story Reply Auto-Reply",
+    icon: Instagram,
+    newPath: "/communication/instagram/story-reply-automations/new",
+    editPath: (id) => `/communication/instagram/story-reply-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.button_menu_automation": {
+    label: "Button Menu",
+    icon: LayoutGrid,
+    newPath: "/communication/instagram/button-menu-automations/new",
+    editPath: (id) => `/communication/instagram/button-menu-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+  "instagram.referral_automation": {
+    label: "Ad/Link Campaign Router",
+    icon: Link2,
+    newPath: "/communication/instagram/referral-automations/new",
+    editPath: (id) => `/communication/instagram/referral-automations/${id}/edit`,
+    summary: (config) => {
+      const rules = config.rules;
+      const count = Array.isArray(rules) ? rules.length : 0;
+      return count === 1 ? "1 rule" : `${count} rules`;
+    },
+    matchingMethod: () => null,
+  },
+  "instagram.reaction_automation": {
+    label: "Reaction Follow-Up",
+    icon: Heart,
+    newPath: "/communication/instagram/reaction-automations/new",
+    editPath: (id) => `/communication/instagram/reaction-automations/${id}/edit`,
+    summary: (config) => {
+      const reaction = config.reaction_type;
+      return typeof reaction === "string" ? `Reaction: ${reaction}` : "—";
+    },
+    matchingMethod: () => null,
+  },
+  "instagram.handoff_automation": {
+    label: "Human Handoff",
+    icon: UserCog,
+    newPath: "/communication/instagram/handoff-automations/new",
+    editPath: (id) => `/communication/instagram/handoff-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
+};
+
+const NEW_AUTOMATION_GROUPS: { label: string; types: string[] }[] = [
+  {
+    label: "Reply & Engage",
+    types: [
+      "instagram.comment_automation",
+      "instagram.dm_automation",
+      "instagram.mention_automation",
+      "instagram.story_reply_automation",
+    ],
+  },
+  { label: "Moderate", types: ["instagram.comment_moderation"] },
+  {
+    label: "Marketing & Menus",
+    types: ["instagram.button_menu_automation", "instagram.referral_automation", "instagram.reaction_automation"],
+  },
+  { label: "Support", types: ["instagram.handoff_automation"] },
+];
+
+function metaFor(automation: PredefinedAutomation): AutomationTypeMeta {
+  return (
+    AUTOMATION_TYPE_META[automation.automation_type] ?? {
+      label: automation.automation_type,
+      icon: MessageSquare,
+      newPath: "/communication/instagram/automations",
+      editPath: () => "/communication/instagram/automations",
+      summary: () => "—",
+      matchingMethod: () => null,
+    }
+  );
 }
 
 /**
  * `/communication/instagram/automations` - list of every predefined
  * automation configured against the tenant's connected Instagram account,
- * across both automation types ("Comment Automation" and "DM
- * Auto-Reply"). There is no `name` field on the backend's
- * `PredefinedAutomation` DTO, so the trigger keywords stand in as the
- * row's label (matches the spec: "config.trigger_keywords.join(', ')").
+ * across every registered Instagram automation type (see
+ * `AUTOMATION_TYPE_META` above). There is no `name` field on the
+ * backend's `PredefinedAutomation` DTO, so each type's own summary
+ * (usually trigger keywords) stands in as the row's label.
  */
 export function InstagramAutomationsListPage() {
   const navigate = useNavigate();
@@ -59,28 +207,42 @@ export function InstagramAutomationsListPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Instagram Automations</h1>
           <p className="text-sm text-muted-foreground">
-            Automatically like, hide, or reply to comments - or auto-reply to direct messages - on this account.
+            Automatically reply, moderate, and route conversations on this Instagram account.
           </p>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger>
-            <Button variant="success">
-              <Plus className="h-4 w-4" />
-              New Automation
-              <ChevronDown className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => navigate("/communication/instagram/automations/new")}>
-              <MessageSquare className="h-3.5 w-3.5" />
-              Comment Automation
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/communication/instagram/dm-automations/new")}>
-              <MessageCircle className="h-3.5 w-3.5" />
-              DM Auto-Reply
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => navigate("/communication/instagram/ice-breakers")}>
+            <Settings className="h-4 w-4" />
+            Welcome Menu
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger>
+              <Button variant="success">
+                <Plus className="h-4 w-4" />
+                New Automation
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              {NEW_AUTOMATION_GROUPS.map((group, groupIndex) => (
+                <div key={group.label}>
+                  {groupIndex > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
+                  {group.types.map((type) => {
+                    const meta = AUTOMATION_TYPE_META[type];
+                    const Icon = meta.icon;
+                    return (
+                      <DropdownMenuItem key={type} onClick={() => navigate(meta.newPath)}>
+                        <Icon className="h-3.5 w-3.5" />
+                        {meta.label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {isLoading ? (
@@ -93,8 +255,8 @@ export function InstagramAutomationsListPage() {
             </div>
             <CardTitle>No automations yet</CardTitle>
             <CardDescription>
-              Create a comment automation to auto-like, auto-hide, or reply to comments, or a DM auto-reply to
-              respond to direct messages - both triggered by keywords you choose.
+              Reply to comments and DMs, moderate spam, route ad traffic, or hand off to a human - all triggered by
+              keywords or events you choose. Use "New Automation" above to get started.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center gap-2 pb-6">
@@ -115,52 +277,57 @@ export function InstagramAutomationsListPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Type</TableHead>
-                  <TableHead>Keywords</TableHead>
+                  <TableHead>Trigger</TableHead>
                   <TableHead>Matching Method</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {automations.map((automation) => (
-                  <TableRow key={automation.id}>
-                    <TableCell>
-                      <Badge variant="secondary">{automationTypeLabel(automation)}</Badge>
-                    </TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {automation.config.trigger_keywords.join(", ") || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge>{MATCHING_METHOD_LABELS[automation.config.matching_method]}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={automation.is_active}
-                          onCheckedChange={(checked) =>
-                            setActiveMutation.mutate({ id: automation.id, isActive: checked })
-                          }
-                          aria-label={automation.is_active ? "Pause automation" : "Resume automation"}
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          {automation.is_active ? "Active" : "Paused"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" size="sm" onClick={() => navigate(editPathFor(automation))}>
-                          <Pencil className="h-3.5 w-3.5" />
-                          Edit
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={() => setPendingDeleteId(automation.id)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {automations.map((automation) => {
+                  const meta = metaFor(automation);
+                  const config = automation.config as unknown as Record<string, unknown>;
+                  const matchingMethod = meta.matchingMethod(config);
+                  return (
+                    <TableRow key={automation.id}>
+                      <TableCell>
+                        <Badge variant="secondary">{meta.label}</Badge>
+                      </TableCell>
+                      <TableCell className="font-medium text-foreground">{meta.summary(config)}</TableCell>
+                      <TableCell>{matchingMethod ? <Badge>{matchingMethod}</Badge> : "—"}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={automation.is_active}
+                            onCheckedChange={(checked) =>
+                              setActiveMutation.mutate({ id: automation.id, isActive: checked })
+                            }
+                            aria-label={automation.is_active ? "Pause automation" : "Resume automation"}
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {automation.is_active ? "Active" : "Paused"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => navigate(meta.editPath(automation.id))}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          <Button variant="destructive" size="sm" onClick={() => setPendingDeleteId(automation.id)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -172,7 +339,7 @@ export function InstagramAutomationsListPage() {
         title="Delete this automation?"
         description={
           pendingAutomation
-            ? `This will stop matching on "${pendingAutomation.config.trigger_keywords.join(", ")}" immediately. This can't be undone.`
+            ? `This will stop "${metaFor(pendingAutomation).label}" (${metaFor(pendingAutomation).summary(pendingAutomation.config as unknown as Record<string, unknown>)}) immediately. This can't be undone.`
             : "This can't be undone."
         }
         confirmLabel="Delete"

@@ -60,3 +60,14 @@ export function useAssignAgent() {
     },
   });
 }
+
+export function useSetConversationAutomationPaused() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ conversationId, paused }: { conversationId: string; paused: boolean }) =>
+      inboxApi.setConversationAutomationPaused(conversationId, paused),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversations });
+    },
+  });
+}

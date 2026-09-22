@@ -45,3 +45,14 @@ export async function assignAgent(
   );
   return data;
 }
+
+export async function setConversationAutomationPaused(
+  conversationId: string,
+  paused: boolean,
+): Promise<Conversation> {
+  const { data } = await apiClient.post<Conversation>(
+    `/api/v1/inbox/conversations/${conversationId}/automation-paused`,
+    { paused },
+  );
+  return data;
+}

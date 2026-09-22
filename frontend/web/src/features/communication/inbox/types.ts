@@ -16,6 +16,7 @@ export interface Conversation {
   assigned_agent_id: string | null;
   last_message_at: string | null;
   unread_count: number;
+  automation_paused: boolean;
   created_at: string;
   updated_at: string;
 }

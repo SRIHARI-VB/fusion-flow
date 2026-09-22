@@ -1,3 +1,11 @@
 export { InstagramAutomationsListPage } from "./pages/InstagramAutomationsListPage";
 export { InstagramAutomationWizardPage } from "./pages/InstagramAutomationWizardPage";
 export { InstagramDmAutomationWizardPage } from "./pages/InstagramDmAutomationWizardPage";
+export { InstagramMentionAutomationWizardPage } from "./pages/InstagramMentionAutomationWizardPage";
+export { InstagramCommentModerationWizardPage } from "./pages/InstagramCommentModerationWizardPage";
+export { InstagramStoryReplyAutomationWizardPage } from "./pages/InstagramStoryReplyAutomationWizardPage";
+export { InstagramButtonMenuAutomationWizardPage } from "./pages/InstagramButtonMenuAutomationWizardPage";
+export { InstagramReferralAutomationWizardPage } from "./pages/InstagramReferralAutomationWizardPage";
+export { InstagramReactionAutomationWizardPage } from "./pages/InstagramReactionAutomationWizardPage";
+export { InstagramHandoffAutomationWizardPage } from "./pages/InstagramHandoffAutomationWizardPage";
+export { InstagramIceBreakersSettingsPage } from "./pages/InstagramIceBreakersSettingsPage";

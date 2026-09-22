@@ -35,6 +35,14 @@ import {
   InstagramAutomationsListPage,
   InstagramAutomationWizardPage,
   InstagramDmAutomationWizardPage,
+  InstagramMentionAutomationWizardPage,
+  InstagramCommentModerationWizardPage,
+  InstagramStoryReplyAutomationWizardPage,
+  InstagramButtonMenuAutomationWizardPage,
+  InstagramReferralAutomationWizardPage,
+  InstagramReactionAutomationWizardPage,
+  InstagramHandoffAutomationWizardPage,
+  InstagramIceBreakersSettingsPage,
 } from "./features/communication/instagram";
 import { InboxPage } from "./features/communication/inbox";
 import { QuickRepliesPage } from "./features/communication/quick-replies";
@@ -135,6 +143,66 @@ export default function App() {
         <Route
           path="/communication/instagram/dm-automations/:id/edit"
           element={<RequireModule moduleKey="instagram"><InstagramDmAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/mention-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramMentionAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/mention-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramMentionAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/moderation-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramCommentModerationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/moderation-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramCommentModerationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/story-reply-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramStoryReplyAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/story-reply-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramStoryReplyAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/button-menu-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramButtonMenuAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/button-menu-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramButtonMenuAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/referral-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramReferralAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/referral-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramReferralAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/reaction-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramReactionAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/reaction-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramReactionAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/handoff-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramHandoffAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/handoff-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramHandoffAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/ice-breakers"
+          element={<RequireModule moduleKey="instagram"><InstagramIceBreakersSettingsPage /></RequireModule>}
         />
         {/* Telegram/Facebook predefined-automation types aren't built yet
             (only WhatsApp/Instagram flagships shipped this wave) - the nav
