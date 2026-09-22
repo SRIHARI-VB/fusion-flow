@@ -24,7 +24,97 @@ export interface InstagramDmAutomationConfig {
   reply_text: string;
 }
 
-export type InstagramAutomationConfig = InstagramCommentAutomationConfig | InstagramDmAutomationConfig;
+/** A single tappable button for `InstagramButtonMenuAutomationConfig` -
+ * mirrors the backend's `ButtonConfig` Pydantic model
+ * (`instagram_button_menu_automation.py`). `media_url`/`media_type` are
+ * both `null` when no image/video is attached to that button's reply. */
+export interface InstagramMenuButton {
+  title: string;
+  reply_text: string;
+  media_url: string | null;
+  media_type: string | null;
+}
+
+/** `config` for `automation_type: "instagram.button_menu_automation"`. */
+export interface InstagramButtonMenuAutomationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  menu_text: string;
+  buttons: InstagramMenuButton[];
+  react_emoji: string | null;
+}
+
+/** `config` for `automation_type: "instagram.handoff_automation"`. */
+export interface InstagramHandoffAutomationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  ack_text: string;
+  react_emoji: string | null;
+  auto_resume_after_hours: number | null;
+}
+
+export type InstagramReactionType = "love" | "like" | "laugh" | "wow" | "sad" | "angry";
+
+/** `config` for `automation_type: "instagram.reaction_automation"`. */
+export interface InstagramReactionAutomationConfig {
+  reaction_type: InstagramReactionType;
+  reply_text: string;
+}
+
+/** `config` for `automation_type: "instagram.comment_moderation"` - purely
+ * a filtering automation (hide/delete), unlike
+ * `InstagramCommentAutomationConfig` which is about replying. */
+export interface InstagramCommentModerationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  hide: boolean;
+  delete: boolean;
+  media_ids: string[];
+}
+
+/** A single rule row for `InstagramReferralAutomationConfig` - mirrors the
+ * backend's `ReferralRule` Pydantic model
+ * (`instagram_referral_automation.py`). */
+export interface InstagramReferralRule {
+  ref_match: string;
+  reply_text: string;
+}
+
+/** `config` for `automation_type: "instagram.referral_automation"`. */
+export interface InstagramReferralAutomationConfig {
+  rules: InstagramReferralRule[];
+  default_reply_text: string | null;
+}
+
+/** `config` for `automation_type: "instagram.mention_automation"`. */
+export interface InstagramMentionAutomationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  reply_text: string;
+  reply_delay_minutes: number | null;
+}
+
+/** `config` for `automation_type: "instagram.story_reply_automation"`. */
+export interface InstagramStoryReplyAutomationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  reply_text: string;
+  media_url: string | null;
+  media_type: string | null;
+  react_emoji: string | null;
+  reply_delay_minutes: number | null;
+}
+
+export type InstagramAutomationConfig =
+  | InstagramCommentAutomationConfig
+  | InstagramDmAutomationConfig
+  | InstagramButtonMenuAutomationConfig
+  | InstagramHandoffAutomationConfig
+  | InstagramReactionAutomationConfig
+  | InstagramCommentModerationConfig
+  | InstagramReferralAutomationConfig
+  | InstagramMentionAutomationConfig
+  | InstagramStoryReplyAutomationConfig;
 
 export interface PredefinedAutomation {
   id: string;

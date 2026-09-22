@@ -6,7 +6,7 @@ import { MediaPicker, OptionPickerCard, SummarySidebar, TipsCallout, WizardShell
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
-import type { InstagramAutomationConfig, InstagramMatchingMethod } from "../types";
+import type { InstagramButtonMenuAutomationConfig, InstagramMatchingMethod, InstagramMenuButton } from "../types";
 
 const INSTAGRAM_BUTTON_MENU_AUTOMATION_TYPE = "instagram.button_menu_automation";
 
@@ -24,30 +24,6 @@ const REACTION_OPTIONS: Array<{ emoji: string; value: string }> = [
   { emoji: "😢", value: "sad" },
   { emoji: "😡", value: "angry" },
 ];
-
-/** A single tappable button: `title` is what's shown on the button,
- * `reply_text` is the DM sent back when it's tapped, and `media_url`/
- * `media_type` (both nullable) optionally attach an image/video sent
- * right after that reply text - see `MediaPicker.tsx`. */
-interface InstagramMenuButton {
-  title: string;
-  reply_text: string;
-  media_url: string | null;
-  media_type: string | null;
-}
-
-/** `config` for `automation_type: "instagram.button_menu_automation"` -
- * kept local to this file rather than added to the shared `types.ts`
- * union, same convention as `InstagramMentionAutomationWizardPage.tsx`.
- * `react_emoji` is null when Auto-React is off (unchanged default
- * behavior - no reaction sent). */
-interface InstagramButtonMenuAutomationConfig {
-  trigger_keywords: string[];
-  matching_method: InstagramMatchingMethod;
-  menu_text: string;
-  buttons: InstagramMenuButton[];
-  react_emoji: string | null;
-}
 
 const STEPS = ["Keywords & Matching", "Menu & Buttons"];
 
@@ -106,7 +82,7 @@ export function InstagramButtonMenuAutomationWizardPage() {
 
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config as unknown as InstagramButtonMenuAutomationConfig;
+    const config = existingAutomation.config as InstagramButtonMenuAutomationConfig;
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
     setMenuText(config.menu_text);
@@ -199,11 +175,10 @@ export function InstagramButtonMenuAutomationWizardPage() {
       buttons: trimmedButtons,
       react_emoji: reactEmoji,
     };
-    const payloadConfig = config as unknown as InstagramAutomationConfig;
 
     if (isEditing && id) {
       updateMutation.mutate(
-        { id, config: payloadConfig },
+        { id, config },
         { onSuccess: () => navigate("/communication/instagram/automations") },
       );
       return;
@@ -215,7 +190,7 @@ export function InstagramButtonMenuAutomationWizardPage() {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_BUTTON_MENU_AUTOMATION_TYPE,
         name: keywords.join(", "),
-        config: payloadConfig,
+        config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
     );

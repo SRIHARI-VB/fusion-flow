@@ -6,27 +6,12 @@ import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Inpu
 import { SummarySidebar, TipsCallout, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
+import type { InstagramReferralAutomationConfig, InstagramReferralRule } from "../types";
 
 /** Backend automation type key for `POST /api/v1/predefined-automations` -
  * kept local to this file (not the shared `constants.ts`) per this
  * automation's scope. */
 const INSTAGRAM_REFERRAL_AUTOMATION_TYPE = "instagram.referral_automation";
-
-/** One rule row: a substring matched against the trigger's `ref` value
- * (the referral string the business itself set when creating the ad/ig.me
- * link), paired with the DM reply to send when it matches. */
-interface InstagramReferralRule {
-  ref_match: string;
-  reply_text: string;
-}
-
-/** `config` for `automation_type: "instagram.referral_automation"` - kept
- * local to this file (not the shared `types.ts`) per this automation's
- * scope. */
-interface InstagramReferralAutomationConfig {
-  rules: InstagramReferralRule[];
-  default_reply_text: string | null;
-}
 
 function emptyRule(): InstagramReferralRule {
   return { ref_match: "", reply_text: "" };
@@ -59,7 +44,7 @@ export function InstagramReferralAutomationWizardPage() {
   const foundAutomation = isEditing ? automations?.find((automation) => automation.id === id) : undefined;
   const existingAutomation =
     foundAutomation && foundAutomation.automation_type === INSTAGRAM_REFERRAL_AUTOMATION_TYPE
-      ? (foundAutomation as unknown as { config: InstagramReferralAutomationConfig })
+      ? foundAutomation
       : undefined;
 
   const [rules, setRules] = useState<InstagramReferralRule[]>([emptyRule()]);
@@ -72,7 +57,7 @@ export function InstagramReferralAutomationWizardPage() {
   // list's polling) never clobbers what the tenant is mid-typing.
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config;
+    const config = existingAutomation.config as InstagramReferralAutomationConfig;
     setRules(config.rules.length > 0 ? config.rules : [emptyRule()]);
     setDefaultReplyText(config.default_reply_text ?? "");
     setInitialized(true);
@@ -117,7 +102,7 @@ export function InstagramReferralAutomationWizardPage() {
 
     if (isEditing && id) {
       updateMutation.mutate(
-        { id, config: config as unknown as Parameters<typeof updateMutation.mutate>[0]["config"] },
+        { id, config },
         { onSuccess: () => navigate("/communication/instagram/automations") },
       );
       return;
@@ -129,7 +114,7 @@ export function InstagramReferralAutomationWizardPage() {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_REFERRAL_AUTOMATION_TYPE,
         name: trimmedRules.map((rule) => rule.ref_match).join(", "),
-        config: config as unknown as Parameters<typeof createMutation.mutate>[0]["config"],
+        config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
     );

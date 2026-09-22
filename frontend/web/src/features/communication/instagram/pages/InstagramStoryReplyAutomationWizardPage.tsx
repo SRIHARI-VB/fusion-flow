@@ -6,24 +6,12 @@ import { MediaPicker, OptionPickerCard, SummarySidebar, TipsCallout, WizardShell
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
-import type { InstagramMatchingMethod } from "../types";
+import type { InstagramMatchingMethod, InstagramStoryReplyAutomationConfig } from "../types";
 
 /** Backend automation type key for `POST /api/v1/predefined-automations` -
  * kept local to this file rather than the shared `constants.ts` (per this
  * automation type's own wiring plan). */
 const INSTAGRAM_STORY_REPLY_AUTOMATION_TYPE = "instagram.story_reply_automation";
-
-/** `config` for `automation_type: "instagram.story_reply_automation"` -
- * kept local to this file rather than the shared `types.ts`. */
-interface InstagramStoryReplyAutomationConfig {
-  trigger_keywords: string[];
-  matching_method: InstagramMatchingMethod;
-  reply_text: string;
-  media_url: string | null;
-  media_type: string | null;
-  react_emoji: string | null;
-  reply_delay_minutes: number | null;
-}
 
 /** "Every reply" (empty `trigger_keywords`, the backend's wildcard) vs.
  * "Specific keywords" (the pre-existing comma-separated keyword input) -

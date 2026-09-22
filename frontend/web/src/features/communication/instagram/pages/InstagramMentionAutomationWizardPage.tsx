@@ -6,18 +6,9 @@ import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../.
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
-import type { InstagramMatchingMethod } from "../types";
+import type { InstagramMatchingMethod, InstagramMentionAutomationConfig } from "../types";
 
 const INSTAGRAM_MENTION_AUTOMATION_TYPE = "instagram.mention_automation";
-
-/** `config` for `automation_type: "instagram.mention_automation"` - kept
- * local to this file rather than added to the shared `types.ts` union. */
-interface InstagramMentionAutomationConfig {
-  trigger_keywords: string[];
-  matching_method: InstagramMatchingMethod;
-  reply_text: string;
-  reply_delay_minutes: number | null;
-}
 
 /** "Every mention" sends `trigger_keywords: []` (the backend's
  * `build_keyword_condition_chain` treats an empty list as "match

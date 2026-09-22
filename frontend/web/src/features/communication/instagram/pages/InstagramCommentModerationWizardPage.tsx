@@ -7,24 +7,12 @@ import { OptionPickerCard, PostReelMultiPicker, SummarySidebar, TipsCallout, Tog
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
-import type { InstagramMatchingMethod } from "../types";
+import type { InstagramCommentModerationConfig, InstagramMatchingMethod } from "../types";
 
 /** Backend automation type key for `POST /api/v1/predefined-automations` -
  * kept local to this file (not the shared `constants.ts`) per this
  * automation's scope. */
 const INSTAGRAM_COMMENT_MODERATION_TYPE = "instagram.comment_moderation";
-
-/** `config` for `automation_type: "instagram.comment_moderation"` - kept
- * local to this file (not the shared `types.ts`) per this automation's
- * scope. Purely a filtering automation (hide/delete) - no reply/DM fields
- * at all, unlike `InstagramCommentAutomationConfig`. */
-interface InstagramCommentModerationConfig {
-  trigger_keywords: string[];
-  matching_method: InstagramMatchingMethod;
-  hide: boolean;
-  delete: boolean;
-  media_ids: string[];
-}
 
 /** "All comments" vs "Specific keywords" - the wizard's own toggle, not a
  * persisted field. `trigger_keywords` is what actually goes over the wire
@@ -75,7 +63,7 @@ export function InstagramCommentModerationWizardPage() {
     : undefined;
   const existingAutomation =
     foundAutomation && foundAutomation.automation_type === INSTAGRAM_COMMENT_MODERATION_TYPE
-      ? (foundAutomation as unknown as { config: InstagramCommentModerationConfig })
+      ? foundAutomation
       : undefined;
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -93,7 +81,7 @@ export function InstagramCommentModerationWizardPage() {
   // list's polling) never clobbers what the tenant is mid-typing.
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config;
+    const config = existingAutomation.config as InstagramCommentModerationConfig;
     setCommentScope(config.trigger_keywords.length === 0 ? "all" : "keywords");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
@@ -139,7 +127,7 @@ export function InstagramCommentModerationWizardPage() {
 
     if (isEditing && id) {
       updateMutation.mutate(
-        { id, config: config as unknown as Parameters<typeof updateMutation.mutate>[0]["config"] },
+        { id, config },
         { onSuccess: () => navigate("/communication/instagram/automations") },
       );
       return;
@@ -151,7 +139,7 @@ export function InstagramCommentModerationWizardPage() {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_COMMENT_MODERATION_TYPE,
         name: commentScope === "all" ? "All comments" : keywords.join(", "),
-        config: config as unknown as Parameters<typeof createMutation.mutate>[0]["config"],
+        config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
     );

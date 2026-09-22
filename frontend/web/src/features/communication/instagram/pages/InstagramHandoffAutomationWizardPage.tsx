@@ -6,19 +6,9 @@ import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../.
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
-import type { InstagramAutomationConfig } from "../types";
+import type { InstagramHandoffAutomationConfig, InstagramMatchingMethod } from "../types";
 
 const INSTAGRAM_HANDOFF_AUTOMATION_TYPE = "instagram.handoff_automation";
-
-type HandoffMatchingMethod = "exact" | "contains" | "starts_with" | "ends_with";
-
-interface InstagramHandoffAutomationConfig {
-  trigger_keywords: string[];
-  matching_method: HandoffMatchingMethod;
-  ack_text: string;
-  react_emoji: string | null;
-  auto_resume_after_hours: number | null;
-}
 
 type TriggerMode = "every_message" | "specific_keywords";
 
@@ -78,7 +68,7 @@ export function InstagramHandoffAutomationWizardPage() {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [triggerMode, setTriggerMode] = useState<TriggerMode>("specific_keywords");
   const [keywordsInput, setKeywordsInput] = useState("");
-  const [matchingMethod, setMatchingMethod] = useState<HandoffMatchingMethod>("contains");
+  const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
   const [ackText, setAckText] = useState("");
   const [reactEmoji, setReactEmoji] = useState<ReactionEmoji | null>(null);
   const [autoResumeHoursInput, setAutoResumeHoursInput] = useState("");
@@ -87,7 +77,7 @@ export function InstagramHandoffAutomationWizardPage() {
 
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config as unknown as InstagramHandoffAutomationConfig;
+    const config = existingAutomation.config as InstagramHandoffAutomationConfig;
     setTriggerMode(config.trigger_keywords.length === 0 ? "every_message" : "specific_keywords");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
@@ -147,16 +137,9 @@ export function InstagramHandoffAutomationWizardPage() {
       auto_resume_after_hours: autoResumeAfterHours,
     };
 
-    // The shared `InstagramAutomationConfig` union (`../types.ts`) only
-    // covers the comment/DM automation shapes - this handoff automation's
-    // config is a third, locally-defined shape that isn't part of that
-    // union (see this file's module-level types), hence the cast rather
-    // than a structural match.
-    const configForApi = config as unknown as InstagramAutomationConfig;
-
     if (isEditing && id) {
       updateMutation.mutate(
-        { id, config: configForApi },
+        { id, config },
         { onSuccess: () => navigate("/communication/instagram/automations") },
       );
       return;
@@ -168,7 +151,7 @@ export function InstagramHandoffAutomationWizardPage() {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_HANDOFF_AUTOMATION_TYPE,
         name: isEveryMessage ? "Every message" : keywords.join(", "),
-        config: configForApi,
+        config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
     );

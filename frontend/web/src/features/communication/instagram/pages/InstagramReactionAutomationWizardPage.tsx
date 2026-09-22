@@ -5,18 +5,9 @@ import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Text
 import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
-import type { InstagramAutomationConfig } from "../types";
+import type { InstagramReactionAutomationConfig, InstagramReactionType } from "../types";
 
 const INSTAGRAM_REACTION_AUTOMATION_TYPE = "instagram.reaction_automation";
-
-type InstagramReactionType = "love" | "like" | "laugh" | "wow" | "sad" | "angry";
-
-/** `config` for `automation_type: "instagram.reaction_automation"` - kept
- * local to this file rather than added to the shared `types.ts` union. */
-interface InstagramReactionAutomationConfig {
-  reaction_type: InstagramReactionType;
-  reply_text: string;
-}
 
 const REACTION_OPTIONS: { value: InstagramReactionType; title: string; description: string }[] = [
   { value: "love", title: "Love ❤️", description: "Reacted with a heart." },
@@ -74,7 +65,7 @@ export function InstagramReactionAutomationWizardPage() {
 
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
-    const config = existingAutomation.config as unknown as InstagramReactionAutomationConfig;
+    const config = existingAutomation.config as InstagramReactionAutomationConfig;
     setReactionType(config.reaction_type);
     setReplyText(config.reply_text);
     setInitialized(true);
@@ -105,11 +96,10 @@ export function InstagramReactionAutomationWizardPage() {
       reaction_type: reactionType,
       reply_text: trimmedReply,
     };
-    const payloadConfig = config as unknown as InstagramAutomationConfig;
 
     if (isEditing && id) {
       updateMutation.mutate(
-        { id, config: payloadConfig },
+        { id, config },
         { onSuccess: () => navigate("/communication/instagram/automations") },
       );
       return;
@@ -121,7 +111,7 @@ export function InstagramReactionAutomationWizardPage() {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_REACTION_AUTOMATION_TYPE,
         name: `${REACTION_LABELS[reactionType]} Follow-Up`,
-        config: payloadConfig,
+        config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
     );
