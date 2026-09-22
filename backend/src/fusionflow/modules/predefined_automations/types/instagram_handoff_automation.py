@@ -8,19 +8,24 @@ it from the Inbox (`inbox.pause_automation` — see
 
 Config shape:
     {
-      "trigger_keywords": ["talk to a human", "agent"],  # non-empty, required
+      "trigger_keywords": ["talk to a human", "agent"],  # [] = match every message
       "matching_method": "contains",                       # exact|contains|starts_with|ends_with
       "ack_text": "Connecting you to our team...",          # required - the DM sent back
+      "react_emoji": "love",                                # optional - react to the escalation
+                                                              # message first (love|like|laugh|
+                                                              # wow|sad|angry); None = no reaction
     }
 
 Generated graph shape: trigger (`instagram.message_received`) -> the same
 OR-chained `condition.field_compare` sequence
 `graph_helpers.build_keyword_condition_chain` builds for the other Instagram
-DM/comment automations -> two `connector.action`/`inbox.pause_automation`
-nodes chained sequentially (ack DM first, then pause) — same
-"unrestricted action nodes chain via plain default-handle edges" pattern
-`instagram_comment_automation.py::build_graph` uses for its multi-action
-chain.
+DM/comment automations (or, when `trigger_keywords` is empty, a single direct
+trigger -> action edge) -> two or three `connector.action`/
+`inbox.pause_automation` nodes chained sequentially (an optional react-to-
+message action first when `react_emoji` is set, then the ack DM, then the
+pause) — same "unrestricted action nodes chain via plain default-handle
+edges" pattern `instagram_comment_automation.py::build_graph` uses for its
+multi-action chain.
 """
 
 from __future__ import annotations
@@ -53,6 +58,11 @@ class InstagramHandoffAutomationConfig(BaseModel):
     # agent has manually resumed it, instead of staying paused forever.
     # `None` (default) keeps the original "agent must resume it" behavior.
     auto_resume_after_hours: float | None = Field(default=None, gt=0)
+    # Optional "react to the escalation message" step, fired before the
+    # acknowledgement DM - one of the adapter's `react_to_message` reaction
+    # names ("love"|"like"|"laugh"|"wow"|"sad"|"angry"). `None` (default) =
+    # no reaction, unchanged behavior.
+    react_emoji: str | None = Field(default=None)
 
 
 def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dict[str, Any]:
@@ -70,33 +80,58 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
     edges: list[dict[str, Any]] = []
     x = 780  # condition chain occupies x=260..~780 depending on keyword count; actions start past it
 
-    action_nodes: list[dict[str, Any]] = [
-        {
-            "id": "action-ack",
-            "type": "action",
-            "data": {
-                "nodeType": "connector.action",
-                "label": "Send Acknowledgement DM",
-                "config": {
-                    "connector_instance_id": instance_id,
-                    "action": "send_direct_message",
-                    "params": {"recipient_id": "{{trigger.from}}", "text": parsed.ack_text},
+    action_nodes: list[dict[str, Any]] = []
+
+    if parsed.react_emoji:
+        action_nodes.append(
+            {
+                "id": "action-react",
+                "type": "action",
+                "data": {
+                    "nodeType": "connector.action",
+                    "label": "React to Message",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "action": "react_to_message",
+                        "params": {
+                            "recipient_id": "{{trigger.from}}",
+                            "message_id": "{{trigger.message_id}}",
+                            "reaction": parsed.react_emoji,
+                        },
+                    },
+                },
+            }
+        )
+
+    action_nodes.extend(
+        [
+            {
+                "id": "action-ack",
+                "type": "action",
+                "data": {
+                    "nodeType": "connector.action",
+                    "label": "Send Acknowledgement DM",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "action": "send_direct_message",
+                        "params": {"recipient_id": "{{trigger.from}}", "text": parsed.ack_text},
+                    },
                 },
             },
-        },
-        {
-            "id": "action-pause",
-            "type": "action",
-            "data": {
-                "nodeType": "inbox.pause_automation",
-                "label": "Pause Automation for This Conversation",
-                "config": {
-                    "connector_instance_id": instance_id,
-                    "auto_resume_after_hours": parsed.auto_resume_after_hours,
+            {
+                "id": "action-pause",
+                "type": "action",
+                "data": {
+                    "nodeType": "inbox.pause_automation",
+                    "label": "Pause Automation for This Conversation",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "auto_resume_after_hours": parsed.auto_resume_after_hours,
+                    },
                 },
             },
-        },
-    ]
+        ]
+    )
 
     # Action nodes are unrestricted (no declared output handles), so they
     # chain sequentially via plain default-handle edges - only the FIRST

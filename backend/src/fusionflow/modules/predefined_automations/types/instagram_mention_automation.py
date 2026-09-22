@@ -23,17 +23,26 @@ tries to work around.
 
 Config shape:
     {
-      "trigger_keywords": ["thanks", "love this"],  # non-empty, required
+      "trigger_keywords": ["thanks", "love this"],  # empty = match every mention
       "matching_method": "contains",                  # exact|contains|starts_with|ends_with
       "reply_text": "Thanks for the shoutout!",        # required - the comment reply text
+      "reply_delay_minutes": 2,                        # optional, 1-1440 - wait before replying
     }
 
 Generated graph shape: trigger (`instagram.mention_received`) -> the same
 OR-chained `condition.field_compare` sequence
 `graph_helpers.build_keyword_condition_chain` builds for the other Instagram
-automation types -> a single `connector.action` node calling
-`instagram.perform_action("reply_to_comment", ...)`, replying to
-`trigger.comment_id`.
+automation types (or, when `trigger_keywords` is empty, a direct edge -
+"every mention" replies with no keyword filtering) -> optionally a
+`flow.delay` node (only when `reply_delay_minutes` is set) -> a single
+`connector.action` node calling `instagram.perform_action("reply_to_comment",
+...)`, replying to `trigger.comment_id`.
+
+No Auto-React or media attachment here (unlike the DM automation type):
+`reply_to_comment` posts a public text-only comment reply, and comment-level
+reactions aren't an Instagram capability this codebase supports (only DM
+message reactions are, via `react_to_message` - not applicable to a comment
+reply).
 """
 
 from __future__ import annotations
@@ -62,6 +71,7 @@ class InstagramMentionAutomationConfig(BaseModel):
     trigger_keywords: list[str] = Field(default_factory=list)  # empty = match everything
     matching_method: MatchingMethod = "contains"
     reply_text: str = Field(min_length=1)
+    reply_delay_minutes: int | None = Field(default=None, ge=1, le=1440)
 
 
 def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dict[str, Any]:
@@ -78,7 +88,7 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         {
             "id": "action-reply",
             "type": "action",
-            "position": {"x": 780, "y": 0},
+            "position": {"x": 1040 if parsed.reply_delay_minutes else 780, "y": 0},
             "data": {
                 "nodeType": "connector.action",
                 "label": "Reply to Comment",
@@ -91,17 +101,40 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         },
     ]
 
+    # When a reply delay is configured, the keyword chain's match target
+    # becomes the `flow.delay` node instead of the reply action directly,
+    # with a single plain edge from the delay node on to the reply action -
+    # the delay node itself has no declared output handles (it's a plain
+    # action, not a branch), so this edge needs no `sourceHandle`.
+    match_target_id = "action-reply"
+    edges: list[dict[str, Any]] = []
+    if parsed.reply_delay_minutes is not None:
+        match_target_id = "delay-reply"
+        nodes.append(
+            {
+                "id": "delay-reply",
+                "type": "action",
+                "position": {"x": 780, "y": 0},
+                "data": {
+                    "nodeType": "flow.delay",
+                    "label": "Wait Before Replying",
+                    "config": {"minutes": parsed.reply_delay_minutes},
+                },
+            }
+        )
+        edges.append({"id": "e-delay-reply-action-reply", "source": "delay-reply", "target": "action-reply"})
+
     operator = _METHOD_TO_OPERATOR[parsed.matching_method]
     chain_nodes, chain_edges = build_keyword_condition_chain(
         trigger_node_id="trigger",
         field_path="trigger.text",
         keywords=parsed.trigger_keywords,
         operator=operator,
-        on_match_target_id="action-reply",
+        on_match_target_id=match_target_id,
         start_x=260,
     )
     nodes.extend(chain_nodes)
-    edges = chain_edges
+    edges.extend(chain_edges)
 
     return {"nodes": nodes, "edges": edges}
 

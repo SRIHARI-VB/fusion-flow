@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AxiosError } from "axios";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Textarea } from "@fusion-flow/ui";
-import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../../wizard";
+import { MediaPicker, OptionPickerCard, SummarySidebar, TipsCallout, WizardShell, type SelectedMedia } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
@@ -13,21 +13,40 @@ const INSTAGRAM_BUTTON_MENU_AUTOMATION_TYPE = "instagram.button_menu_automation"
 const MAX_BUTTONS = 3;
 const BUTTON_TITLE_MAX_LENGTH = 20; // Meta's button title length limit
 
+/** Emoji picker options for the "Auto-React" step - `value` is the
+ * `reaction` param name `instagram.perform_action("react_to_message", ...)`
+ * expects (see `backend/.../connectors/instagram/adapter.py`). */
+const REACTION_OPTIONS: Array<{ emoji: string; value: string }> = [
+  { emoji: "❤️", value: "love" },
+  { emoji: "👍", value: "like" },
+  { emoji: "😂", value: "laugh" },
+  { emoji: "😮", value: "wow" },
+  { emoji: "😢", value: "sad" },
+  { emoji: "😡", value: "angry" },
+];
+
 /** A single tappable button: `title` is what's shown on the button,
- * `reply_text` is the DM sent back when it's tapped. */
+ * `reply_text` is the DM sent back when it's tapped, and `media_url`/
+ * `media_type` (both nullable) optionally attach an image/video sent
+ * right after that reply text - see `MediaPicker.tsx`. */
 interface InstagramMenuButton {
   title: string;
   reply_text: string;
+  media_url: string | null;
+  media_type: string | null;
 }
 
 /** `config` for `automation_type: "instagram.button_menu_automation"` -
  * kept local to this file rather than added to the shared `types.ts`
- * union, same convention as `InstagramMentionAutomationWizardPage.tsx`. */
+ * union, same convention as `InstagramMentionAutomationWizardPage.tsx`.
+ * `react_emoji` is null when Auto-React is off (unchanged default
+ * behavior - no reaction sent). */
 interface InstagramButtonMenuAutomationConfig {
   trigger_keywords: string[];
   matching_method: InstagramMatchingMethod;
   menu_text: string;
   buttons: InstagramMenuButton[];
+  react_emoji: string | null;
 }
 
 const STEPS = ["Keywords & Matching", "Menu & Buttons"];
@@ -46,7 +65,7 @@ function parseKeywords(raw: string): string[] {
 }
 
 function emptyButton(): InstagramMenuButton {
-  return { title: "", reply_text: "" };
+  return { title: "", reply_text: "", media_url: null, media_type: null };
 }
 
 /**
@@ -81,6 +100,7 @@ export function InstagramButtonMenuAutomationWizardPage() {
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
   const [menuText, setMenuText] = useState("");
   const [buttons, setButtons] = useState<InstagramMenuButton[]>([emptyButton()]);
+  const [reactEmoji, setReactEmoji] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
@@ -90,7 +110,17 @@ export function InstagramButtonMenuAutomationWizardPage() {
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
     setMenuText(config.menu_text);
-    setButtons(config.buttons.length > 0 ? config.buttons : [emptyButton()]);
+    setButtons(
+      config.buttons.length > 0
+        ? config.buttons.map((button) => ({
+            title: button.title,
+            reply_text: button.reply_text,
+            media_url: button.media_url ?? null,
+            media_type: button.media_type ?? null,
+          }))
+        : [emptyButton()],
+    );
+    setReactEmoji(config.react_emoji ?? null);
     setInitialized(true);
   }, [isEditing, initialized, existingAutomation]);
 
@@ -121,8 +151,22 @@ export function InstagramButtonMenuAutomationWizardPage() {
     setButtons((current) => current.filter((_, i) => i !== index));
   }
 
-  function handleButtonChange(index: number, field: keyof InstagramMenuButton, value: string) {
+  function handleButtonChange(index: number, field: "title" | "reply_text", value: string) {
     setButtons((current) => current.map((button, i) => (i === index ? { ...button, [field]: value } : button)));
+  }
+
+  function handleButtonMediaChange(index: number, media: SelectedMedia | null) {
+    setButtons((current) =>
+      current.map((button, i) =>
+        i === index
+          ? {
+              ...button,
+              media_url: media?.url ?? null,
+              media_type: media ? (media.content_type.startsWith("video") ? "video" : "image") : null,
+            }
+          : button,
+      ),
+    );
   }
 
   function handleSubmit() {
@@ -138,6 +182,8 @@ export function InstagramButtonMenuAutomationWizardPage() {
     const trimmedButtons = buttons.map((button) => ({
       title: button.title.trim(),
       reply_text: button.reply_text.trim(),
+      media_url: button.media_url,
+      media_type: button.media_type,
     }));
     const incomplete = trimmedButtons.some((button) => !button.title || !button.reply_text);
     if (incomplete) {
@@ -151,6 +197,7 @@ export function InstagramButtonMenuAutomationWizardPage() {
       matching_method: matchingMethod,
       menu_text: trimmedMenuText,
       buttons: trimmedButtons,
+      react_emoji: reactEmoji,
     };
     const payloadConfig = config as unknown as InstagramAutomationConfig;
 
@@ -295,6 +342,31 @@ export function InstagramButtonMenuAutomationWizardPage() {
             />
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Auto-React (optional)</span>
+            <p className="text-xs text-muted-foreground">
+              React to the message that triggered this menu, sent alongside the menu itself.
+            </p>
+            <div className="flex gap-2">
+              {REACTION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-label={option.value}
+                  aria-pressed={reactEmoji === option.value}
+                  onClick={() => setReactEmoji((current) => (current === option.value ? null : option.value))}
+                  className={`flex h-9 w-9 items-center justify-center rounded-md border text-lg transition-colors ${
+                    reactEmoji === option.value
+                      ? "border-accent bg-accent/10"
+                      : "border-border hover:border-accent/60"
+                  }`}
+                >
+                  {option.emoji}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium">Buttons</span>
@@ -340,6 +412,14 @@ export function InstagramButtonMenuAutomationWizardPage() {
                     placeholder="e.g. Our pricing starts at..."
                     value={button.reply_text}
                     onChange={(event) => handleButtonChange(index, "reply_text", event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-muted-foreground">Attach media (optional)</span>
+                  <MediaPicker
+                    value={button.media_url ? { url: button.media_url, content_type: button.media_type ?? "image" } : null}
+                    onChange={(media) => handleButtonMediaChange(index, media)}
+                    accept="image,video"
                   />
                 </div>
               </div>

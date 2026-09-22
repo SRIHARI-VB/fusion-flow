@@ -61,6 +61,11 @@ _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
 class ButtonConfig(BaseModel):
     title: str = Field(min_length=1, max_length=20)  # Meta's button title length limit
     reply_text: str = Field(min_length=1)
+    # Optional image/video sent right after `reply_text` when this button
+    # is tapped - both unset (the default) leaves the button's chain
+    # exactly as it was before this field existed (a single reply node).
+    media_url: str | None = Field(default=None)
+    media_type: str | None = Field(default=None)
 
 
 class InstagramButtonMenuAutomationConfig(BaseModel):
@@ -68,6 +73,10 @@ class InstagramButtonMenuAutomationConfig(BaseModel):
     matching_method: MatchingMethod = "contains"
     menu_text: str = Field(min_length=1)
     buttons: list[ButtonConfig] = Field(min_length=1, max_length=3)
+    # Optional reaction placed on the inbound message that triggered the
+    # menu (Chain A only) - None (the default) means no reaction, unchanged
+    # behavior from before this field existed.
+    react_emoji: str | None = Field(default=None)
 
 
 def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dict[str, Any]:
@@ -110,6 +119,37 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         },
     ]
 
+    edges: list[dict[str, Any]] = []
+
+    if parsed.react_emoji:
+        nodes.append(
+            {
+                "id": "action-react",
+                "type": "action",
+                "position": {"x": 780, "y": 150},
+                "data": {
+                    "nodeType": "connector.action",
+                    "label": "React to Message",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "action": "react_to_message",
+                        "params": {
+                            "recipient_id": "{{trigger.from}}",
+                            "message_id": "{{trigger.message_id}}",
+                            "reaction": parsed.react_emoji,
+                        },
+                    },
+                },
+            }
+        )
+        edges.append(
+            {
+                "id": "e-action-send-menu-action-react",
+                "source": "action-send-menu",
+                "target": "action-react",
+            }
+        )
+
     for index, button in enumerate(parsed.buttons):
         nodes.append(
             {
@@ -127,6 +167,35 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
                 },
             }
         )
+        if button.media_url:
+            media_node_id = f"action-btn-{index}-media"
+            nodes.append(
+                {
+                    "id": media_node_id,
+                    "type": "action",
+                    "position": {"x": 780 + index * 260, "y": 450},
+                    "data": {
+                        "nodeType": "connector.action",
+                        "label": f"Media: {button.title}",
+                        "config": {
+                            "connector_instance_id": instance_id,
+                            "action": "send_media_message",
+                            "params": {
+                                "recipient_id": "{{trigger.from}}",
+                                "media_url": button.media_url,
+                                "media_type": button.media_type or "image",
+                            },
+                        },
+                    },
+                }
+            )
+            edges.append(
+                {
+                    "id": f"e-action-btn-{index}-{media_node_id}",
+                    "source": f"action-btn-{index}",
+                    "target": media_node_id,
+                }
+            )
 
     operator = _METHOD_TO_OPERATOR[parsed.matching_method]
     menu_chain_nodes, menu_chain_edges = build_keyword_condition_chain(
@@ -139,7 +208,7 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         start_x=260,
     )
     nodes.extend(menu_chain_nodes)
-    edges = list(menu_chain_edges)
+    edges.extend(menu_chain_edges)
 
     btn_chain_nodes, btn_chain_edges = build_branching_condition_chain(
         trigger_node_id="trigger-postback",

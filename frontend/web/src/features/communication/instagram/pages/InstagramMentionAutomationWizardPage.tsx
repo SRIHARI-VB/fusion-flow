@@ -16,7 +16,14 @@ interface InstagramMentionAutomationConfig {
   trigger_keywords: string[];
   matching_method: InstagramMatchingMethod;
   reply_text: string;
+  reply_delay_minutes: number | null;
 }
+
+/** "Every mention" sends `trigger_keywords: []` (the backend's
+ * `build_keyword_condition_chain` treats an empty list as "match
+ * everything" - no condition nodes at all), hiding the keyword input and
+ * matching-method picker since neither applies. */
+type TriggerScope = "every" | "specific";
 
 const STEPS = ["Keywords & Matching", "Reply"];
 
@@ -60,18 +67,26 @@ export function InstagramMentionAutomationWizardPage() {
       : undefined;
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [triggerScope, setTriggerScope] = useState<TriggerScope>("specific");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
   const [replyText, setReplyText] = useState("");
+  const [replyDelayMinutesInput, setReplyDelayMinutesInput] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
     const config = existingAutomation.config as InstagramMentionAutomationConfig;
+    setTriggerScope(config.trigger_keywords.length === 0 ? "every" : "specific");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
     setReplyText(config.reply_text);
+    setReplyDelayMinutesInput(
+      config.reply_delay_minutes === null || config.reply_delay_minutes === undefined
+        ? ""
+        : String(config.reply_delay_minutes),
+    );
     setInitialized(true);
   }, [isEditing, initialized, existingAutomation]);
 
@@ -81,7 +96,7 @@ export function InstagramMentionAutomationWizardPage() {
   const mutationError = activeMutation.error as AxiosError<{ detail?: string }> | null;
 
   function handleNext() {
-    if (keywords.length === 0) {
+    if (triggerScope === "specific" && keywords.length === 0) {
       setValidationError("Add at least one trigger keyword.");
       return;
     }
@@ -100,12 +115,23 @@ export function InstagramMentionAutomationWizardPage() {
       setValidationError("Enter the reply text to post back on the comment.");
       return;
     }
+    const trimmedDelay = replyDelayMinutesInput.trim();
+    let replyDelayMinutes: number | null = null;
+    if (trimmedDelay) {
+      const parsedDelay = Number(trimmedDelay);
+      if (!Number.isInteger(parsedDelay) || parsedDelay < 1 || parsedDelay > 1440) {
+        setValidationError("Reply delay must be a whole number of minutes between 1 and 1440.");
+        return;
+      }
+      replyDelayMinutes = parsedDelay;
+    }
     setValidationError(null);
 
     const config: InstagramMentionAutomationConfig = {
-      trigger_keywords: keywords,
+      trigger_keywords: triggerScope === "every" ? [] : keywords,
       matching_method: matchingMethod,
       reply_text: trimmedReply,
+      reply_delay_minutes: replyDelayMinutes,
     };
 
     if (isEditing && id) {
@@ -118,7 +144,7 @@ export function InstagramMentionAutomationWizardPage() {
       {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_MENTION_AUTOMATION_TYPE,
-        name: keywords.join(", "),
+        name: triggerScope === "every" ? "Every mention" : keywords.join(", "),
         config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
@@ -149,9 +175,18 @@ export function InstagramMentionAutomationWizardPage() {
     <>
       <SummarySidebar
         rows={[
-          { label: "Keywords", value: keywords.join(", ") },
-          { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
+          {
+            label: "Trigger",
+            value: triggerScope === "every" ? "Every mention" : keywords.join(", ") || "—",
+          },
+          ...(triggerScope === "specific"
+            ? [{ label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] }]
+            : []),
           { label: "Reply", value: replyText.trim() || "—" },
+          {
+            label: "Reply Delay",
+            value: replyDelayMinutesInput.trim() ? `${replyDelayMinutesInput.trim()} min` : "None",
+          },
         ]}
       />
       <TipsCallout
@@ -197,33 +232,55 @@ export function InstagramMentionAutomationWizardPage() {
     >
       {currentStepIndex === 0 ? (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="trigger_keywords" className="text-sm font-medium">
-              Trigger keywords
-            </label>
-            <Input
-              id="trigger_keywords"
-              placeholder="e.g. thanks, love this, amazing"
-              value={keywordsInput}
-              onChange={(event) => setKeywordsInput(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
-          </div>
-
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Matching method</span>
+            <span className="text-sm font-medium">Which mentions?</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {MATCHING_METHODS.map((method) => (
-                <OptionPickerCard
-                  key={method}
-                  title={MATCHING_METHOD_LABELS[method]}
-                  description={MATCHING_METHOD_DESCRIPTIONS[method]}
-                  selected={matchingMethod === method}
-                  onSelect={() => setMatchingMethod(method)}
-                />
-              ))}
+              <OptionPickerCard
+                title="Every mention"
+                description="Reply to any comment that mentions this account, no keyword filtering."
+                selected={triggerScope === "every"}
+                onSelect={() => setTriggerScope("every")}
+              />
+              <OptionPickerCard
+                title="Specific keywords"
+                description="Only reply when the mentioning comment also matches a keyword."
+                selected={triggerScope === "specific"}
+                onSelect={() => setTriggerScope("specific")}
+              />
             </div>
           </div>
+
+          {triggerScope === "specific" && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="trigger_keywords" className="text-sm font-medium">
+                  Trigger keywords
+                </label>
+                <Input
+                  id="trigger_keywords"
+                  placeholder="e.g. thanks, love this, amazing"
+                  value={keywordsInput}
+                  onChange={(event) => setKeywordsInput(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-medium">Matching method</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {MATCHING_METHODS.map((method) => (
+                    <OptionPickerCard
+                      key={method}
+                      title={MATCHING_METHOD_LABELS[method]}
+                      description={MATCHING_METHOD_DESCRIPTIONS[method]}
+                      selected={matchingMethod === method}
+                      onSelect={() => setMatchingMethod(method)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
 
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}
         </div>
@@ -240,6 +297,25 @@ export function InstagramMentionAutomationWizardPage() {
               value={replyText}
               onChange={(event) => setReplyText(event.target.value)}
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="reply_delay_minutes" className="text-sm font-medium">
+              Reply delay (minutes)
+            </label>
+            <Input
+              id="reply_delay_minutes"
+              type="number"
+              min={1}
+              max={1440}
+              placeholder="Reply immediately"
+              value={replyDelayMinutesInput}
+              onChange={(event) => setReplyDelayMinutesInput(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional. Wait this many minutes before posting the reply, so it doesn't look instantly automated.
+              Leave blank to reply immediately.
+            </p>
           </div>
 
           {mutationError && (

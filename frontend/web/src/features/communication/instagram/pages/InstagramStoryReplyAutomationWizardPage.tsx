@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AxiosError } from "axios";
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Textarea } from "@fusion-flow/ui";
-import { OptionPickerCard, SummarySidebar, TipsCallout, WizardShell } from "../../wizard";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Textarea, cn } from "@fusion-flow/ui";
+import { MediaPicker, OptionPickerCard, SummarySidebar, TipsCallout, WizardShell, type SelectedMedia } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
@@ -19,7 +19,27 @@ interface InstagramStoryReplyAutomationConfig {
   trigger_keywords: string[];
   matching_method: InstagramMatchingMethod;
   reply_text: string;
+  media_url: string | null;
+  media_type: string | null;
+  react_emoji: string | null;
+  reply_delay_minutes: number | null;
 }
+
+/** "Every reply" (empty `trigger_keywords`, the backend's wildcard) vs.
+ * "Specific keywords" (the pre-existing comma-separated keyword input) -
+ * purely a wizard-side UI concept, not sent to the backend directly. */
+type TriggerMode = "every" | "specific";
+
+/** Up to 6 small emoji buttons for the optional Auto-React toggle - `null`
+ * means "no reaction", tapping the selected one again deselects it. */
+const REACTION_OPTIONS: Array<{ value: string; emoji: string; label: string }> = [
+  { value: "love", emoji: "❤️", label: "Love" },
+  { value: "like", emoji: "👍", label: "Like" },
+  { value: "laugh", emoji: "😂", label: "Laugh" },
+  { value: "wow", emoji: "😮", label: "Wow" },
+  { value: "sad", emoji: "😢", label: "Sad" },
+  { value: "angry", emoji: "😡", label: "Angry" },
+];
 
 const STEPS = ["Keywords & Matching", "Reply"];
 
@@ -64,18 +84,26 @@ export function InstagramStoryReplyAutomationWizardPage() {
       : undefined;
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [triggerMode, setTriggerMode] = useState<TriggerMode>("specific");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
   const [replyText, setReplyText] = useState("");
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [replyDelayMinutes, setReplyDelayMinutes] = useState("");
+  const [reactEmoji, setReactEmoji] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
     const config = existingAutomation.config as InstagramStoryReplyAutomationConfig;
+    setTriggerMode(config.trigger_keywords.length === 0 ? "every" : "specific");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
     setReplyText(config.reply_text);
+    setSelectedMedia(config.media_url ? { url: config.media_url, content_type: config.media_type === "video" ? "video" : "image" } : null);
+    setReplyDelayMinutes(config.reply_delay_minutes != null ? String(config.reply_delay_minutes) : "");
+    setReactEmoji(config.react_emoji ?? null);
     setInitialized(true);
   }, [isEditing, initialized, existingAutomation]);
 
@@ -85,7 +113,7 @@ export function InstagramStoryReplyAutomationWizardPage() {
   const mutationError = activeMutation.error as AxiosError<{ detail?: string }> | null;
 
   function handleNext() {
-    if (keywords.length === 0) {
+    if (triggerMode === "specific" && keywords.length === 0) {
       setValidationError("Add at least one trigger keyword.");
       return;
     }
@@ -104,12 +132,26 @@ export function InstagramStoryReplyAutomationWizardPage() {
       setValidationError("Enter the reply text to send back.");
       return;
     }
+    const trimmedDelay = replyDelayMinutes.trim();
+    let delayMinutes: number | null = null;
+    if (trimmedDelay) {
+      const parsedDelay = Number(trimmedDelay);
+      if (!Number.isInteger(parsedDelay) || parsedDelay < 1 || parsedDelay > 1440) {
+        setValidationError("Reply delay must be a whole number of minutes between 1 and 1440.");
+        return;
+      }
+      delayMinutes = parsedDelay;
+    }
     setValidationError(null);
 
     const config: InstagramStoryReplyAutomationConfig = {
-      trigger_keywords: keywords,
+      trigger_keywords: triggerMode === "every" ? [] : keywords,
       matching_method: matchingMethod,
       reply_text: trimmedReply,
+      media_url: selectedMedia?.url ?? null,
+      media_type: selectedMedia ? (selectedMedia.content_type.startsWith("video") ? "video" : "image") : null,
+      react_emoji: reactEmoji,
+      reply_delay_minutes: delayMinutes,
     };
 
     if (isEditing && id) {
@@ -122,7 +164,7 @@ export function InstagramStoryReplyAutomationWizardPage() {
       {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_STORY_REPLY_AUTOMATION_TYPE,
-        name: keywords.join(", "),
+        name: triggerMode === "every" ? "Every story reply" : keywords.join(", "),
         config,
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
@@ -153,9 +195,14 @@ export function InstagramStoryReplyAutomationWizardPage() {
     <>
       <SummarySidebar
         rows={[
-          { label: "Keywords", value: keywords.join(", ") },
-          { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
+          { label: "Trigger", value: triggerMode === "every" ? "Every story reply" : keywords.join(", ") || "—" },
+          ...(triggerMode === "specific"
+            ? [{ label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] }]
+            : []),
           { label: "Reply", value: replyText.trim() || "—" },
+          { label: "Media", value: selectedMedia ? "Attached" : "—" },
+          { label: "Reply Delay", value: replyDelayMinutes ? `${replyDelayMinutes} min` : "None" },
+          { label: "Auto-React", value: reactEmoji ? REACTION_OPTIONS.find((option) => option.value === reactEmoji)?.label ?? reactEmoji : "None" },
         ]}
       />
       <TipsCallout
@@ -200,33 +247,55 @@ export function InstagramStoryReplyAutomationWizardPage() {
     >
       {currentStepIndex === 0 ? (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="trigger_keywords" className="text-sm font-medium">
-              Trigger keywords
-            </label>
-            <Input
-              id="trigger_keywords"
-              placeholder="e.g. discount, code, giveaway"
-              value={keywordsInput}
-              onChange={(event) => setKeywordsInput(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
-          </div>
-
           <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Matching method</span>
+            <span className="text-sm font-medium">Which replies should trigger this?</span>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {MATCHING_METHODS.map((method) => (
-                <OptionPickerCard
-                  key={method}
-                  title={MATCHING_METHOD_LABELS[method]}
-                  description={MATCHING_METHOD_DESCRIPTIONS[method]}
-                  selected={matchingMethod === method}
-                  onSelect={() => setMatchingMethod(method)}
-                />
-              ))}
+              <OptionPickerCard
+                title="Every reply"
+                description="Trigger on any reply to any Story this account posts, regardless of what it says."
+                selected={triggerMode === "every"}
+                onSelect={() => setTriggerMode("every")}
+              />
+              <OptionPickerCard
+                title="Specific keywords"
+                description="Only trigger when the reply text matches one of your configured keywords."
+                selected={triggerMode === "specific"}
+                onSelect={() => setTriggerMode("specific")}
+              />
             </div>
           </div>
+
+          {triggerMode === "specific" && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="trigger_keywords" className="text-sm font-medium">
+                  Trigger keywords
+                </label>
+                <Input
+                  id="trigger_keywords"
+                  placeholder="e.g. discount, code, giveaway"
+                  value={keywordsInput}
+                  onChange={(event) => setKeywordsInput(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-medium">Matching method</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {MATCHING_METHODS.map((method) => (
+                    <OptionPickerCard
+                      key={method}
+                      title={MATCHING_METHOD_LABELS[method]}
+                      description={MATCHING_METHOD_DESCRIPTIONS[method]}
+                      selected={matchingMethod === method}
+                      onSelect={() => setMatchingMethod(method)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
 
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}
         </div>
@@ -243,6 +312,63 @@ export function InstagramStoryReplyAutomationWizardPage() {
               value={replyText}
               onChange={(event) => setReplyText(event.target.value)}
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Attach media (optional)</span>
+            <p className="text-xs text-muted-foreground">
+              Send an image or video alongside the reply text above.
+            </p>
+            <MediaPicker value={selectedMedia} onChange={setSelectedMedia} />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="reply_delay_minutes" className="text-sm font-medium">
+              Reply delay (optional)
+            </label>
+            <Input
+              id="reply_delay_minutes"
+              type="number"
+              min={1}
+              max={1440}
+              placeholder="e.g. 2"
+              value={replyDelayMinutes}
+              onChange={(event) => setReplyDelayMinutes(event.target.value)}
+              className="max-w-[160px]"
+            />
+            <p className="text-xs text-muted-foreground">
+              Minutes to wait before sending the reply. Leave blank to reply immediately.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">Auto-react to the reply (optional)</span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setReactEmoji(null)}
+                className={cn(
+                  "rounded-md border px-3 py-1.5 text-xs font-medium transition-colors",
+                  reactEmoji === null ? "border-accent bg-accent-soft text-accent" : "border-border hover:bg-muted",
+                )}
+              >
+                None
+              </button>
+              {REACTION_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  title={option.label}
+                  onClick={() => setReactEmoji((current) => (current === option.value ? null : option.value))}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-md border text-lg transition-colors",
+                    reactEmoji === option.value ? "border-accent bg-accent-soft" : "border-border hover:bg-muted",
+                  )}
+                >
+                  {option.emoji}
+                </button>
+              ))}
+            </div>
           </div>
 
           {mutationError && (

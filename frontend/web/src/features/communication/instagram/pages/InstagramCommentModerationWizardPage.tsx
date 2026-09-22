@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { EyeOff, Trash2 } from "lucide-react";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
@@ -8,6 +9,7 @@ import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
 import type { InstagramMatchingMethod } from "../types";
+import { fetchInstagramMedia } from "../media-api";
 
 /** Backend automation type key for `POST /api/v1/predefined-automations` -
  * kept local to this file (not the shared `constants.ts`) per this
@@ -23,7 +25,13 @@ interface InstagramCommentModerationConfig {
   matching_method: InstagramMatchingMethod;
   hide: boolean;
   delete: boolean;
+  media_id: string | null;
 }
+
+/** "All comments" vs "Specific keywords" - the wizard's own toggle, not a
+ * persisted field. `trigger_keywords` is what actually goes over the wire
+ * (`[]` for "all"), derived from this at submit time. */
+type CommentScope = "all" | "keywords";
 
 const STEPS = ["Keywords & Matching", "Actions"];
 
@@ -47,8 +55,9 @@ function parseKeywords(raw: string): string[] {
  * coordinator's wiring) - the "Comment Moderation" wizard. Purely a
  * spam/abuse filter (hide and/or delete matching comments) - distinct
  * from `InstagramAutomationWizardPage`'s "Comment Automation", which is
- * about replying to genuine engagement. Account-wide by design, same
- * reasoning as that wizard: there is no per-post scoping on the backend.
+ * about replying to genuine engagement. Account-wide by default (every
+ * post/reel), optionally scoped down to a single post/reel via the
+ * "Scope" picker on step 1 (`config.media_id`).
  */
 export function InstagramCommentModerationWizardPage() {
   const { id } = useParams<{ id: string }>();
@@ -72,12 +81,20 @@ export function InstagramCommentModerationWizardPage() {
       : undefined;
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [commentScope, setCommentScope] = useState<CommentScope>("keywords");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
+  const [mediaId, setMediaId] = useState<string | null>(null);
   const [hide, setHide] = useState(false);
   const [deleteComment, setDeleteComment] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+
+  const { data: mediaItems, isLoading: mediaLoading } = useQuery({
+    queryKey: ["instagram-media", instagramInstance?.id],
+    queryFn: () => fetchInstagramMedia(instagramInstance!.id),
+    enabled: Boolean(instagramInstance),
+  });
 
   // Seeds form state from the fetched automation exactly once, when
   // editing - guarded by `initialized` so a background refetch (e.g. the
@@ -85,8 +102,10 @@ export function InstagramCommentModerationWizardPage() {
   useEffect(() => {
     if (!isEditing || initialized || !existingAutomation) return;
     const config = existingAutomation.config;
+    setCommentScope(config.trigger_keywords.length === 0 ? "all" : "keywords");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
+    setMediaId(config.media_id ?? null);
     setHide(config.hide);
     setDeleteComment(config.delete);
     setInitialized(true);
@@ -98,8 +117,8 @@ export function InstagramCommentModerationWizardPage() {
   const mutationError = activeMutation.error as AxiosError<{ detail?: string }> | null;
 
   function handleNext() {
-    if (keywords.length === 0) {
-      setValidationError("Add at least one trigger keyword.");
+    if (commentScope === "keywords" && keywords.length === 0) {
+      setValidationError("Add at least one trigger keyword, or switch to \"All comments\".");
       return;
     }
     setValidationError(null);
@@ -119,10 +138,11 @@ export function InstagramCommentModerationWizardPage() {
     setValidationError(null);
 
     const config: InstagramCommentModerationConfig = {
-      trigger_keywords: keywords,
+      trigger_keywords: commentScope === "all" ? [] : keywords,
       matching_method: matchingMethod,
       hide,
       delete: deleteComment,
+      media_id: mediaId,
     };
 
     if (isEditing && id) {
@@ -138,7 +158,7 @@ export function InstagramCommentModerationWizardPage() {
       {
         connector_instance_id: instagramInstance.id,
         automation_type: INSTAGRAM_COMMENT_MODERATION_TYPE,
-        name: keywords.join(", "),
+        name: commentScope === "all" ? "All comments" : keywords.join(", "),
         config: config as unknown as Parameters<typeof createMutation.mutate>[0]["config"],
       },
       { onSuccess: () => navigate("/communication/instagram/automations") },
@@ -169,15 +189,24 @@ export function InstagramCommentModerationWizardPage() {
     <>
       <SummarySidebar
         rows={[
-          { label: "Keywords", value: keywords.join(", ") },
+          {
+            label: "Keywords",
+            value: commentScope === "all" ? "All comments" : keywords.join(", "),
+          },
           { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
+          {
+            label: "Scope",
+            value: mediaId
+              ? (mediaItems ?? []).find((media) => media.id === mediaId)?.caption?.slice(0, 24) || "1 selected post/reel"
+              : "All posts/reels",
+          },
           { label: "Hide", value: hide ? "On" : "Off" },
           { label: "Delete", value: deleteComment ? "On" : "Off" },
         ]}
       />
       <TipsCallout
         tips={[
-          "This automation checks every comment on every post/reel connected to this account.",
+          "By default this automation checks every comment on every post/reel on this account - scope it to one post/reel below if you only want to moderate that one.",
           "Hiding keeps the comment visible only to its author and their friends; deleting removes it entirely.",
           "You can enable both Hide and Delete at the same time - Delete wins since the comment is gone.",
         ]}
@@ -218,32 +247,99 @@ export function InstagramCommentModerationWizardPage() {
     >
       {currentStepIndex === 0 ? (
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="trigger_keywords" className="text-sm font-medium">
-              Trigger keywords
-            </label>
-            <Input
-              id="trigger_keywords"
-              placeholder="e.g. buy followers, http, scam"
-              value={keywordsInput}
-              onChange={(event) => setKeywordsInput(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium">Which comments?</span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <OptionPickerCard
+                title="All comments"
+                description="Moderate every comment, regardless of what it says"
+                selected={commentScope === "all"}
+                onSelect={() => setCommentScope("all")}
+              />
+              <OptionPickerCard
+                title="Specific keywords"
+                description="Only moderate comments that match a keyword you choose"
+                selected={commentScope === "keywords"}
+                onSelect={() => setCommentScope("keywords")}
+              />
+            </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Matching method</span>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {MATCHING_METHODS.map((method) => (
-                <OptionPickerCard
-                  key={method}
-                  title={MATCHING_METHOD_LABELS[method]}
-                  description={MATCHING_METHOD_DESCRIPTIONS[method]}
-                  selected={matchingMethod === method}
-                  onSelect={() => setMatchingMethod(method)}
+          {commentScope === "keywords" && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="trigger_keywords" className="text-sm font-medium">
+                  Trigger keywords
+                </label>
+                <Input
+                  id="trigger_keywords"
+                  placeholder="e.g. buy followers, http, scam"
+                  value={keywordsInput}
+                  onChange={(event) => setKeywordsInput(event.target.value)}
                 />
-              ))}
-            </div>
+                <p className="text-xs text-muted-foreground">Separate multiple keywords with commas.</p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-medium">Matching method</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {MATCHING_METHODS.map((method) => (
+                    <OptionPickerCard
+                      key={method}
+                      title={MATCHING_METHOD_LABELS[method]}
+                      description={MATCHING_METHOD_DESCRIPTIONS[method]}
+                      selected={matchingMethod === method}
+                      onSelect={() => setMatchingMethod(method)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium">Scope</span>
+            <p className="text-xs text-muted-foreground">
+              By default this applies to every post/reel on this account. Optionally scope it to just one.
+            </p>
+            {mediaLoading ? (
+              <p className="text-xs text-muted-foreground">Loading posts/reels…</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => setMediaId(null)}
+                  className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-md border p-2 text-center text-xs transition-colors ${
+                    mediaId === null ? "border-accent bg-accent-soft text-accent" : "border-border hover:bg-muted text-foreground"
+                  }`}
+                >
+                  All posts/reels
+                </button>
+                {(mediaItems ?? []).map((media) => {
+                  const thumbnail = media.thumbnail_url || media.media_url;
+                  const selected = mediaId === media.id;
+                  return (
+                    <button
+                      key={media.id}
+                      type="button"
+                      onClick={() => setMediaId(media.id)}
+                      className={`flex aspect-square flex-col overflow-hidden rounded-md border transition-colors ${
+                        selected ? "border-accent ring-2 ring-accent" : "border-border hover:bg-muted"
+                      }`}
+                      title={media.caption ?? media.media_type}
+                    >
+                      {thumbnail ? (
+                        <img src={thumbnail} alt={media.caption ?? ""} className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center bg-muted p-1 text-[10px] text-muted-foreground">
+                          {(media.caption ?? media.media_type).slice(0, 40)}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}

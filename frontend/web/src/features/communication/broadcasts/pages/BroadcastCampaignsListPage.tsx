@@ -14,6 +14,7 @@ import {
   type BadgeVariant,
 } from "@fusion-flow/ui";
 import { ConfirmDialog } from "../../../connectors/components/ConfirmDialog";
+import { useConnectorInstances } from "../../../connectors/hooks";
 import { Switch } from "../../wizard";
 import { useCampaigns, useDeleteCampaign, useSetCampaignActive } from "../hooks";
 import type { BroadcastCampaign } from "../types";
@@ -58,11 +59,21 @@ function formatDateTime(value: string | null): string {
 export function BroadcastCampaignsListPage() {
   const navigate = useNavigate();
   const { data: campaigns = [], isLoading } = useCampaigns();
+  const { data: connectorInstances = [] } = useConnectorInstances();
   const setActiveMutation = useSetCampaignActive();
   const deleteMutation = useDeleteCampaign();
   const [campaignPendingDelete, setCampaignPendingDelete] = useState<BroadcastCampaign | null>(null);
 
   const isEmpty = !isLoading && campaigns.length === 0;
+
+  /** The campaign DTO only carries `connector_instance_id` - the channel
+   * (WhatsApp vs Instagram) it actually sent over is resolved by
+   * cross-referencing that id against the tenant's connector instances,
+   * rather than adding a `connector_type_key` to the backend DTO. */
+  function channelLabelFor(campaign: BroadcastCampaign): string | null {
+    const instance = connectorInstances.find((candidate) => candidate.id === campaign.connector_instance_id);
+    return instance?.connector_type_display_name ?? null;
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -70,7 +81,7 @@ export function BroadcastCampaignsListPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Broadcast Campaigns</h1>
           <p className="text-sm text-muted-foreground">
-            Send a one-time scheduled WhatsApp message to a list of recipients.
+            Send a one-time scheduled WhatsApp or Instagram message to a list of recipients.
           </p>
         </div>
         <Button onClick={() => navigate("/communication/broadcasts/new")}>
@@ -86,8 +97,8 @@ export function BroadcastCampaignsListPage() {
           </div>
           <p className="text-sm font-medium text-foreground">No campaigns yet</p>
           <p className="max-w-sm text-xs text-muted-foreground">
-            Create a broadcast campaign to send a one-time scheduled WhatsApp message to a list of
-            recipients.
+            Create a broadcast campaign to send a one-time scheduled WhatsApp or Instagram message to a
+            list of recipients.
           </p>
           <Button className="mt-2" onClick={() => navigate("/communication/broadcasts/new")}>
             <Plus className="h-4 w-4" />
@@ -100,6 +111,7 @@ export function BroadcastCampaignsListPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Channel</TableHead>
                 <TableHead>Recipients</TableHead>
                 <TableHead>Next Run</TableHead>
                 <TableHead>Status</TableHead>
@@ -110,13 +122,14 @@ export function BroadcastCampaignsListPage() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Loading...
                   </TableCell>
                 </TableRow>
               )}
               {campaigns.map((campaign) => {
                 const status = campaignStatus(campaign);
+                const channelLabel = channelLabelFor(campaign);
                 const isPauseResumeDisabled =
                   setActiveMutation.isPending &&
                   setActiveMutation.variables?.id === campaign.id;
@@ -127,6 +140,9 @@ export function BroadcastCampaignsListPage() {
                         <Megaphone className="h-4 w-4 text-accent" />
                         {campaign.name}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {channelLabel ? <Badge variant="secondary">{channelLabel}</Badge> : "—"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {campaign.recipient_phone_numbers.length}
