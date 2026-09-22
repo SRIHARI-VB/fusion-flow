@@ -1041,6 +1041,16 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance=instance, session=session, recipient_id=recipient_id, text=text, buttons=buttons
             )
             return {"recipient_id": recipient_id}
+        if action == "get_user_profile":
+            user_id = params.get("user_id")
+            if not user_id:
+                raise ValueError("get_user_profile requires a non-empty 'user_id' param")
+            profile = await self.get_user_profile(instance=instance, session=session, user_id=user_id)
+            # Always both keys present (never a bare `None`), so a
+            # downstream node's `{{this_node.username}}` template never
+            # breaks on a failed/unreachable lookup - same "empty, not
+            # missing" convention `list_media`/`get_ice_breakers` use.
+            return {"username": (profile or {}).get("username") or "", "name": (profile or {}).get("name") or ""}
         raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
     def webhook_setup_hint(self) -> dict[str, str] | None:
