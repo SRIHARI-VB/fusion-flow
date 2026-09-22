@@ -254,7 +254,7 @@ registry.register(
         connector_type_key="instagram",
         label="Comment Automation",
         description=(
-            "Reply, like, and/or hide comments on a post or reel when they match a keyword, "
+            "Reply and/or hide comments on a post or reel when they match a keyword, "
             "and optionally send the commenter a DM."
         ),
         build_graph=build_graph,
