@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { AxiosError } from "axios";
-import { Button, Input, Textarea } from "@fusion-flow/ui";
+import { Badge, Button, Input, Textarea } from "@fusion-flow/ui";
+import { X } from "lucide-react";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import type { ConnectorInstance } from "../../../connectors/types";
-import { WizardShell, SummarySidebar, TipsCallout, OptionPickerCard } from "../../wizard";
+import { WizardShell, SummarySidebar, TipsCallout, OptionPickerCard, MediaPicker } from "../../wizard";
+import type { SelectedMedia } from "../../wizard";
+import { useConversations } from "../../inbox/hooks";
 import { useCreateCampaign } from "../hooks";
 
 const STEPS = ["Message", "Schedule"];
@@ -22,16 +25,6 @@ const WHATSAPP_TIP =
 const INSTAGRAM_TIP =
   "Instagram only allows messaging a recipient within 24 hours of their last message to you — recipients outside that window will be skipped, not sent to.";
 
-/** Splits a comma/newline separated block of phone numbers into a clean
- * list - trims whitespace and drops empty entries, per this page's
- * "One phone number per line, or separate with commas" helper text. */
-function parseRecipients(raw: string): string[] {
-  return raw
-    .split(/[\n,]/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
-
 /** `/communication/broadcasts/new`. Creation only - the backend has no
  * update endpoint for a campaign, so there is no edit mode; a tenant who
  * needs to change something deletes and recreates, matching this
@@ -40,12 +33,16 @@ function parseRecipients(raw: string): string[] {
 export function BroadcastCampaignWizardPage() {
   const navigate = useNavigate();
   const { data: connectorInstances = [], isLoading: isLoadingConnectors } = useConnectorInstances();
+  const { data: conversations = [] } = useConversations();
   const createMutation = useCreateCampaign();
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [name, setName] = useState("");
   const [messageText, setMessageText] = useState("");
-  const [recipientsRaw, setRecipientsRaw] = useState("");
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [manualRecipientInput, setManualRecipientInput] = useState("");
+  const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [scheduledAtLocal, setScheduledAtLocal] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
 
@@ -79,9 +76,59 @@ export function BroadcastCampaignWizardPage() {
     [channelInstances, selectedInstanceId],
   );
 
+  // Selected recipient ids are scoped to one channel instance's contact
+  // list - switching "Send From" mid-flow invalidates any prior picks.
+  useEffect(() => {
+    setSelectedRecipientIds([]);
+  }, [selectedInstanceId]);
+
   const isInstagram = selectedInstance?.connector_type_key === "instagram";
 
-  const recipients = useMemo(() => parseRecipients(recipientsRaw), [recipientsRaw]);
+  // Contacts who've already messaged this channel instance - the only
+  // recipients realistically reachable anyway, since both WhatsApp's
+  // messaging window and Instagram's 24h rule require a prior inbound
+  // message. Picking from this list (by username/display name) replaces
+  // manually typing raw phone numbers/user ids.
+  const knownContacts = useMemo(
+    () =>
+      conversations
+        .filter((conversation) => conversation.connector_instance_id === selectedInstance?.id)
+        .map((conversation) => ({
+          id: conversation.external_contact_id,
+          label: conversation.display_name || conversation.external_contact_id,
+        })),
+    [conversations, selectedInstance],
+  );
+
+  const recipientSearchResults = useMemo(() => {
+    const query = recipientSearch.trim().toLowerCase();
+    return knownContacts.filter((contact) => {
+      if (selectedRecipientIds.includes(contact.id)) return false;
+      if (!query) return true;
+      return contact.label.toLowerCase().includes(query) || contact.id.toLowerCase().includes(query);
+    });
+  }, [knownContacts, recipientSearch, selectedRecipientIds]);
+
+  const recipients = selectedRecipientIds;
+
+  function addRecipient(id: string) {
+    const trimmed = id.trim();
+    if (!trimmed || selectedRecipientIds.includes(trimmed)) return;
+    setSelectedRecipientIds((current) => [...current, trimmed]);
+  }
+
+  function removeRecipient(id: string) {
+    setSelectedRecipientIds((current) => current.filter((existing) => existing !== id));
+  }
+
+  function recipientLabel(id: string): string {
+    return knownContacts.find((contact) => contact.id === id)?.label ?? id;
+  }
+
+  function handleAddManualRecipient() {
+    addRecipient(manualRecipientInput);
+    setManualRecipientInput("");
+  }
 
   const tips = useMemo(() => {
     if (isInstagram) return [...BASE_TIPS, INSTAGRAM_TIP];
@@ -132,6 +179,8 @@ export function BroadcastCampaignWizardPage() {
         message_text: messageText,
         recipient_phone_numbers: recipients,
         scheduled_at: scheduledDate.toISOString(),
+        media_url: selectedMedia?.url ?? null,
+        media_type: selectedMedia ? (selectedMedia.content_type.startsWith("video") ? "video" : "image") : null,
       },
       {
         onSuccess: () => navigate("/communication/broadcasts"),
@@ -158,6 +207,7 @@ export function BroadcastCampaignWizardPage() {
               : "",
           },
           { label: "Recipients", value: recipients.length > 0 ? `${recipients.length} recipient(s)` : "" },
+          { label: "Media", value: selectedMedia ? "1 attachment" : "None" },
           { label: "Scheduled For", value: scheduledForSummary },
         ]}
       />
@@ -263,24 +313,89 @@ export function BroadcastCampaignWizardPage() {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="campaign-recipients" className="text-sm font-medium">
-              {isInstagram ? "Recipient Instagram user IDs" : "Recipient phone numbers"}
-            </label>
-            <Textarea
-              id="campaign-recipients"
-              rows={6}
-              value={recipientsRaw}
-              onChange={(event) => setRecipientsRaw(event.target.value)}
-              placeholder={isInstagram ? "17841400000000001\n17841400000000002" : "+15550001234\n+15550005678"}
-            />
+            <label className="text-sm font-medium">Recipients</label>
             <p className="text-xs text-muted-foreground">
               {isInstagram
-                ? "One Instagram-scoped user ID per line, or separate with commas."
-                : "One phone number per line, or separate with commas. Include country code, e.g. +15550001234."}
+                ? "Pick from contacts who've already messaged this Instagram account, by username."
+                : "Pick from contacts who've already messaged this WhatsApp number."}
             </p>
+
             {recipients.length > 0 && (
-              <p className="text-xs text-muted-foreground">{recipients.length} recipient(s) detected.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {recipients.map((id) => (
+                  <Badge key={id} variant="secondary" className="flex items-center gap-1">
+                    {recipientLabel(id)}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${recipientLabel(id)}`}
+                      onClick={() => removeRecipient(id)}
+                      className="ml-0.5"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
             )}
+
+            <Input
+              placeholder={isInstagram ? "Search by Instagram username…" : "Search by name or number…"}
+              value={recipientSearch}
+              onChange={(event) => setRecipientSearch(event.target.value)}
+            />
+            {recipientSearch && recipientSearchResults.length > 0 && (
+              <div className="max-h-40 overflow-y-auto rounded-md border border-border">
+                {recipientSearchResults.map((contact) => (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    onClick={() => {
+                      addRecipient(contact.id);
+                      setRecipientSearch("");
+                    }}
+                    className="flex w-full flex-col px-3 py-2 text-left text-sm hover:bg-muted"
+                  >
+                    <span>{contact.label}</span>
+                    {contact.label !== contact.id && (
+                      <span className="text-xs text-muted-foreground">{contact.id}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {recipientSearch && recipientSearchResults.length === 0 && (
+              <p className="text-xs text-muted-foreground">No matching contacts found.</p>
+            )}
+
+            <div className="flex gap-2">
+              <Input
+                placeholder={
+                  isInstagram ? "Or add an Instagram user ID manually" : "Or add a phone number manually"
+                }
+                value={manualRecipientInput}
+                onChange={(event) => setManualRecipientInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleAddManualRecipient();
+                  }
+                }}
+              />
+              <Button type="button" variant="outline" onClick={handleAddManualRecipient}>
+                Add
+              </Button>
+            </div>
+            {recipients.length > 0 && (
+              <p className="text-xs text-muted-foreground">{recipients.length} recipient(s) selected.</p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium">Media attachment (optional)</label>
+            <p className="text-xs text-muted-foreground">
+              Attach an image or video to send alongside the message text.
+            </p>
+            <MediaPicker value={selectedMedia} onChange={setSelectedMedia} accept="image,video" />
           </div>
         </>
       )}

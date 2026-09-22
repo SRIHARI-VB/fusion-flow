@@ -58,10 +58,70 @@ _SEND_ACTION_BY_CONNECTOR_TYPE: dict[str, tuple[str, str]] = {
 }
 
 
-def _build_graph(*, connector_type_key: str, connector_instance_id: uuid.UUID, message_text: str) -> dict:
+def _build_graph(
+    *,
+    connector_type_key: str,
+    connector_instance_id: uuid.UUID,
+    message_text: str,
+    media_url: str | None = None,
+    media_type: str | None = None,
+) -> dict:
     instance_id = str(connector_instance_id)
     action, recipient_param = _SEND_ACTION_BY_CONNECTOR_TYPE[connector_type_key]
     body_param = "body" if connector_type_key == "whatsapp" else "text"
+
+    # Both adapters expose a `send_media_message` action under that exact
+    # name (see `whatsapp/adapter.py`/`instagram/adapter.py`'s
+    # `perform_action` dispatch) - only the recipient param key differs,
+    # and `_SEND_ACTION_BY_CONNECTOR_TYPE` already carries that.
+    children: list[dict] = []
+    if media_url:
+        children.append(
+            {
+                "id": "send-media",
+                "type": "action",
+                "position": {"x": 260, "y": 80},
+                "parentId": "loop",
+                "data": {
+                    "nodeType": "connector.action",
+                    "label": "Send Media",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "action": "send_media_message",
+                        "params": {
+                            recipient_param: "{{loop.item}}",
+                            "media_url": media_url,
+                            "media_type": media_type or "image",
+                        },
+                    },
+                },
+            }
+        )
+    children.append(
+        {
+            "id": "send",
+            "type": "action",
+            "position": {"x": 260, "y": 160},
+            "parentId": "loop",
+            "data": {
+                "nodeType": "connector.action",
+                "label": "Send Message",
+                "config": {
+                    "connector_instance_id": instance_id,
+                    "action": action,
+                    "params": {recipient_param: "{{loop.item}}", body_param: message_text},
+                },
+            },
+        }
+    )
+
+    edges = [{"id": "e-trigger-loop", "source": "trigger", "target": "loop"}]
+    # An edge is only needed among SIBLINGS to order them - see this
+    # module's docstring - so it's only added when there's more than one
+    # child (i.e. a media node was added ahead of the text send).
+    if len(children) > 1:
+        edges.append({"id": "e-send-media-send", "source": "send-media", "target": "send"})
+
     return {
         "nodes": [
             {
@@ -89,23 +149,9 @@ def _build_graph(*, connector_type_key: str, connector_instance_id: uuid.UUID, m
                     },
                 },
             },
-            {
-                "id": "send",
-                "type": "action",
-                "position": {"x": 260, "y": 120},
-                "parentId": "loop",
-                "data": {
-                    "nodeType": "connector.action",
-                    "label": "Send Message",
-                    "config": {
-                        "connector_instance_id": instance_id,
-                        "action": action,
-                        "params": {recipient_param: "{{loop.item}}", body_param: message_text},
-                    },
-                },
-            },
+            *children,
         ],
-        "edges": [{"id": "e-trigger-loop", "source": "trigger", "target": "loop"}],
+        "edges": edges,
     }
 
 
@@ -134,6 +180,8 @@ async def create_campaign(
     recipient_phone_numbers: list[str],
     scheduled_at: datetime,
     created_by: uuid.UUID,
+    media_url: str | None = None,
+    media_type: str | None = None,
 ) -> BroadcastCampaign:
     instance = await _get_broadcastable_instance_or_raise(
         session, tenant_id=tenant_id, connector_instance_id=connector_instance_id
@@ -143,6 +191,8 @@ async def create_campaign(
         connector_type_key=instance.connector_type.key,
         connector_instance_id=connector_instance_id,
         message_text=message_text,
+        media_url=media_url,
+        media_type=media_type,
     )
     workflow = await workflows_service.create_workflow(
         session, tenant_id=tenant_id, name=name, graph=graph, created_by=created_by, purpose="broadcast"
@@ -170,6 +220,8 @@ async def create_campaign(
         name=name,
         message_text=message_text,
         recipient_phone_numbers=recipient_phone_numbers,
+        media_url=media_url,
+        media_type=media_type,
         workflow_id=workflow.id,
         schedule_id=schedule.id,
     )

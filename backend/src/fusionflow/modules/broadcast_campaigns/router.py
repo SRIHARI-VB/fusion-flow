@@ -34,6 +34,8 @@ async def _to_out(session: SessionDep, campaign: BroadcastCampaign) -> Broadcast
         name=campaign.name,
         message_text=campaign.message_text,
         recipient_phone_numbers=campaign.recipient_phone_numbers,
+        media_url=campaign.media_url,
+        media_type=campaign.media_type,
         workflow_id=campaign.workflow_id,
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
@@ -64,6 +66,8 @@ async def create_campaign(
             recipient_phone_numbers=payload.recipient_phone_numbers,
             scheduled_at=payload.scheduled_at,
             created_by=context.user.id,
+            media_url=payload.media_url,
+            media_type=payload.media_type,
         )
     except BroadcastCampaignError as exc:
         raise _http(exc) from exc

@@ -36,6 +36,12 @@ class BroadcastCampaign(Base, TenantScopedMixin, TimestampMixin):
     # campaigns yet; a tenant with a fixed-module contact list can already
     # reach that richer path directly via the generic `/workflows` API).
     recipient_phone_numbers: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Optional media attachment sent alongside `message_text` - see
+    # `service._build_graph`'s "send-media" child node, added ahead of the
+    # existing text-send child when set. `None`/`None` (both, always
+    # together) means text-only, the original/unchanged behavior.
+    media_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    media_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     workflow_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )

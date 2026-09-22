@@ -17,6 +17,8 @@ export interface BroadcastCampaign {
   name: string;
   message_text: string;
   recipient_phone_numbers: string[];
+  media_url: string | null;
+  media_type: string | null;
   workflow_id: string;
   created_at: string;
   updated_at: string;
@@ -32,4 +34,6 @@ export interface CreateBroadcastCampaignPayload {
   message_text: string;
   recipient_phone_numbers: string[];
   scheduled_at: string;
+  media_url: string | null;
+  media_type: string | null;
 }

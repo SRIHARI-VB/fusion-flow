@@ -12,6 +12,10 @@ class BroadcastCampaignCreate(BaseModel):
     message_text: str = Field(min_length=1)
     recipient_phone_numbers: list[str] = Field(min_length=1)
     scheduled_at: datetime
+    # Optional media attachment, sent as its own message ahead of
+    # `message_text` - `None` (default) is the original text-only behavior.
+    media_url: str | None = Field(default=None)
+    media_type: str | None = Field(default=None)
 
 
 class BroadcastCampaignSetActive(BaseModel):
@@ -24,6 +28,8 @@ class BroadcastCampaignOut(BaseModel):
     name: str
     message_text: str
     recipient_phone_numbers: list[str]
+    media_url: str | None
+    media_type: str | None
     workflow_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
