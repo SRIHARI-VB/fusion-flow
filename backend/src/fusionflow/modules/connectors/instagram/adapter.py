@@ -412,6 +412,49 @@ class InstagramAdapter(base.ConnectorAdapter):
 
         return list(data.get("data") or [])
 
+    async def get_user_profile(
+        self, *, instance: ConnectorInstance, session: AsyncSession, user_id: str
+    ) -> dict[str, str] | None:
+        """Resolve a DM sender's username/name via Meta's Instagram
+        Messaging "User Profile API" (`GET /{IGSID}?fields=name,username`) -
+        available for any user who has messaged this account, regardless of
+        whether they follow it. Instagram's `messaging` webhook payload only
+        ever carries the sender's numeric IGSID, unlike a comment webhook
+        (which already includes `from.username` inline) - this is the only
+        way to turn that id into a display name for the Unified Inbox.
+
+        Returns `None` on any stub/unreachable/error condition rather than
+        raising - `inbox_service.upsert_inbound_message`'s lazy resolver
+        treats that as "still unknown, try again next message", same
+        convention as `list_media`/`get_ice_breakers` returning empty.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            return None
+
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=10.0) as client:
+                response = await client.get(
+                    f"/{user_id}",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    params={"fields": "name,username"},
+                )
+                response.raise_for_status()
+                data = response.json()
+        except (*_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+            logger.warning(
+                "[instagram] could not resolve profile for user %s (%s) - display name stays unset.",
+                user_id,
+                exc,
+            )
+            return None
+
+        username = data.get("username")
+        name = data.get("name")
+        if not username and not name:
+            return None
+        return {"username": username or "", "name": name or ""}
+
     async def reply_to_comment(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, text: str
     ) -> None:
@@ -1180,13 +1223,21 @@ class InstagramAdapter(base.ConnectorAdapter):
             # Unified Inbox: DMs only - comments (below) aren't a
             # "conversation" in the inbox sense.
             if inbound_message.get("text"):
+                sender_id = inbound_message.get("from")
+
+                async def _resolve_display_name() -> str | None:
+                    profile = await self.get_user_profile(instance=instance, session=session, user_id=sender_id)
+                    if profile is None:
+                        return None
+                    return profile.get("username") or profile.get("name") or None
+
                 await inbox_service.upsert_inbound_message(
                     session,
                     instance=instance,
-                    external_contact_id=inbound_message.get("from"),
+                    external_contact_id=sender_id,
                     content=inbound_message.get("text"),
                     external_message_id=inbound_message.get("message_id"),
-                    display_name=None,
+                    resolve_display_name=_resolve_display_name,
                 )
 
         inbound_comment = self._extract_inbound_comment(body)

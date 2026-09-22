@@ -940,12 +940,26 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                     continue
                 message = messages[0]
                 message_type = message.get("type")
+                # Meta includes the sender's saved WhatsApp display name
+                # for free alongside `.messages`, in a sibling `.contacts`
+                # array (`value.contacts[]` = `{"profile": {"name": ...},
+                # "wa_id": ...}`) - matched by `wa_id`, since it's a
+                # sibling list, not nested under the message itself.
+                contact_name = next(
+                    (
+                        (contact.get("profile") or {}).get("name")
+                        for contact in value.get("contacts") or []
+                        if contact.get("wa_id") == message.get("from")
+                    ),
+                    None,
+                )
                 extracted: dict[str, Any] = {
                     "from": message.get("from"),
                     "message_id": message.get("id"),
                     "message_type": message_type,
                     "text": (message.get("text") or {}).get("body"),
                     "timestamp": message.get("timestamp"),
+                    "contact_name": contact_name,
                 }
                 if message_type == "interactive":
                     interactive = message.get("interactive") or {}
@@ -1106,6 +1120,7 @@ class WhatsAppAdapter(base.ConnectorAdapter):
                         external_contact_id=inbound_message.get("from"),
                         content=inbound_message.get("text"),
                         external_message_id=inbound_message.get("message_id"),
+                        display_name=inbound_message.get("contact_name"),
                     )
 
         status_update = self._extract_status_update(body)

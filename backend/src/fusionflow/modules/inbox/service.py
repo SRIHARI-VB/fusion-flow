@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Sequence
+from typing import Awaitable, Callable, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,11 +126,21 @@ async def upsert_inbound_message(
     content: str,
     external_message_id: str | None,
     display_name: str | None = None,
+    resolve_display_name: Callable[[], Awaitable[str | None]] | None = None,
 ) -> Message:
     """Find-or-create the `Conversation` for this (instance, contact), bump
     its unread/last-message bookkeeping, then create+add the inbound
     `Message`. Called from adapter `handle_webhook` code - never commits,
-    only flushes (see module docstring)."""
+    only flushes (see module docstring).
+
+    `resolve_display_name`, when given, is only ever awaited if a display
+    name is still genuinely unknown (a brand-new conversation, or an
+    existing one whose `display_name` never resolved yet) - a channel
+    whose webhook payload doesn't carry the sender's name inline (e.g.
+    Instagram DMs - see `instagram/adapter.py::get_user_profile`) needs an
+    extra Graph API call to resolve it, and this keeps that call from
+    firing on every single inbound message once it's already known.
+    """
     now = datetime.now(timezone.utc)
     conversation = (
         await session.execute(
@@ -141,6 +151,10 @@ async def upsert_inbound_message(
             )
         )
     ).scalar_one_or_none()
+
+    if display_name is None and resolve_display_name is not None:
+        if conversation is None or conversation.display_name is None:
+            display_name = await resolve_display_name()
 
     if conversation is None:
         conversation = Conversation(
