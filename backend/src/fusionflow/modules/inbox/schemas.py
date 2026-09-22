@@ -26,8 +26,13 @@ class ConversationOut(BaseModel):
     assigned_agent_id: uuid.UUID | None = None
     last_message_at: datetime | None = None
     unread_count: int
+    automation_paused: bool
     created_at: datetime
     updated_at: datetime
+
+
+class SetAutomationPausedRequest(BaseModel):
+    paused: bool
 
 
 class MessageOut(BaseModel):

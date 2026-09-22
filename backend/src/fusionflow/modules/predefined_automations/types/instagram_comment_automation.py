@@ -135,8 +135,14 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
                     "label": "Send DM",
                     "config": {
                         "connector_instance_id": instance_id,
-                        "action": "send_direct_message",
-                        "params": {"recipient_id": "{{trigger.from_id}}", "text": parsed.dm_text},
+                        # Private Reply (`recipient.comment_id`), not a
+                        # generic send (`recipient.id`) - see
+                        # `instagram/adapter.py::send_private_reply`'s
+                        # docstring: it works on any comment up to 7 days
+                        # old even with no prior open DM thread, which a
+                        # first-time commenter never has.
+                        "action": "send_private_reply",
+                        "params": {"comment_id": "{{trigger.comment_id}}", "text": parsed.dm_text},
                     },
                 },
             }

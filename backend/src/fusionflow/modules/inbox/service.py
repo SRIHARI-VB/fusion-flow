@@ -60,6 +60,7 @@ def to_conversation_out(conversation: Conversation) -> ConversationOut:
         assigned_agent_id=conversation.assigned_agent_id,
         last_message_at=conversation.last_message_at,
         unread_count=conversation.unread_count,
+        automation_paused=conversation.automation_paused,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -251,3 +252,61 @@ async def assign_agent(
     conversation.assigned_agent_id = agent_id
     await session.flush()
     return conversation
+
+
+async def set_automation_paused(
+    session: AsyncSession, *, tenant_id: uuid.UUID, conversation_id: uuid.UUID, paused: bool
+) -> Conversation:
+    """Agent-facing pause/resume (Inbox UI's toggle) - resolves by
+    `conversation_id`. See `pause_automation_for_contact` for the
+    automation-side counterpart (resolves by contact, since that's what a
+    running workflow has on hand)."""
+    conversation = await _get_conversation_or_404(session, tenant_id=tenant_id, conversation_id=conversation_id)
+    conversation.automation_paused = paused
+    await session.flush()
+    return conversation
+
+
+async def pause_automation_for_contact(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connector_instance_id: uuid.UUID, external_contact_id: str
+) -> None:
+    """The `inbox.pause_automation` workflow node's implementation - called
+    mid-run, so by definition the inbound message that triggered this run
+    already went through `upsert_inbound_message` and the `Conversation`
+    row already exists; a missing row here would mean this node ran for a
+    trigger type with no corresponding Inbox conversation (e.g. a comment,
+    not a DM), which is a wizard/config mistake, not a runtime race - a
+    no-op is the safe response, not an error that fails the whole run.
+    """
+    conversation = (
+        await session.execute(
+            select(Conversation).where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.connector_instance_id == connector_instance_id,
+                Conversation.external_contact_id == external_contact_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
+        return
+    conversation.automation_paused = True
+    await session.flush()
+
+
+async def is_automation_paused(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connector_instance_id: uuid.UUID, external_contact_id: str
+) -> bool:
+    """The outbox poller's dispatch gate (`engine/outbox_poller.py`) -
+    checked before starting a new run for a conversational trigger type.
+    `False` (never paused) when no `Conversation` row exists yet, same
+    "missing means default state" convention as every other lookup here."""
+    conversation = (
+        await session.execute(
+            select(Conversation.automation_paused).where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.connector_instance_id == connector_instance_id,
+                Conversation.external_contact_id == external_contact_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return bool(conversation)

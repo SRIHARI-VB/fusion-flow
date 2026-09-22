@@ -330,6 +330,295 @@ class InstagramAdapter(base.ConnectorAdapter):
                 comment_id,
             )
 
+    async def delete_comment(
+        self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str
+    ) -> None:
+        """Permanently delete an Instagram comment - the `instagram.
+        comment_moderation` predefined automation's harder alternative to
+        `hide_comment` (hide is reversible and keeps the comment visible to
+        its author; delete is not, and removes it outright)."""
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        # TODO(meta-graph-api): DELETE /{comment_id}
+        #   Authorization: Bearer {access_token}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.delete(
+                    f"/{comment_id}", headers={"Authorization": f"Bearer {secret['access_token']}"}
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this delete so the "
+                "workflow action stays testable offline (instance=%s, comment_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                comment_id,
+            )
+
+    async def send_private_reply(
+        self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, text: str
+    ) -> None:
+        """Send a Private Reply: a DM to a comment's author, addressed by
+        `comment_id` rather than the author's user id.
+
+        This is the mechanism every "comment X and I'll DM you" flow
+        actually uses, and it is NOT interchangeable with
+        `send_direct_message`: a Private Reply works on any comment up to
+        7 days old, once per comment, even when the commenter has never
+        opened a DM thread with this account before - a normal
+        `recipient.id` send requires an already-open 24h messaging window,
+        which a first-time commenter usually doesn't have. Replaces the
+        commenter's-username-as-recipient bug the comment automation's "DM
+        Reply" action used to have (Meta's Send API needs a real
+        Instagram-scoped id or, for this exact case, a comment_id - never
+        a username).
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        # TODO(meta-graph-api): POST /{instagram_account_id}/messages
+        #   Authorization: Bearer {access_token}
+        #   {"recipient": {"comment_id": "{comment_id}"}, "message": {"text": "{text}"}}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messages",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={"recipient": {"comment_id": comment_id}, "message": {"text": text}},
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this private reply so "
+                "the workflow action stays testable offline (instance=%s, comment_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                comment_id,
+            )
+
+    async def send_button_template(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        recipient_id: str,
+        text: str,
+        buttons: list[dict[str, str]],
+    ) -> None:
+        """Send a Button Template message: a text prompt with up to 3
+        tappable postback buttons - the `instagram.button_menu_automation`
+        predefined automation's "menu" reply. Each button is
+        `{"title": ..., "payload": ...}`; a tap comes back through the
+        Messaging webhook as a `postback` event (see `_extract_postback`),
+        carrying that same `payload` string back for a condition node to
+        branch on.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        # TODO(meta-graph-api): POST /{instagram_account_id}/messages
+        #   Authorization: Bearer {access_token}
+        #   {"recipient": {"id": "{recipient_id}"}, "message": {"attachment":
+        #     {"type": "template", "payload": {"template_type": "button",
+        #     "text": "{text}", "buttons": [{"type": "postback", "title": ...,
+        #     "payload": ...}, ...]}}}}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messages",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={
+                        "recipient": {"id": recipient_id},
+                        "message": {
+                            "attachment": {
+                                "type": "template",
+                                "payload": {
+                                    "template_type": "button",
+                                    "text": text,
+                                    "buttons": [
+                                        {"type": "postback", "title": b["title"], "payload": b["payload"]}
+                                        for b in buttons
+                                    ],
+                                },
+                            }
+                        },
+                    },
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this button menu so "
+                "the workflow action stays testable offline (instance=%s, recipient_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                recipient_id,
+            )
+
+    async def set_ice_breakers(
+        self, *, instance: ConnectorInstance, session: AsyncSession, questions: list[dict[str, str]]
+    ) -> None:
+        """Configure up to 4 welcome-menu FAQ buttons shown to a user
+        opening a brand-new DM thread with this account for the first time
+        - a connector-instance-level *setting*, not a per-message action,
+        so it's called from `instagram/router.py`'s dedicated settings
+        endpoint, never from `perform_action`/a workflow graph. Each
+        question is `{"question": ..., "payload": ...}`; tapping one
+        arrives as an ordinary `postback` event, same as a button-template
+        tap.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        # TODO(meta-graph-api): POST /{instagram_account_id}/messenger_ice_breakers
+        #   Authorization: Bearer {access_token}
+        #   {"ice_breakers": [{"call_to_actions": [{"question": ..., "payload": ...}, ...],
+        #     "locale": "default"}]}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messenger_ice_breakers",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={
+                        "ice_breakers": [
+                            {
+                                "call_to_actions": [
+                                    {"question": q["question"], "payload": q["payload"]} for q in questions
+                                ],
+                                "locale": "default",
+                            }
+                        ]
+                    },
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping ice breaker save so "
+                "the settings screen stays testable offline (instance=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+            )
+
+    async def get_ice_breakers(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, str]]:
+        """Fetch the currently configured ice breakers, to pre-fill the
+        settings screen. Returns `[]` on any stub/unreachable/not-yet-set
+        condition rather than raising - an empty welcome menu is a normal,
+        legal state, not an error."""
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            return []
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            return []
+
+        # TODO(meta-graph-api): GET /{instagram_account_id}/messenger_ice_breakers
+        #   Authorization: Bearer {access_token}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.get(
+                    f"/{instagram_account_id}/messenger_ice_breakers",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                )
+                response.raise_for_status()
+                data = response.json()
+        except (_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+            logger.warning(
+                "[instagram] could not fetch ice breakers (%s) - returning empty (instance=%s).",
+                exc,
+                instance.id,
+            )
+            return []
+
+        entries = data.get("data") or data.get("ice_breakers") or []
+        if not entries:
+            return []
+        return [
+            {"question": cta.get("question", ""), "payload": cta.get("payload", "")}
+            for cta in (entries[0].get("call_to_actions") or [])
+        ]
+
+    async def _resolve_mention_details(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        media_id: str | None,
+        comment_id: str | None,
+    ) -> dict[str, Any]:
+        """The Mentions webhook only carries `media_id`/`comment_id` - Meta
+        requires a second lookup, through the connected account's OWN node,
+        to get the actual text/username of a mention (see module
+        docstring). Returns `{}` on any failure (never raises) - the
+        `instagram.mention_received` trigger still fires with just the raw
+        ids on hand; a keyword condition simply won't match without
+        resolved text, a safe silent no-op rather than a broken run.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            return {}
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            return {}
+
+        # TODO(meta-graph-api): GET /{instagram_account_id}?fields=mentioned_comment.comment_id({comment_id}){text,from,media}
+        #   or, when there's no comment_id (a caption mention instead):
+        #   GET /{instagram_account_id}?fields=mentioned_media.media_id({media_id}){caption,media_url,permalink}
+        try:
+            if comment_id:
+                fields = f"mentioned_comment.comment_id({comment_id}){{text,from,media}}"
+            else:
+                fields = f"mentioned_media.media_id({media_id}){{caption,media_url,permalink}}"
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.get(
+                    f"/{instagram_account_id}",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    params={"fields": fields},
+                )
+                response.raise_for_status()
+                data = response.json()
+        except (_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+            logger.warning(
+                "[instagram] could not resolve mention detail (%s) - firing trigger with raw ids "
+                "only (instance=%s, media_id=%s, comment_id=%s).",
+                exc,
+                instance.id,
+                media_id,
+                comment_id,
+            )
+            return {}
+
+        if comment_id:
+            comment = data.get("mentioned_comment") or {}
+            return {
+                "text": comment.get("text"),
+                "from_id": (comment.get("from") or {}).get("id"),
+                "from_username": (comment.get("from") or {}).get("username"),
+            }
+        media = data.get("mentioned_media") or {}
+        return {"text": media.get("caption"), "permalink": media.get("permalink")}
+
     async def perform_action(
         self, *, action: str, params: dict[str, Any], instance: ConnectorInstance, session: AsyncSession
     ) -> dict[str, Any]:
@@ -359,6 +648,29 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance=instance, session=session, comment_id=comment_id, hidden=params.get("hidden", True)
             )
             return {"comment_id": comment_id}
+        if action == "delete_comment":
+            comment_id = params.get("comment_id")
+            if not comment_id:
+                raise ValueError("delete_comment requires a non-empty 'comment_id' param")
+            await self.delete_comment(instance=instance, session=session, comment_id=comment_id)
+            return {"comment_id": comment_id}
+        if action == "send_private_reply":
+            comment_id = params.get("comment_id")
+            text = params.get("text")
+            if not comment_id or not text:
+                raise ValueError("send_private_reply requires non-empty 'comment_id' and 'text' params")
+            await self.send_private_reply(instance=instance, session=session, comment_id=comment_id, text=text)
+            return {"comment_id": comment_id, "text": text}
+        if action == "send_button_template":
+            recipient_id = params.get("recipient_id")
+            text = params.get("text")
+            buttons = params.get("buttons")
+            if not recipient_id or not text or not buttons:
+                raise ValueError("send_button_template requires non-empty 'recipient_id', 'text', and 'buttons' params")
+            await self.send_button_template(
+                instance=instance, session=session, recipient_id=recipient_id, text=text, buttons=buttons
+            )
+            return {"recipient_id": recipient_id}
         raise NotImplementedError(f"{self.connector_type_key} does not support action {action!r}")
 
     def webhook_setup_hint(self) -> dict[str, str] | None:
@@ -480,6 +792,10 @@ class InstagramAdapter(base.ConnectorAdapter):
         it's load-bearing: a DM auto-reply automation whose reply text
         ever happens to match its own trigger keyword would otherwise
         reply to its own echoed reply forever.
+
+        Also skips a story reply (`message.reply_to.story` set) - that
+        routes to `_extract_story_reply`/`instagram.story_reply_received`
+        instead, so it doesn't ALSO fire as a plain DM.
         """
         entries = body.get("entry") or []
         for entry in entries:
@@ -487,11 +803,122 @@ class InstagramAdapter(base.ConnectorAdapter):
                 message = messaging.get("message")
                 if not message or message.get("is_echo"):
                     continue
+                if (message.get("reply_to") or {}).get("story"):
+                    continue
                 return {
                     "from": (messaging.get("sender") or {}).get("id"),
                     "message_id": message.get("mid"),
                     "text": message.get("text"),
                 }
+        return None
+
+    @staticmethod
+    def _extract_story_reply(body: dict[str, Any]) -> dict[str, Any] | None:
+        """A DM whose `message.reply_to.story` is set - Instagram's "replied
+        to my story" event, delivered through the same Messaging webhook as
+        a normal DM (there is no separate webhook field for it), shaped
+        `message.reply_to = {"story": {"id": "...", "url": "..."}}`.
+        Checked separately from (and takes priority over)
+        `_extract_inbound_message` so it fires its own
+        `instagram.story_reply_received` trigger instead of a plain DM one.
+        """
+        entries = body.get("entry") or []
+        for entry in entries:
+            for messaging in entry.get("messaging") or []:
+                message = messaging.get("message")
+                if not message or message.get("is_echo"):
+                    continue
+                story = (message.get("reply_to") or {}).get("story")
+                if not story:
+                    continue
+                return {
+                    "from": (messaging.get("sender") or {}).get("id"),
+                    "message_id": message.get("mid"),
+                    "text": message.get("text"),
+                    "story_id": story.get("id"),
+                }
+        return None
+
+    @staticmethod
+    def _extract_postback(body: dict[str, Any]) -> dict[str, Any] | None:
+        """A tap on a button-template or ice-breaker button - arrives as
+        `messaging[].postback = {"mid": ..., "payload": ..., "title": ...}`,
+        a sibling field to `.message` on the same Messaging webhook (never
+        both on the same entry)."""
+        entries = body.get("entry") or []
+        for entry in entries:
+            for messaging in entry.get("messaging") or []:
+                postback = messaging.get("postback")
+                if not postback:
+                    continue
+                return {
+                    "from": (messaging.get("sender") or {}).get("id"),
+                    "payload": postback.get("payload"),
+                    "title": postback.get("title"),
+                }
+        return None
+
+    @staticmethod
+    def _extract_referral(body: dict[str, Any]) -> dict[str, Any] | None:
+        """An ad-click or ig.me-shortlink-originated conversation start -
+        `messaging[].referral` (a fresh conversation with no prior message)
+        or `messaging[].postback.referral`/`messaging[].message` alongside
+        a `referral` key (an in-context referral attached to the first
+        real message) - checked independently of, and not mutually
+        exclusive with, `_extract_inbound_message`/`_extract_postback`."""
+        entries = body.get("entry") or []
+        for entry in entries:
+            for messaging in entry.get("messaging") or []:
+                referral = messaging.get("referral") or (messaging.get("postback") or {}).get("referral")
+                if not referral:
+                    continue
+                return {
+                    "from": (messaging.get("sender") or {}).get("id"),
+                    "ref": referral.get("ref"),
+                    "source": referral.get("source"),
+                    "ad_id": referral.get("ad_id"),
+                }
+        return None
+
+    @staticmethod
+    def _extract_message_reaction(body: dict[str, Any]) -> dict[str, Any] | None:
+        """A reaction (Instagram's Send API only supports "love" outbound,
+        but any emoji can arrive inbound) added to a previously-sent
+        message - `messaging[].reaction = {"mid": ..., "action":
+        "react"|"unreact", "reaction": "love", "emoji": "..."}`."""
+        entries = body.get("entry") or []
+        for entry in entries:
+            for messaging in entry.get("messaging") or []:
+                reaction = messaging.get("reaction")
+                if not reaction:
+                    continue
+                return {
+                    "from": (messaging.get("sender") or {}).get("id"),
+                    "message_id": reaction.get("mid"),
+                    "action": reaction.get("action"),
+                    "reaction": reaction.get("reaction"),
+                }
+        return None
+
+    @staticmethod
+    def _extract_mention(body: dict[str, Any]) -> dict[str, Any] | None:
+        """Someone `@mentions` this account in a comment or caption on
+        media THEY own (not this account's own media - that's
+        `_extract_inbound_comment`'s job). Real shape (Meta docs):
+          entry[0].changes[0] = {"field": "mentions", "value":
+            {"media_id": "...", "comment_id": "..." (only for a comment
+            mention - absent for a caption mention)}}
+        Only carries ids; `_resolve_mention_details` does the follow-up
+        lookup for the actual text/username."""
+        entries = body.get("entry") or []
+        for entry in entries:
+            for change in entry.get("changes") or []:
+                if change.get("field") != "mentions":
+                    continue
+                value = change.get("value") or {}
+                if not value.get("media_id"):
+                    continue
+                return value
         return None
 
     @staticmethod
@@ -587,6 +1014,100 @@ class InstagramAdapter(base.ConnectorAdapter):
                 },
                 connector_instance_id=instance.id,
                 dedupe_key=inbound_comment["id"],
+            )
+
+        inbound_story_reply = self._extract_story_reply(body)
+        if inbound_story_reply is not None:
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="instagram.story_reply_received",
+                payload={
+                    "from": inbound_story_reply.get("from"),
+                    "message_id": inbound_story_reply.get("message_id"),
+                    "text": inbound_story_reply.get("text"),
+                    "story_id": inbound_story_reply.get("story_id"),
+                },
+                connector_instance_id=instance.id,
+                dedupe_key=inbound_story_reply.get("message_id"),
+            )
+
+        inbound_postback = self._extract_postback(body)
+        if inbound_postback is not None:
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="instagram.postback_received",
+                payload={
+                    "from": inbound_postback.get("from"),
+                    "payload": inbound_postback.get("payload"),
+                    "title": inbound_postback.get("title"),
+                },
+                connector_instance_id=instance.id,
+                # No stable id of its own (unlike a message's `mid`) - a
+                # redelivered postback is rare and re-firing the matched
+                # branch again is harmless (same class of button click),
+                # so this is left undeduplicated rather than invented.
+                dedupe_key=None,
+            )
+
+        inbound_referral = self._extract_referral(body)
+        if inbound_referral is not None:
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="instagram.referral_received",
+                payload={
+                    "from": inbound_referral.get("from"),
+                    "ref": inbound_referral.get("ref"),
+                    "source": inbound_referral.get("source"),
+                    "ad_id": inbound_referral.get("ad_id"),
+                },
+                connector_instance_id=instance.id,
+                dedupe_key=None,
+            )
+
+        inbound_reaction = self._extract_message_reaction(body)
+        if inbound_reaction is not None:
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="instagram.message_reaction_received",
+                payload={
+                    "from": inbound_reaction.get("from"),
+                    "message_id": inbound_reaction.get("message_id"),
+                    "action": inbound_reaction.get("action"),
+                    "reaction": inbound_reaction.get("reaction"),
+                },
+                connector_instance_id=instance.id,
+                dedupe_key=(
+                    f"{inbound_reaction.get('message_id')}:{inbound_reaction.get('action')}"
+                    if inbound_reaction.get("message_id")
+                    else None
+                ),
+            )
+
+        inbound_mention = self._extract_mention(body)
+        if inbound_mention is not None:
+            details = await self._resolve_mention_details(
+                instance=instance,
+                session=session,
+                media_id=inbound_mention.get("media_id"),
+                comment_id=inbound_mention.get("comment_id"),
+            )
+            await event_bus.publish_trigger_event(
+                session,
+                tenant_id=instance.tenant_id,
+                event_type="instagram.mention_received",
+                payload={
+                    "media_id": inbound_mention.get("media_id"),
+                    "comment_id": inbound_mention.get("comment_id"),
+                    "text": details.get("text"),
+                    "from_id": details.get("from_id"),
+                    "from_username": details.get("from_username"),
+                },
+                connector_instance_id=instance.id,
+                dedupe_key=inbound_mention.get("comment_id") or inbound_mention.get("media_id"),
             )
 
         return [event]

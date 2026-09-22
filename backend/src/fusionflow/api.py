@@ -21,6 +21,7 @@ from fusionflow.modules.catalog.router import (
 )
 from fusionflow.modules.connectors.router import router as connectors_router
 from fusionflow.modules.connectors.webhooks import router as connector_webhooks_router
+from fusionflow.modules.connectors.instagram.router import router as instagram_settings_router
 from fusionflow.modules.connectors.whatsapp.router import router as whatsapp_router
 from fusionflow.modules.custom_fields.router import router as custom_fields_router
 from fusionflow.modules.customers.router import field_definitions_router as customer_field_definitions_router
@@ -62,6 +63,7 @@ api_router.include_router(tickets_router)
 api_router.include_router(kb_router)
 api_router.include_router(connectors_router)
 api_router.include_router(whatsapp_router)
+api_router.include_router(instagram_settings_router)
 api_router.include_router(connector_webhooks_router)
 api_router.include_router(workflows_router)
 api_router.include_router(predefined_automations_router)

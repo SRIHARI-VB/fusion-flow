@@ -119,3 +119,92 @@ def build_keyword_condition_chain(
     )
 
     return nodes, edges
+
+
+def build_branching_condition_chain(
+    *,
+    trigger_node_id: str,
+    field_path: str,
+    operator: str,
+    cases: list[tuple[str, str]],
+    id_prefix: str = "case",
+    start_x: float = 260,
+    step_x: float = 260,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Like `build_keyword_condition_chain`, but each case's `true` handle
+    goes to ITS OWN target instead of every case converging on one shared
+    target - for automation types where different matches trigger
+    different actions (e.g. `instagram.referral_automation`: a different
+    reply per ad/shortlink `ref` value), rather than "any of these
+    keywords means the same thing".
+
+    `cases` is `[(match_value, target_node_id), ...]`, tried in order (an
+    OR-chain identical in spirit to `build_keyword_condition_chain` - only
+    the first matching case in the list ever actually resolves `true` in a
+    given run). Same wiring rules apply: every condition's `true` handle
+    gets exactly one edge (to that case's own target), the last
+    condition's `false` handle terminates in a generated `log.noop`
+    ("no case matched" - see `build_keyword_condition_chain`'s docstring
+    for why a dangling handle is a publish-validation error, not a legal
+    no-op). Does not construct `trigger_node_id` or any of the `cases`'
+    target nodes itself - same contract as `build_keyword_condition_chain`.
+    """
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    condition_ids: list[str] = []
+    previous_node_id = trigger_node_id
+    x = start_x
+    for index, (match_value, target_id) in enumerate(cases):
+        condition_id = f"{id_prefix}-{index}"
+        condition_ids.append(condition_id)
+        nodes.append(
+            {
+                "id": condition_id,
+                "type": "condition",
+                "position": {"x": x, "y": 0},
+                "data": {
+                    "nodeType": "condition.field_compare",
+                    "label": f"Matches {match_value!r}",
+                    "config": {"field_path": field_path, "operator": operator, "value": match_value},
+                },
+            }
+        )
+        edge: dict[str, Any] = {
+            "id": f"e-{previous_node_id}-{condition_id}",
+            "source": previous_node_id,
+            "target": condition_id,
+        }
+        if index > 0:
+            edge["sourceHandle"] = "false"
+        edges.append(edge)
+        edges.append(
+            {
+                "id": f"e-{condition_id}-{target_id}-true",
+                "source": condition_id,
+                "target": target_id,
+                "sourceHandle": "true",
+            }
+        )
+        previous_node_id = condition_id
+        x += step_x
+
+    no_match_id = f"{id_prefix}-no-match"
+    nodes.append(
+        {
+            "id": no_match_id,
+            "type": "action",
+            "position": {"x": x, "y": 200},
+            "data": {"nodeType": "log.noop", "label": "No Match", "config": {"message": "No case matched"}},
+        }
+    )
+    edges.append(
+        {
+            "id": f"e-{condition_ids[-1]}-{no_match_id}",
+            "source": condition_ids[-1],
+            "target": no_match_id,
+            "sourceHandle": "false",
+        }
+    )
+
+    return nodes, edges

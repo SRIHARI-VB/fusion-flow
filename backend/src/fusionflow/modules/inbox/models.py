@@ -22,7 +22,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -67,6 +67,14 @@ class Conversation(Base, TenantScopedMixin, TimestampMixin):
     )
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Set by the `inbox.pause_automation` node (the "human handoff"
+    # predefined-automation action) - while true, the outbox poller's
+    # dispatch gate (`engine/outbox_poller.py::_conversation_automation_is_paused`)
+    # skips starting a new run for any conversational trigger on this
+    # conversation, so a human agent (or the customer, next time they
+    # message) isn't fighting an automation that keeps replying. Cleared
+    # by an agent resuming it from the Inbox UI - never auto-expires.
+    automation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Read-only convenience relationship for eager-loading in
     # `service.list_conversations` (no `back_populates` needed on

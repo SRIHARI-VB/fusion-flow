@@ -44,6 +44,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from fusionflow.db.session import async_session_factory, set_tenant_context
+from fusionflow.modules.inbox import service as inbox_service
 from fusionflow.modules.tenancy.models import Business
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run, resume_run
@@ -63,6 +64,18 @@ logger = logging.getLogger(__name__)
 
 JOB_NAME = "workflows.outbox_poll"
 DEFAULT_INTERVAL_SECONDS = 2.0
+
+# Trigger types shaped like a DM (a `from` field that resolves to a
+# Unified Inbox `Conversation`) - the only ones the "human handoff" pause
+# gate below applies to. A comment/mention/reaction/etc. trigger has no
+# corresponding `Conversation`, so the gate is skipped for those entirely
+# rather than doing a lookup that could never match.
+_CONVERSATIONAL_TRIGGER_TYPES = {
+    "whatsapp.message_received",
+    "instagram.message_received",
+    "telegram.message_received",
+    "facebook.message_received",
+}
 
 
 def _now() -> datetime:
@@ -184,6 +197,25 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
                 if t.connector_instance_id is None
                 or t.connector_instance_id == inbox_row.connector_instance_id
             ]
+
+        if (
+            inbox_row.event_type in _CONVERSATIONAL_TRIGGER_TYPES
+            and inbox_row.connector_instance_id is not None
+            and isinstance(inbox_row.payload, dict)
+            and inbox_row.payload.get("from")
+            and await inbox_service.is_automation_paused(
+                session,
+                tenant_id=tenant_id,
+                connector_instance_id=inbox_row.connector_instance_id,
+                external_contact_id=inbox_row.payload["from"],
+            )
+        ):
+            # Human handoff (`inbox.pause_automation`) is in effect for
+            # this conversation - skip starting any run for it, but still
+            # mark the row processed (same "no match" outcome as a
+            # keyword condition that didn't fire, not an error).
+            inbox_row.processed_at = _now()
+            continue
 
         for trigger in matching:
             await _start_run_for_trigger(session, trigger, inbox_row)
