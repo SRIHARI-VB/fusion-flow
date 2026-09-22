@@ -699,16 +699,34 @@ class InstagramAdapter(base.ConnectorAdapter):
         if not instagram_account_id:
             raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
 
-        # TODO(meta-graph-api): POST /{instagram_account_id}/messenger_ice_breakers
+        # POST /{instagram_account_id}/messenger_profile - NOT a dedicated
+        # `/messenger_ice_breakers` edge (that's the older, Facebook-Page-
+        # linked Messenger Platform's endpoint shape - this account uses
+        # the standalone "Instagram API with Instagram Login" model, whose
+        # Ice Breakers live under the shared `messenger_profile` settings
+        # edge instead, gated by the required top-level `"platform":
+        # "instagram"` field). Confirmed against Meta's current docs
+        # (developers.facebook.com/docs/instagram-platform/instagram-api-
+        # with-instagram-login/messaging-api/ice-breakers/) after the
+        # previous `/messenger_ice_breakers` shape came back as a genuine
+        # Meta rejection ("Object with ID ... does not support this
+        # operation"), not a permissions issue.
         #   Authorization: Bearer {access_token}
-        #   {"ice_breakers": [{"call_to_actions": [{"question": ..., "payload": ...}, ...],
+        #   {"platform": "instagram", "ice_breakers": [{"call_to_actions": [{"question": ..., "payload": ...}, ...],
         #     "locale": "default"}]}
+        # Meta enforces one of exactly two keyset shapes per ice_breakers
+        # entry - `(question, payload)` flat, or `(call_to_actions,
+        # locale)` - and rejects a `call_to_actions` entry with no
+        # `locale` (error_subcode 2534058, "Invalid Icebreaker Schema"),
+        # confirmed against the real API; the doc example that omits it
+        # doesn't match the API's own validation.
         try:
             async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
                 response = await client.post(
-                    f"/{instagram_account_id}/messenger_ice_breakers",
+                    f"/{instagram_account_id}/messenger_profile",
                     headers={"Authorization": f"Bearer {secret['access_token']}"},
                     json={
+                        "platform": "instagram",
                         "ice_breakers": [
                             {
                                 "call_to_actions": [
@@ -716,7 +734,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                                 ],
                                 "locale": "default",
                             }
-                        ]
+                        ],
                     },
                 )
                 response.raise_for_status()
@@ -757,13 +775,17 @@ class InstagramAdapter(base.ConnectorAdapter):
         if not instagram_account_id:
             return []
 
-        # TODO(meta-graph-api): GET /{instagram_account_id}/messenger_ice_breakers
+        # GET /{instagram_account_id}/messenger_profile?fields=ice_breakers -
+        # same `messenger_profile` edge `set_ice_breakers` posts to, not a
+        # dedicated `/messenger_ice_breakers` edge - see that method's
+        # comment for why.
         #   Authorization: Bearer {access_token}
         try:
             async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
                 response = await client.get(
-                    f"/{instagram_account_id}/messenger_ice_breakers",
+                    f"/{instagram_account_id}/messenger_profile",
                     headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    params={"fields": "ice_breakers"},
                 )
                 response.raise_for_status()
                 data = response.json()
