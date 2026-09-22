@@ -52,7 +52,7 @@ _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
 
 
 class InstagramCommentModerationConfig(BaseModel):
-    trigger_keywords: list[str] = Field(min_length=1)
+    trigger_keywords: list[str] = Field(default_factory=list)  # empty = match everything
     matching_method: MatchingMethod = "contains"
     hide: bool = False
     delete: bool = False

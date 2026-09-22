@@ -47,7 +47,7 @@ from fusionflow.db.session import async_session_factory, set_tenant_context
 from fusionflow.modules.inbox import service as inbox_service
 from fusionflow.modules.tenancy.models import Business
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
-from fusionflow.modules.workflows.engine.run_loop import RunLoopError, execute_run, resume_run
+from fusionflow.modules.workflows.engine.run_loop import DELAY_CORRELATION_KEY, RunLoopError, execute_run, resume_run
 from fusionflow.modules.workflows.models import (
     RunStatus,
     Workflow,
@@ -121,9 +121,45 @@ async def poll_once(
     for tenant_id in tenant_ids:
         async with session_factory() as session:
             await set_tenant_context(session, tenant_id)
+            await _resume_due_delays(session, tenant_id)
             await _expire_stale_waits(session, tenant_id)
 
     return processed
+
+
+async def _resume_due_delays(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """`flow.delay`'s timer firing - the opposite of `_expire_stale_waits`
+    just below: identified by the same sentinel `DELAY_CORRELATION_KEY`
+    every delay-wait uses (see `run_loop.py`'s module docstring), these
+    runs are meant to auto-CONTINUE once their (short, node-configured)
+    expiry elapses, not fail. Must run before `_expire_stale_waits` in the
+    same pass so a delay wait is never mistaken for a stale reply-wait and
+    force-failed instead of resumed."""
+    due_runs = (
+        await session.execute(
+            select(WorkflowRun).where(
+                WorkflowRun.tenant_id == tenant_id,
+                WorkflowRun.status == RunStatus.WAITING,
+                WorkflowRun.waiting_correlation_key == DELAY_CORRELATION_KEY,
+                WorkflowRun.waiting_expires_at < _now(),
+            )
+        )
+    ).scalars().all()
+    if not due_runs:
+        return
+    for run in due_runs:
+        version = await session.get(WorkflowVersion, run.workflow_version_id)
+        if version is None:
+            logger.warning("workflow run %s (flow.delay) references missing workflow version", run.id)
+            continue
+        graph = WorkflowGraph.from_json(version.compiled_graph or version.graph)
+        try:
+            await resume_run(session, run, graph, reply_payload={})
+        except RunLoopError as exc:
+            run.status = RunStatus.FAILED
+            run.completed_at = _now()
+            logger.warning("workflow run %s could not resume from flow.delay: %s", run.id, exc)
+    await session.commit()
 
 
 async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> None:
@@ -134,13 +170,19 @@ async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> No
     (see Phase 8's plan section) - a plain, clearly-logged force-fail.
     Waiting runs are rare compared to inbox rows, so a straightforward
     loop (not the `FOR UPDATE SKIP LOCKED` batching the inbox path uses)
-    is fine here."""
+    is fine here.
+
+    Excludes `flow.delay` waits (`DELAY_CORRELATION_KEY`) - those are
+    handled by `_resume_due_delays` above, which runs first in the same
+    pass; this query would otherwise force-fail a delay the instant it
+    elapses instead of letting it resume."""
     stale_runs = (
         await session.execute(
             select(WorkflowRun).where(
                 WorkflowRun.tenant_id == tenant_id,
                 WorkflowRun.status == RunStatus.WAITING,
                 WorkflowRun.waiting_expires_at < _now(),
+                WorkflowRun.waiting_correlation_key != DELAY_CORRELATION_KEY,
             )
         )
     ).scalars().all()

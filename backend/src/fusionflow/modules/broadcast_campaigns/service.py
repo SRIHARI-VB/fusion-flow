@@ -44,8 +44,24 @@ class BroadcastCampaignError(Exception):
         self.detail = detail
 
 
-def _build_graph(*, connector_instance_id: uuid.UUID, message_text: str) -> dict:
+# Per-connector-type shape for the one `connector.action` node every
+# broadcast campaign's generated graph ends in - the loop/trigger
+# structure is identical regardless of channel; only the action name and
+# which params key carries the recipient id differ. Extending broadcast
+# campaigns to a new channel is one more entry here, not a new graph
+# shape - same "catalog/config, not code" principle `connector.action`
+# itself already established.
+_SEND_ACTION_BY_CONNECTOR_TYPE: dict[str, tuple[str, str]] = {
+    # connector_type_key -> (action name, recipient-id param key)
+    "whatsapp": ("send_text_message", "to"),
+    "instagram": ("send_direct_message", "recipient_id"),
+}
+
+
+def _build_graph(*, connector_type_key: str, connector_instance_id: uuid.UUID, message_text: str) -> dict:
     instance_id = str(connector_instance_id)
+    action, recipient_param = _SEND_ACTION_BY_CONNECTOR_TYPE[connector_type_key]
+    body_param = "body" if connector_type_key == "whatsapp" else "text"
     return {
         "nodes": [
             {
@@ -61,7 +77,16 @@ def _build_graph(*, connector_instance_id: uuid.UUID, message_text: str) -> dict
                 "data": {
                     "nodeType": "flow.loop",
                     "label": "For Each Recipient",
-                    "config": {"items_path": "{{trigger.recipients}}", "max_iterations": 200},
+                    "config": {
+                        "items_path": "{{trigger.recipients}}",
+                        "max_iterations": 200,
+                        # A bad recipient (an Instagram DM outside the 24h
+                        # messaging window is the real, expected case - see
+                        # `_get_broadcastable_instance_or_raise`'s module
+                        # docstring) must not abort every recipient after
+                        # it in the same batch.
+                        "continue_on_error": True,
+                    },
                 },
             },
             {
@@ -74,8 +99,8 @@ def _build_graph(*, connector_instance_id: uuid.UUID, message_text: str) -> dict
                     "label": "Send Message",
                     "config": {
                         "connector_instance_id": instance_id,
-                        "action": "send_text_message",
-                        "params": {"to": "{{loop.item}}", "body": message_text},
+                        "action": action,
+                        "params": {recipient_param: "{{loop.item}}", body_param: message_text},
                     },
                 },
             },
@@ -84,13 +109,17 @@ def _build_graph(*, connector_instance_id: uuid.UUID, message_text: str) -> dict
     }
 
 
-async def _get_whatsapp_instance_or_raise(session: AsyncSession, *, tenant_id: uuid.UUID, connector_instance_id: uuid.UUID):
+async def _get_broadcastable_instance_or_raise(
+    session: AsyncSession, *, tenant_id: uuid.UUID, connector_instance_id: uuid.UUID
+):
     instance = await connector_service.get_instance(session, tenant_id=tenant_id, instance_id=connector_instance_id)
     if instance is None:
         raise BroadcastCampaignError(404, "Connector instance not found")
-    if instance.connector_type.key != "whatsapp":
+    if instance.connector_type.key not in _SEND_ACTION_BY_CONNECTOR_TYPE:
+        supported = ", ".join(sorted(_SEND_ACTION_BY_CONNECTOR_TYPE))
         raise BroadcastCampaignError(
-            400, f"Broadcast campaigns require a WhatsApp connector instance, not {instance.connector_type.key!r}"
+            400,
+            f"Broadcast campaigns support {supported} connector instances, not {instance.connector_type.key!r}",
         )
     return instance
 
@@ -106,9 +135,15 @@ async def create_campaign(
     scheduled_at: datetime,
     created_by: uuid.UUID,
 ) -> BroadcastCampaign:
-    await _get_whatsapp_instance_or_raise(session, tenant_id=tenant_id, connector_instance_id=connector_instance_id)
+    instance = await _get_broadcastable_instance_or_raise(
+        session, tenant_id=tenant_id, connector_instance_id=connector_instance_id
+    )
 
-    graph = _build_graph(connector_instance_id=connector_instance_id, message_text=message_text)
+    graph = _build_graph(
+        connector_type_key=instance.connector_type.key,
+        connector_instance_id=connector_instance_id,
+        message_text=message_text,
+    )
     workflow = await workflows_service.create_workflow(
         session, tenant_id=tenant_id, name=name, graph=graph, created_by=created_by, purpose="broadcast"
     )

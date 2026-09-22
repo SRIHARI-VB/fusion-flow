@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.base import registry as connector_registry
-from fusionflow.modules.connectors.instagram.schemas import IceBreakerQuestion, IceBreakersRequest
+from fusionflow.modules.connectors.instagram.schemas import IceBreakerQuestion, IceBreakersRequest, InstagramMediaOut
 
 router = APIRouter(prefix="/connectors/{instance_id}/instagram", tags=["instagram"])
 
@@ -51,3 +51,15 @@ async def set_ice_breakers(
     questions = [q.model_dump() for q in payload.questions]
     await adapter.set_ice_breakers(instance=instance, session=session, questions=questions)
     return payload.questions
+
+
+@router.get("/media", response_model=list[InstagramMediaOut])
+async def list_media(
+    instance_id: uuid.UUID, context: TenantContextDep, session: SessionDep
+) -> list[InstagramMediaOut]:
+    """This account's own posts/reels - the post/reel picker for Comment
+    Automation/Comment Moderation's "scope to one post" option."""
+    instance = await _get_instance_or_404(session, context.tenant_id, instance_id)
+    adapter = connector_registry.get("instagram")
+    media = await adapter.list_media(instance=instance, session=session)
+    return [InstagramMediaOut(**m) for m in media]

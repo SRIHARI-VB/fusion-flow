@@ -14,6 +14,7 @@ half.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -28,6 +29,8 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 from fusionflow.modules.workflows.engine.run_loop import ChildExecutionError
 from fusionflow.modules.workflows.engine.templating import resolve_template_value
+
+logger = logging.getLogger(__name__)
 
 
 class LoopConfig(BaseModel):
@@ -45,6 +48,15 @@ class LoopConfig(BaseModel):
         description=(
             "Local safety cap on this loop, independent of (and in addition to) the run's "
             "global loop guard. Extra items beyond this cap are skipped, not an error."
+        ),
+    )
+    continue_on_error: bool = Field(
+        default=False,
+        description=(
+            "When true, a failing iteration is logged and skipped instead of failing the "
+            "whole run - for a bulk send where one bad recipient (e.g. an Instagram DM "
+            "outside the 24h messaging window) must not abort every recipient after it. "
+            "Default false preserves every existing loop's fail-fast behavior."
         ),
     )
 
@@ -81,7 +93,12 @@ class LoopExecutor(NodeExecutor):
             try:
                 await context.run_children(root_ids, scoped_variables, child_ids)
             except ChildExecutionError as exc:
-                return Failure(f"loop iteration {index} failed: {exc.reason}")
+                if not config.continue_on_error:
+                    return Failure(f"loop iteration {index} failed: {exc.reason}")
+                logger.warning(
+                    "loop iteration %s failed (continue_on_error=true, skipping): %s", index, exc.reason
+                )
+                continue
             results.append({cid: scoped_variables[cid] for cid in child_ids if cid in scoped_variables})
 
         return Success(output={"results": results, "truncated": truncated, "count": len(results)})

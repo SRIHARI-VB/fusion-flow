@@ -35,6 +35,10 @@ _OUTPUT_SCHEMA = {"type": "object", "properties": {"paused": {"type": "boolean"}
 
 class InboxPauseAutomationConfig(BaseModel):
     connector_instance_id: str = Field(min_length=1)
+    # Optional SLA timer (the Human Handoff wizard's "auto-resume after"
+    # field) - `None` means stays paused until an agent manually resumes
+    # it, the original behavior.
+    auto_resume_after_hours: float | None = Field(default=None, gt=0)
 
 
 class InboxPauseAutomationExecutor(NodeExecutor):
@@ -62,6 +66,7 @@ class InboxPauseAutomationExecutor(NodeExecutor):
             tenant_id=context.tenant_id,
             connector_instance_id=uuid.UUID(config.connector_instance_id),
             external_contact_id=external_contact_id,
+            resume_after_hours=config.auto_resume_after_hours,
         )
         return Success(output={"paused": True})
 

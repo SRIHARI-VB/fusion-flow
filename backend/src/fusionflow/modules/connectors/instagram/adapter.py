@@ -269,6 +269,149 @@ class InstagramAdapter(base.ConnectorAdapter):
                 recipient_id,
             )
 
+    async def send_media_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        recipient_id: str,
+        media_url: str,
+        media_type: str = "image",
+    ) -> None:
+        """Send an outbound Instagram DM carrying an image or video
+        attachment instead of (or alongside a caption baked into) plain
+        text - the media-attachment option on DM/story-reply/button-menu
+        automations. `media_url` is a real, publicly-fetchable URL (this
+        codebase's Cloudflare R2 upload path, or any already-catalogued
+        Media Library asset - see `MediaPicker.tsx`); Meta fetches and
+        re-hosts it server-side rather than accepting a raw file upload
+        here.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        # TODO(meta-graph-api): POST /{instagram_account_id}/messages
+        #   Authorization: Bearer {access_token}
+        #   {"recipient": {"id": "{recipient_id}"}, "message": {"attachment":
+        #     {"type": "{media_type}", "payload": {"url": "{media_url}"}}}}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=20.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messages",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={
+                        "recipient": {"id": recipient_id},
+                        "message": {"attachment": {"type": media_type, "payload": {"url": media_url}}},
+                    },
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this media send so "
+                "the workflow action stays testable offline (instance=%s, recipient_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                recipient_id,
+            )
+
+    async def react_to_message(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        recipient_id: str,
+        message_id: str,
+        reaction: str = "love",
+    ) -> None:
+        """React to an inbound DM/story-reply message - the "Auto-React"
+        toggle on DM/story-reply/handoff/button-menu automations. Uses the
+        Send API's `sender_action: "react"` (confirmed real, Instagram-
+        specific - distinct from comment-liking, which is a different,
+        Facebook-Page-linked-only capability this codebase deliberately
+        doesn't support yet, see `instagram_comment_automation.py`'s
+        module docstring). `reaction` is the emoji-name Meta expects
+        (e.g. "love", "wow", "sad", "angry", "haha", "like"); `recipient_id`
+        must be the ORIGINAL sender's id (the one who sent `message_id`),
+        not this account's own id.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        # TODO(meta-graph-api): POST /{instagram_account_id}/messages
+        #   Authorization: Bearer {access_token}
+        #   {"recipient": {"id": "{recipient_id}"}, "sender_action": "react",
+        #     "payload": {"message_id": "{message_id}", "reaction": "{reaction}"}}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messages",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={
+                        "recipient": {"id": recipient_id},
+                        "sender_action": "react",
+                        "payload": {"message_id": message_id, "reaction": reaction},
+                    },
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this reaction so the "
+                "workflow action stays testable offline (instance=%s, message_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                message_id,
+            )
+
+    async def list_media(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, Any]]:
+        """List this account's own posts/reels - the post/reel picker for
+        Comment Automation/Comment Moderation's "scope to one post/reel"
+        option (account-wide, the default, when nothing is picked). Returns
+        `[]` on any stub/unreachable/error condition rather than raising -
+        an empty picker (falls back to "every post") is a legal state, not
+        an error, same convention as `get_ice_breakers`.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            return []
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            return []
+
+        # TODO(meta-graph-api): GET /{instagram_account_id}/media
+        #   ?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp
+        #   &access_token={access_token}
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.get(
+                    f"/{instagram_account_id}/media",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    params={
+                        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
+                        "limit": 50,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+        except (*_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+            logger.warning(
+                "[instagram] could not list media (%s) - returning empty (instance=%s).", exc, instance.id
+            )
+            return []
+
+        return list(data.get("data") or [])
+
     async def reply_to_comment(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, text: str
     ) -> None:
@@ -633,6 +776,32 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance=instance, session=session, recipient_id=recipient_id, text=text
             )
             return {"recipient_id": recipient_id, "text": text}
+        if action == "send_media_message":
+            recipient_id = params.get("recipient_id")
+            media_url = params.get("media_url")
+            if not recipient_id or not media_url:
+                raise ValueError("send_media_message requires non-empty 'recipient_id' and 'media_url' params")
+            await self.send_media_message(
+                instance=instance,
+                session=session,
+                recipient_id=recipient_id,
+                media_url=media_url,
+                media_type=params.get("media_type", "image"),
+            )
+            return {"recipient_id": recipient_id, "media_url": media_url}
+        if action == "react_to_message":
+            recipient_id = params.get("recipient_id")
+            message_id = params.get("message_id")
+            if not recipient_id or not message_id:
+                raise ValueError("react_to_message requires non-empty 'recipient_id' and 'message_id' params")
+            await self.react_to_message(
+                instance=instance,
+                session=session,
+                recipient_id=recipient_id,
+                message_id=message_id,
+                reaction=params.get("reaction", "love"),
+            )
+            return {"recipient_id": recipient_id, "message_id": message_id}
         if action == "reply_to_comment":
             comment_id = params.get("comment_id")
             text = params.get("text")

@@ -60,6 +60,17 @@ logger = logging.getLogger(__name__)
 # environment.
 WORKFLOW_LOOP_GUARD_MAX = int(os.environ.get("WORKFLOW_LOOP_GUARD_MAX", "500"))
 
+# Sentinel `correlation_key` `flow.delay` (the only node type it's used
+# for) always suspends with - never a real external identifier (a phone
+# number, an Instagram-scoped id, ...), so it can never coincidentally
+# match a genuine inbound reply's own correlation key. Distinguishes a
+# "resume automatically once this much time has passed" wait from an
+# "resume once a matching reply arrives, else fail after 24h" wait -
+# `_persist_suspension` below gives it a variable expiry instead of the
+# fixed 24h, and `outbox_poller.py` resumes it on schedule instead of
+# force-failing it, using this same constant to tell the two apart.
+DELAY_CORRELATION_KEY = "__flow_delay__"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -239,14 +250,23 @@ async def resume_run(
 def _persist_suspension(run: WorkflowRun, graph: WorkflowGraph, exc: RunSuspended) -> None:
     """Shared by `execute_run` and `resume_run`: turn a caught
     `RunSuspended` into persisted `waiting_*` state on `run`. Fixed 24h
-    expiry (confirmed decision — not configurable per node)."""
+    expiry for a reply-wait (confirmed decision — not configurable per
+    node) - EXCEPT a `flow.delay` wait (identified by
+    `DELAY_CORRELATION_KEY`), whose whole point is a short, node-
+    configured expiry (`config.minutes`) that `outbox_poller.py` resumes
+    automatically once it passes, rather than force-failing."""
     run.status = RunStatus.WAITING
     run.waiting_node_id = exc.node_id
     run.waiting_connector_instance_id = _connector_instance_id_for_node(graph, exc.node_id)
     run.waiting_correlation_key = exc.correlation_key
     run.waiting_frontier = exc.remaining_frontier
     run.waiting_variables = exc.variables_snapshot
-    run.waiting_expires_at = _now() + timedelta(hours=24)
+    if exc.correlation_key == DELAY_CORRELATION_KEY:
+        node = graph.node_by_id(exc.node_id)
+        minutes = (node.data.config.get("minutes") if node is not None else None) or 1
+        run.waiting_expires_at = _now() + timedelta(minutes=minutes)
+    else:
+        run.waiting_expires_at = _now() + timedelta(hours=24)
 
 
 def _connector_instance_id_for_node(graph: WorkflowGraph, node_id: str) -> uuid.UUID | None:

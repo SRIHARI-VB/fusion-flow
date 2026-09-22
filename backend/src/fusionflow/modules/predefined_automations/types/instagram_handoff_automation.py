@@ -46,9 +46,13 @@ _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
 
 
 class InstagramHandoffAutomationConfig(BaseModel):
-    trigger_keywords: list[str] = Field(min_length=1)
+    trigger_keywords: list[str] = Field(default_factory=list)  # empty = match everything
     matching_method: MatchingMethod = "contains"
     ack_text: str = Field(min_length=1)
+    # SLA timer: auto-resume this conversation after N hours even if no
+    # agent has manually resumed it, instead of staying paused forever.
+    # `None` (default) keeps the original "agent must resume it" behavior.
+    auto_resume_after_hours: float | None = Field(default=None, gt=0)
 
 
 def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dict[str, Any]:
@@ -86,7 +90,10 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
             "data": {
                 "nodeType": "inbox.pause_automation",
                 "label": "Pause Automation for This Conversation",
-                "config": {"connector_instance_id": instance_id},
+                "config": {
+                    "connector_instance_id": instance_id,
+                    "auto_resume_after_hours": parsed.auto_resume_after_hours,
+                },
             },
         },
     ]

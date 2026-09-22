@@ -69,12 +69,22 @@ class Conversation(Base, TenantScopedMixin, TimestampMixin):
     unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     # Set by the `inbox.pause_automation` node (the "human handoff"
     # predefined-automation action) - while true, the outbox poller's
-    # dispatch gate (`engine/outbox_poller.py::_conversation_automation_is_paused`)
-    # skips starting a new run for any conversational trigger on this
-    # conversation, so a human agent (or the customer, next time they
-    # message) isn't fighting an automation that keeps replying. Cleared
-    # by an agent resuming it from the Inbox UI - never auto-expires.
+    # dispatch gate (`inbox_service.is_automation_paused`, checked from
+    # `engine/outbox_poller.py`) skips starting a new run for any
+    # conversational trigger on this conversation, so a human agent (or
+    # the customer, next time they message) isn't fighting an automation
+    # that keeps replying. Cleared by an agent resuming it from the Inbox
+    # UI, or automatically once `automation_paused_until` passes (an
+    # optional SLA timer - see that column) - whichever comes first.
     automation_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Optional SLA auto-resume deadline - set alongside `automation_paused`
+    # only when the triggering handoff automation configured an
+    # `auto_resume_after_hours`. `None` means "stays paused until an agent
+    # manually resumes it" (the original, still-supported behavior).
+    # `inbox_service.is_automation_paused` lazily clears `automation_paused`
+    # the first time it notices this has passed, rather than needing its
+    # own sweep.
+    automation_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Read-only convenience relationship for eager-loading in
     # `service.list_conversations` (no `back_populates` needed on

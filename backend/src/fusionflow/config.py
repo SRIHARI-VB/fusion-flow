@@ -15,6 +15,16 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
+    # Shared secret for `/api/v1/internal/scheduled-tasks` (the Vercel
+    # Cron-triggered sweep that resumes `flow.delay` waits and fires due
+    # `WorkflowSchedule`s - see that route's docstring for why this exists
+    # at all: neither can rely on a webhook to piggyback on when running
+    # serverless). Vercel automatically sends
+    # `Authorization: Bearer <this value>` for a configured cron job (see
+    # `vercel.json`). Unset (the local-dev default) means the endpoint is
+    # open with a logged warning - never leave it unset in production.
+    CRON_SECRET: str | None = None
+
     # Migration/owner-role connection: alembic (alembic/env.py) always uses
     # this one, and it is the fallback for RUNTIME_DATABASE_URL below when
     # that is unset (fine for a simple local Postgres where the connecting

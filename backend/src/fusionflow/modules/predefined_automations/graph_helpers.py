@@ -53,7 +53,20 @@ def build_keyword_condition_chain(
     node/edge lists (which already contain `trigger_node_id` and
     `on_match_target_id`) - this function does not construct either of
     those two nodes itself.
+
+    Empty `keywords` means "match everything" (the wizard's "All
+    messages/comments" option, vs. "Specific keywords") - every calling
+    automation type already validates this itself (relaxed from
+    `min_length=1` to allow `[]`), so this is the one place the wildcard
+    actually takes effect: no condition nodes at all, just a single direct
+    edge from the trigger straight to `on_match_target_id`. This is
+    correct under the same validator rule the rest of this docstring
+    describes - a trigger node has no declared output handles, so an
+    unconditional single edge needs no branching wiring to satisfy.
     """
+    if not keywords:
+        return [], [{"id": f"e-{trigger_node_id}-{on_match_target_id}", "source": trigger_node_id, "target": on_match_target_id}]
+
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 

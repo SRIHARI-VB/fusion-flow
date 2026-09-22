@@ -35,6 +35,7 @@ from fusionflow.modules.predefined_automations.router import router as predefine
 from fusionflow.modules.quick_replies.router import router as quick_replies_router
 from fusionflow.modules.tenancy.router import router as tenancy_router
 from fusionflow.modules.tickets.router import router as tickets_router
+from fusionflow.modules.workflows.engine.internal_router import router as workflows_internal_router
 from fusionflow.modules.workflows.router import router as workflows_router
 
 API_V1_PREFIX = "/api/v1"
@@ -66,6 +67,7 @@ api_router.include_router(whatsapp_router)
 api_router.include_router(instagram_settings_router)
 api_router.include_router(connector_webhooks_router)
 api_router.include_router(workflows_router)
+api_router.include_router(workflows_internal_router)
 api_router.include_router(predefined_automations_router)
 api_router.include_router(broadcast_campaigns_router)
 api_router.include_router(inbox_router)

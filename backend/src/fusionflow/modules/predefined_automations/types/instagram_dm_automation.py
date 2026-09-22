@@ -44,7 +44,7 @@ _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
 
 
 class InstagramDmAutomationConfig(BaseModel):
-    trigger_keywords: list[str] = Field(min_length=1)
+    trigger_keywords: list[str] = Field(default_factory=list)  # empty = match everything
     matching_method: MatchingMethod = "contains"
     reply_text: str = Field(min_length=1)
 

@@ -27,6 +27,7 @@ class ConversationOut(BaseModel):
     last_message_at: datetime | None = None
     unread_count: int
     automation_paused: bool
+    automation_paused_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -22,7 +22,7 @@ never commits.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from sqlalchemy import select
@@ -61,6 +61,7 @@ def to_conversation_out(conversation: Conversation) -> ConversationOut:
         last_message_at=conversation.last_message_at,
         unread_count=conversation.unread_count,
         automation_paused=conversation.automation_paused,
+        automation_paused_until=conversation.automation_paused_until,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
     )
@@ -263,12 +264,18 @@ async def set_automation_paused(
     running workflow has on hand)."""
     conversation = await _get_conversation_or_404(session, tenant_id=tenant_id, conversation_id=conversation_id)
     conversation.automation_paused = paused
+    conversation.automation_paused_until = None
     await session.flush()
     return conversation
 
 
 async def pause_automation_for_contact(
-    session: AsyncSession, *, tenant_id: uuid.UUID, connector_instance_id: uuid.UUID, external_contact_id: str
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    connector_instance_id: uuid.UUID,
+    external_contact_id: str,
+    resume_after_hours: float | None = None,
 ) -> None:
     """The `inbox.pause_automation` workflow node's implementation - called
     mid-run, so by definition the inbound message that triggered this run
@@ -277,6 +284,12 @@ async def pause_automation_for_contact(
     trigger type with no corresponding Inbox conversation (e.g. a comment,
     not a DM), which is a wizard/config mistake, not a runtime race - a
     no-op is the safe response, not an error that fails the whole run.
+
+    `resume_after_hours`, when given (the Human Handoff automation's
+    optional SLA timer field), sets `automation_paused_until` - see
+    `is_automation_paused`'s lazy-expiry check below for how that actually
+    resumes it. `None` (the default) means "stays paused until an agent
+    manually resumes it", the original behavior.
     """
     conversation = (
         await session.execute(
@@ -290,6 +303,9 @@ async def pause_automation_for_contact(
     if conversation is None:
         return
     conversation.automation_paused = True
+    conversation.automation_paused_until = (
+        datetime.now(timezone.utc) + timedelta(hours=resume_after_hours) if resume_after_hours else None
+    )
     await session.flush()
 
 
@@ -299,14 +315,30 @@ async def is_automation_paused(
     """The outbox poller's dispatch gate (`engine/outbox_poller.py`) -
     checked before starting a new run for a conversational trigger type.
     `False` (never paused) when no `Conversation` row exists yet, same
-    "missing means default state" convention as every other lookup here."""
+    "missing means default state" convention as every other lookup here.
+
+    Lazily clears an expired SLA-timer pause right here (rather than
+    needing a separate sweep, unlike `flow.delay`'s resume - a resume
+    here has nothing to actually DO beyond flipping the flag back, so
+    there's no reason to wait for the next poll cycle when this check
+    already runs on every dispatch attempt) - the next conversational
+    trigger for this contact after the timer passes finds it unpaused."""
     conversation = (
         await session.execute(
-            select(Conversation.automation_paused).where(
+            select(Conversation).where(
                 Conversation.tenant_id == tenant_id,
                 Conversation.connector_instance_id == connector_instance_id,
                 Conversation.external_contact_id == external_contact_id,
             )
         )
     ).scalar_one_or_none()
-    return bool(conversation)
+    if conversation is None or not conversation.automation_paused:
+        return False
+    if conversation.automation_paused_until is not None and conversation.automation_paused_until <= datetime.now(
+        timezone.utc
+    ):
+        conversation.automation_paused = False
+        conversation.automation_paused_until = None
+        await session.flush()
+        return False
+    return True

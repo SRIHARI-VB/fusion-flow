@@ -10,3 +10,19 @@ class IceBreakerQuestion(BaseModel):
 
 class IceBreakersRequest(BaseModel):
     questions: list[IceBreakerQuestion] = Field(max_length=4)
+
+
+class InstagramMediaOut(BaseModel):
+    """One post/reel, as returned by `GET /{ig-id}/media` - the post/reel
+    picker's row shape. Every field but `id`/`media_type` is optional:
+    Meta omits `caption` when a post has none, `media_url` for some
+    restricted/expired media, and `thumbnail_url` for anything that
+    isn't a video."""
+
+    id: str
+    media_type: str
+    caption: str | None = None
+    media_url: str | None = None
+    thumbnail_url: str | None = None
+    permalink: str | None = None
+    timestamp: str | None = None

@@ -64,7 +64,7 @@ class ButtonConfig(BaseModel):
 
 
 class InstagramButtonMenuAutomationConfig(BaseModel):
-    trigger_keywords: list[str] = Field(min_length=1)
+    trigger_keywords: list[str] = Field(default_factory=list)  # empty = match everything
     matching_method: MatchingMethod = "contains"
     menu_text: str = Field(min_length=1)
     buttons: list[ButtonConfig] = Field(min_length=1, max_length=3)
