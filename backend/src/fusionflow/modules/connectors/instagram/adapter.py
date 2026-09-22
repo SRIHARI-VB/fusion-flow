@@ -543,7 +543,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                 )
                 response.raise_for_status()
                 data = response.json()
-        except (_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+        except (*_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
             logger.warning(
                 "[instagram] could not fetch ice breakers (%s) - returning empty (instance=%s).",
                 exc,
@@ -598,7 +598,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                 )
                 response.raise_for_status()
                 data = response.json()
-        except (_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
+        except (*_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
             logger.warning(
                 "[instagram] could not resolve mention detail (%s) - firing trigger with raw ids "
                 "only (instance=%s, media_id=%s, comment_id=%s).",
