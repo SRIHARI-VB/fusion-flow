@@ -54,7 +54,13 @@ async def set_ice_breakers(
     instance = await _get_instance_or_404(session, context.tenant_id, instance_id)
     adapter = connector_registry.get("instagram")
     questions = [q.model_dump() for q in payload.questions]
-    await adapter.set_ice_breakers(instance=instance, session=session, questions=questions)
+    try:
+        await adapter.set_ice_breakers(instance=instance, session=session, questions=questions)
+    except (RuntimeError, ValueError) as exc:
+        # A real, actionable failure (no credential on record, a rejected
+        # Meta API call, etc.) - surfaced as a proper 400 with Meta's own
+        # detail rather than an unhandled 500 with none at all.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return payload.questions
 
 

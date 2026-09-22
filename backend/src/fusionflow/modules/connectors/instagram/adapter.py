@@ -728,6 +728,21 @@ class InstagramAdapter(base.ConnectorAdapter):
                 exc,
                 instance.id,
             )
+        except httpx.HTTPStatusError as exc:
+            # Unlike `get_ice_breakers`/`list_media` (read paths, where
+            # falling back to an empty result on any failure is a safe,
+            # legal state), this is a write called synchronously from
+            # `instagram/router.py::set_ice_breakers` - swallowing a real
+            # Meta rejection here would tell the settings screen "saved!"
+            # when nothing was actually saved. Re-raised as `ValueError`
+            # with Meta's own error message so the router can turn it into
+            # a real 4xx instead of an unhandled 500 with no detail at all.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the ice breakers update: {detail}") from exc
 
     async def get_ice_breakers(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, str]]:
         """Fetch the currently configured ice breakers, to pre-fill the
