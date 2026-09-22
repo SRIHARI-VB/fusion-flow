@@ -1929,6 +1929,645 @@ _REENGAGEMENT_BLAST_GRAPH = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# Template 17: Instagram DM Welcome & FAQ Router
+# ---------------------------------------------------------------------------
+#
+# A fully-wired OR-chain of `condition.field_compare` nodes over
+# `trigger.text` - the hand-built equivalent of
+# `graph_helpers.py::build_branching_condition_chain` (each keyword gets
+# its OWN reply, rather than converging on one shared target). Anything
+# that doesn't match any configured keyword falls through to a generic
+# "let me connect you with our team" reply, then pauses automation so a
+# human can pick up the conversation - a dangling `false` handle would be
+# a publish-validation error, not a legal "just end here" (see this file's
+# module docstring and `graph_helpers.py`'s own docstring for why).
+
+_INSTAGRAM_DM_FAQ_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.message_received", {}, "New Instagram DM", 0),
+        _node(
+            "check_hours",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "hours"},
+            "Asks about hours?",
+            280,
+        ),
+        _node(
+            "reply_hours",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "We're open Monday-Saturday, 9 AM to 7 PM. Closed on Sundays and public holidays.",
+                },
+            },
+            "Send: business hours",
+            560,
+            -220,
+        ),
+        _node(
+            "check_price",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "price"},
+            "Asks about pricing?",
+            560,
+        ),
+        _node(
+            "reply_price",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "You can browse our full price list from the link in our bio, or ask about a specific item!",
+                },
+            },
+            "Send: pricing",
+            840,
+            -80,
+        ),
+        _node(
+            "check_shipping",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "shipping"},
+            "Asks about shipping?",
+            840,
+        ),
+        _node(
+            "reply_shipping",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "We ship nationwide in 3-5 business days - free over $50!",
+                },
+            },
+            "Send: shipping",
+            1120,
+            60,
+        ),
+        _node(
+            "reply_default",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Thanks for reaching out! Let me connect you with our team - they'll be with you shortly.",
+                },
+            },
+            "Send: connect with team",
+            1120,
+            200,
+        ),
+        _node(
+            "pause",
+            "action",
+            "inbox.pause_automation",
+            {"connector_instance_id": _PLACEHOLDER_CONNECTOR_ID, "auto_resume_after_hours": None},
+            "Pause automation for a human",
+            1400,
+            200,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "check_hours"),
+        _edge("e2", "check_hours", "reply_hours", source_handle="true"),
+        _edge("e3", "check_hours", "check_price", source_handle="false"),
+        _edge("e4", "check_price", "reply_price", source_handle="true"),
+        _edge("e5", "check_price", "check_shipping", source_handle="false"),
+        _edge("e6", "check_shipping", "reply_shipping", source_handle="true"),
+        _edge("e7", "check_shipping", "reply_default", source_handle="false"),
+        _edge("e8", "reply_default", "pause"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 18: Instagram Comment-to-Lead Funnel
+# ---------------------------------------------------------------------------
+#
+# A comment containing the keyword replies publicly (steering the
+# conversation to DM, per Instagram norms), then sends the real details via
+# a Private Reply - `send_private_reply`'s own docstring on
+# `connectors/instagram/adapter.py` explains why this, not
+# `send_direct_message`, is the right call here: it works on any comment up
+# to 7 days old, even for a first-time commenter with no open 24h DM
+# session. The lead is captured on the `customers` module by
+# `from_id`/`from_username` (`instagram.comment_received`'s own output
+# fields) rather than a phone number.
+
+_INSTAGRAM_COMMENT_LEAD_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.comment_received", {}, "New Instagram comment", 0),
+        _node(
+            "check_interested",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "interested"},
+            "Says 'interested'?",
+            280,
+        ),
+        _node(
+            "public_reply",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "reply_to_comment",
+                "params": {"comment_id": "{{trigger.comment_id}}", "text": "Check your DM!"},
+            },
+            "Reply publicly",
+            560,
+            -100,
+        ),
+        _node(
+            "private_reply",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_private_reply",
+                "params": {
+                    "comment_id": "{{trigger.comment_id}}",
+                    "text": "Thanks for your interest! Here are the details - let us know if you have any questions.",
+                },
+            },
+            "Send details via Private Reply",
+            840,
+            -100,
+        ),
+        _node(
+            "save_lead",
+            "action",
+            "records.upsert",
+            {
+                "module": "customers",
+                "operation": "create",
+                "fields": {
+                    "external_ref": "{{trigger.from_id}}",
+                    "name": "{{trigger.from_username}}",
+                    "custom_fields": {"source": "instagram_comment", "comment_text": "{{trigger.text}}"},
+                },
+            },
+            "Capture as a lead",
+            1120,
+            -100,
+        ),
+        _node(
+            "no_match",
+            "action",
+            "log.noop",
+            {"message": "Comment didn't mention the configured keyword - no action taken"},
+            "No match",
+            560,
+            150,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "check_interested"),
+        _edge("e2", "check_interested", "public_reply", source_handle="true"),
+        _edge("e3", "public_reply", "private_reply"),
+        _edge("e4", "private_reply", "save_lead"),
+        _edge("e5", "check_interested", "no_match", source_handle="false"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 19: Instagram Support Escalation with SLA
+# ---------------------------------------------------------------------------
+#
+# Either "agent" or "help" routes to the same escalation path - an
+# OR-chain converging on one shared target, the same "only one keyword in
+# the list ever actually resolves true in a given run, so wiring every
+# condition's true handle to the same target costs nothing at runtime"
+# shape `graph_helpers.py::build_keyword_condition_chain`'s docstring
+# describes (hand-built here since starter templates are hand-built
+# graphs, not generated via that helper). `auto_resume_after_hours: 4`
+# gives a human agent a 4-hour SLA window before automation picks the
+# conversation back up on its own.
+
+_INSTAGRAM_SUPPORT_ESCALATION_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.message_received", {}, "New Instagram DM", 0),
+        _node(
+            "check_agent",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "agent"},
+            "Says 'agent'?",
+            280,
+        ),
+        _node(
+            "check_help",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "help"},
+            "Says 'help'?",
+            560,
+            150,
+        ),
+        _node(
+            "react_ack",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "react_to_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "message_id": "{{trigger.message_id}}",
+                    "reaction": "like",
+                },
+            },
+            "React to acknowledge",
+            840,
+            -80,
+        ),
+        _node(
+            "send_ack",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "We've got your message and are connecting you with a support agent - hang tight!",
+                },
+            },
+            "Send: acknowledgement",
+            1120,
+            -80,
+        ),
+        _node(
+            "pause",
+            "action",
+            "inbox.pause_automation",
+            {"connector_instance_id": _PLACEHOLDER_CONNECTOR_ID, "auto_resume_after_hours": 4.0},
+            "Pause automation (auto-resume in 4h)",
+            1400,
+            -80,
+        ),
+        _node(
+            "no_match",
+            "action",
+            "log.noop",
+            {"message": "No escalation keyword matched"},
+            "No match",
+            840,
+            220,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "check_agent"),
+        _edge("e2", "check_agent", "react_ack", source_handle="true"),
+        _edge("e3", "check_agent", "check_help", source_handle="false"),
+        _edge("e4", "check_help", "react_ack", source_handle="true"),
+        _edge("e5", "check_help", "no_match", source_handle="false"),
+        _edge("e6", "react_ack", "send_ack"),
+        _edge("e7", "send_ack", "pause"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 20: Instagram Story Engagement Reply
+# ---------------------------------------------------------------------------
+#
+# No branching needed - every Story reply gets the same thank-you DM
+# followed by a reaction on the reply itself, straight down the line.
+
+_INSTAGRAM_STORY_ENGAGEMENT_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.story_reply_received", {}, "New Story reply", 0),
+        _node(
+            "thank_you",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Thanks so much for replying to our story! We love hearing from you.",
+                },
+            },
+            "Send: thank you",
+            280,
+        ),
+        _node(
+            "react",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "react_to_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "message_id": "{{trigger.message_id}}",
+                    "reaction": "love",
+                },
+            },
+            "React to their reply",
+            560,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "thank_you"),
+        _edge("e2", "thank_you", "react"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 21: Instagram Button-Menu Support Router
+# ---------------------------------------------------------------------------
+#
+# Two independent triggers in the same graph - same established pattern as
+# `_ORDERING_GRAPH`'s `payment_trigger` (a second, unrelated trigger node
+# referenced by its own node id downstream, e.g. `{{postback_trigger.from}}`,
+# not the generic `{{trigger...}}` alias, since only one of the two
+# triggers actually starts any given run). The first DM sends a 3-button
+# menu; a SEPARATE `instagram.postback_received` trigger handles whichever
+# button gets tapped via a fully-wired branching chain - the hand-built
+# equivalent of `graph_helpers.py::build_branching_condition_chain` (one
+# `condition.field_compare` per button payload, each `true` handle to its
+# own target). "Track Order" looks up the tenant's own orders module
+# before replying, rather than a canned message - a real customer-id-scoped
+# lookup isn't possible here since there's no `instagram.
+# find_or_create_customer` node type yet (unlike WhatsApp), so this
+# demonstrates the shape (query, then reply with the result) rather than a
+# per-customer filter.
+
+_INSTAGRAM_BUTTON_MENU_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.message_received", {}, "New Instagram DM", 0),
+        _node(
+            "send_menu",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_button_template",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "How can we help you today?",
+                    "buttons": [
+                        {"title": "Sales", "payload": "MENU_SALES"},
+                        {"title": "Support", "payload": "MENU_SUPPORT"},
+                        {"title": "Track Order", "payload": "MENU_TRACK_ORDER"},
+                    ],
+                },
+            },
+            "Send button menu",
+            280,
+        ),
+        _node("postback_trigger", "trigger", "instagram.postback_received", {}, "Menu button tapped", 0, 400),
+        _node(
+            "check_sales",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "postback_trigger.payload", "operator": "eq", "value": "MENU_SALES"},
+            "Tapped 'Sales'?",
+            280,
+            400,
+        ),
+        _node(
+            "reply_sales",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{postback_trigger.from}}",
+                    "text": "Great! Tell us what you're interested in and our sales team will follow up.",
+                },
+            },
+            "Send: sales reply",
+            560,
+            280,
+        ),
+        _node(
+            "check_support",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "postback_trigger.payload", "operator": "eq", "value": "MENU_SUPPORT"},
+            "Tapped 'Support'?",
+            560,
+            400,
+        ),
+        _node(
+            "reply_support",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{postback_trigger.from}}",
+                    "text": "We're on it - describe your issue and we'll get back to you shortly.",
+                },
+            },
+            "Send: support reply",
+            840,
+            400,
+        ),
+        _node(
+            "check_track_order",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "postback_trigger.payload", "operator": "eq", "value": "MENU_TRACK_ORDER"},
+            "Tapped 'Track Order'?",
+            840,
+            520,
+        ),
+        _node(
+            "query_orders",
+            "action",
+            "records.query",
+            {"module": "orders", "operation": "list", "filters": {}, "limit": 5},
+            "Look up recent orders",
+            1120,
+            520,
+        ),
+        _node(
+            "reply_track_order",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{postback_trigger.from}}",
+                    "text": (
+                        "We found {{query_orders.count}} recent order(s) on file. Reply with your order id "
+                        "for a detailed status update."
+                    ),
+                },
+            },
+            "Send: track order reply",
+            1400,
+            520,
+        ),
+        _node(
+            "no_match",
+            "action",
+            "log.noop",
+            {"message": "No known button payload matched"},
+            "No match",
+            1120,
+            680,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "send_menu"),
+        _edge("e2", "postback_trigger", "check_sales"),
+        _edge("e3", "check_sales", "reply_sales", source_handle="true"),
+        _edge("e4", "check_sales", "check_support", source_handle="false"),
+        _edge("e5", "check_support", "reply_support", source_handle="true"),
+        _edge("e6", "check_support", "check_track_order", source_handle="false"),
+        _edge("e7", "check_track_order", "query_orders", source_handle="true"),
+        _edge("e8", "check_track_order", "no_match", source_handle="false"),
+        _edge("e9", "query_orders", "reply_track_order"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Template 22: Instagram Referral Ad Router
+# ---------------------------------------------------------------------------
+#
+# A fully-wired branching chain over `trigger.ref` (`instagram.
+# referral_received`'s own output field) - the hand-built equivalent of
+# `graph_helpers.py::build_branching_condition_chain` (each configured
+# ad/shortlink ref value gets its own welcome message, `false`-chained to
+# the next case). The three `ref` values here are obviously example
+# placeholders - same spirit as `_PLACEHOLDER_CONNECTOR_ID` - the author
+# should replace them with their own ad/shortlink ref values from Meta
+# Ads Manager or their ig.me shortlinks. The final `false` falls through to
+# a generic welcome rather than a dangling handle (see this file's module
+# docstring for why a dangling declared handle is a publish-validation
+# error, not a legal "just end here").
+
+_INSTAGRAM_REFERRAL_ROUTER_GRAPH = {
+    "nodes": [
+        _node("trigger", "trigger", "instagram.referral_received", {}, "New ad/link referral", 0),
+        _node(
+            "check_summer_sale",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.ref", "operator": "eq", "value": "SUMMER_SALE_AD"},
+            "From 'SUMMER_SALE_AD'?",
+            280,
+        ),
+        _node(
+            "reply_summer_sale",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": (
+                        "Welcome! Thanks for checking out our Summer Sale ad - here's 10% off your first "
+                        "order: SUMMER10"
+                    ),
+                },
+            },
+            "Send: summer sale welcome",
+            560,
+            -180,
+        ),
+        _node(
+            "check_new_arrivals",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.ref", "operator": "eq", "value": "NEW_ARRIVALS_AD"},
+            "From 'NEW_ARRIVALS_AD'?",
+            560,
+        ),
+        _node(
+            "reply_new_arrivals",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Hey! Excited you found us through our New Arrivals ad - check out what's new.",
+                },
+            },
+            "Send: new arrivals welcome",
+            840,
+            -60,
+        ),
+        _node(
+            "check_story_promo",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.ref", "operator": "eq", "value": "STORY_SHORTLINK_PROMO"},
+            "From 'STORY_SHORTLINK_PROMO'?",
+            840,
+            120,
+        ),
+        _node(
+            "reply_story_promo",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Thanks for tapping through from our story! Let us know if you have any questions.",
+                },
+            },
+            "Send: story promo welcome",
+            1120,
+            60,
+        ),
+        _node(
+            "reply_default",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Welcome! Thanks for reaching out - let us know if you have any questions.",
+                },
+            },
+            "Send: generic welcome",
+            1120,
+            220,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "trigger", "check_summer_sale"),
+        _edge("e2", "check_summer_sale", "reply_summer_sale", source_handle="true"),
+        _edge("e3", "check_summer_sale", "check_new_arrivals", source_handle="false"),
+        _edge("e4", "check_new_arrivals", "reply_new_arrivals", source_handle="true"),
+        _edge("e5", "check_new_arrivals", "check_story_promo", source_handle="false"),
+        _edge("e6", "check_story_promo", "reply_story_promo", source_handle="true"),
+        _edge("e7", "check_story_promo", "reply_default", source_handle="false"),
+    ],
+}
+
 TEMPLATES: list[dict] = [
     {
         "key": "whatsapp_ordering",
@@ -2175,6 +2814,87 @@ TEMPLATES: list[dict] = [
         "category": "Marketing",
         "icon": "megaphone",
         "graph_json": _BROADCAST_MESSAGE_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_dm_welcome_faq_router",
+        "name": "Instagram DM Welcome & FAQ Router",
+        "description": (
+            "Answers common questions (hours, pricing, shipping) instantly when a customer DMs your "
+            "Instagram account, and hands anything else off to your team by pausing automation on that "
+            "conversation."
+        ),
+        "category": "Instagram",
+        "icon": "help-circle",
+        "graph_json": _INSTAGRAM_DM_FAQ_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_comment_to_lead_funnel",
+        "name": "Instagram Comment-to-Lead Funnel",
+        "description": (
+            "Turns an 'interested' comment on your post or reel into a lead - replies publicly to steer "
+            "them to DM, sends the real details via a Private Reply, and saves the commenter as a customer "
+            "record."
+        ),
+        "category": "Instagram",
+        "icon": "user-plus",
+        "graph_json": _INSTAGRAM_COMMENT_LEAD_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_support_escalation_sla",
+        "name": "Instagram Support Escalation with SLA",
+        "description": (
+            "Detects a customer asking for 'agent' or 'help' in a DM, reacts and sends an acknowledgement, "
+            "then pauses automation on that conversation for up to 4 hours so a human agent can take over."
+        ),
+        "category": "Instagram",
+        "icon": "life-buoy",
+        "graph_json": _INSTAGRAM_SUPPORT_ESCALATION_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_story_engagement_reply",
+        "name": "Instagram Story Engagement Reply",
+        "description": (
+            "Thanks anyone who replies to one of your Instagram Stories with a friendly DM and a reaction, "
+            "so every reply gets an instant, personal-feeling response."
+        ),
+        "category": "Instagram",
+        "icon": "heart",
+        "graph_json": _INSTAGRAM_STORY_ENGAGEMENT_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_button_menu_support_router",
+        "name": "Instagram Button-Menu Support Router",
+        "description": (
+            "Greets a new Instagram DM with a tappable Sales/Support/Track Order button menu, then routes "
+            "whichever button is tapped to its own reply - including a live lookup of recent orders for "
+            "Track Order."
+        ),
+        "category": "Instagram",
+        "icon": "list",
+        "graph_json": _INSTAGRAM_BUTTON_MENU_GRAPH,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_referral_ad_router",
+        "name": "Instagram Referral Ad Router",
+        "description": (
+            "Sends a different welcome message depending on which ad or ig.me shortlink brought a new "
+            "Instagram conversation in, so each campaign gets its own on-brand first reply."
+        ),
+        "category": "Instagram",
+        "icon": "megaphone",
+        "graph_json": _INSTAGRAM_REFERRAL_ROUTER_GRAPH,
         "required_object_types": None,
         "is_active": True,
     },

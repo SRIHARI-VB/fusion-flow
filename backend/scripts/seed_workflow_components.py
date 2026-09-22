@@ -481,6 +481,464 @@ _NOTIFY_ON_PAYMENT_RECEIVED_FRAGMENT = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# Component 8: Instagram - Reply to Comment
+# ---------------------------------------------------------------------------
+# A single, dangling-input action - no trigger of its own. The author wires
+# their own trigger/condition (typically `instagram.comment_received`, maybe
+# behind a keyword gate) into this node's only input, same "whichever
+# trigger fired this workflow" convention `_COUPON_CODE_CHECK_FRAGMENT`'s
+# `{{trigger.from}}` already uses.
+
+_INSTAGRAM_REPLY_TO_COMMENT_FRAGMENT = {
+    "nodes": [
+        _node(
+            "reply_to_comment",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "reply_to_comment",
+                "params": {
+                    "comment_id": "{{trigger.comment_id}}",
+                    "text": "Thanks so much for your comment! We'll get back to you shortly.",
+                },
+            },
+            "Reply to the comment",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 9: Instagram - Private Reply to Comment
+# ---------------------------------------------------------------------------
+# `send_private_reply` addresses the DM by `comment_id`, not the commenter's
+# user id - works even on a first-time commenter with no open 24h messaging
+# window (see `instagram/adapter.py::send_private_reply`'s docstring).
+
+_INSTAGRAM_PRIVATE_REPLY_TO_COMMENT_FRAGMENT = {
+    "nodes": [
+        _node(
+            "send_private_reply",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_private_reply",
+                "params": {
+                    "comment_id": "{{trigger.comment_id}}",
+                    "text": "Thanks for your comment! We've sent you a DM with more details.",
+                },
+            },
+            "Send a private reply",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 10: Instagram - Reply to Direct Message
+# ---------------------------------------------------------------------------
+
+_INSTAGRAM_REPLY_TO_DM_FRAGMENT = {
+    "nodes": [
+        _node(
+            "reply_to_dm",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Thanks for reaching out! How can we help you today?",
+                },
+            },
+            "Reply with a direct message",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 11: Instagram - React to Message
+# ---------------------------------------------------------------------------
+
+_INSTAGRAM_REACT_TO_MESSAGE_FRAGMENT = {
+    "nodes": [
+        _node(
+            "react_to_message",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "react_to_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "message_id": "{{trigger.message_id}}",
+                    "reaction": "love",
+                },
+            },
+            "React with a heart",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 12: Instagram - Send a Media Reply
+# ---------------------------------------------------------------------------
+
+_INSTAGRAM_SEND_MEDIA_REPLY_FRAGMENT = {
+    "nodes": [
+        _node(
+            "send_media_reply",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_media_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "media_url": "https://example.com/replace-with-your-media-url.jpg",
+                    "media_type": "image",
+                },
+            },
+            "Send a media reply (replace media_url)",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 13: Instagram - Send a Button Menu
+# ---------------------------------------------------------------------------
+# Up to 3 tappable buttons (Meta's own limit on a Button Template - see
+# `instagram/adapter.py::send_button_template`'s docstring). A tap comes
+# back through `instagram.postback_received`'s `payload` field, ready for a
+# `condition.field_compare` to branch on.
+
+_INSTAGRAM_SEND_BUTTON_MENU_FRAGMENT = {
+    "nodes": [
+        _node(
+            "send_button_menu",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_button_template",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "What would you like to do next?",
+                    "buttons": [
+                        {"title": "See our products", "payload": "SEE_PRODUCTS"},
+                        {"title": "Talk to a person", "payload": "TALK_TO_HUMAN"},
+                        {"title": "Track my order", "payload": "TRACK_ORDER"},
+                    ],
+                },
+            },
+            "Send a button menu",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 14: Instagram - Thank a Story Reply
+# ---------------------------------------------------------------------------
+# Includes its own trigger - a Story reply is a distinct entry point, not
+# something an author is likely to already have wired elsewhere in their
+# workflow (same "second top-level trigger" shape as
+# `_NOTIFY_ON_PAYMENT_RECEIVED_FRAGMENT`).
+
+_INSTAGRAM_THANK_STORY_REPLY_FRAGMENT = {
+    "nodes": [
+        _node("story_reply_trigger", "trigger", "instagram.story_reply_received", {}, "Story reply received", 0),
+        _node(
+            "thank_you_dm",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{story_reply_trigger.from}}",
+                    "text": "Thanks so much for replying to our story! We loved hearing from you.",
+                },
+            },
+            "Send a thank-you DM",
+            280,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "story_reply_trigger", "thank_you_dm"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Component 15: Instagram - Thank a Mention
+# ---------------------------------------------------------------------------
+# `instagram.mention_received`'s `comment_id` is only populated for a
+# mention left in a comment - a mention in a post/reel CAPTION has no
+# comment to reply to, and `reply_to_comment` will fail at run time for
+# that case (see `_resolve_mention_details`'s docstring on the connector
+# adapter). Swap the action for `send_direct_message` to
+# `{{mention_trigger.from_id}}` instead if you expect caption mentions.
+
+_INSTAGRAM_THANK_MENTION_FRAGMENT = {
+    "nodes": [
+        _node("mention_trigger", "trigger", "instagram.mention_received", {}, "Mention received", 0),
+        _node(
+            "thank_you_reply",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "reply_to_comment",
+                "params": {
+                    "comment_id": "{{mention_trigger.comment_id}}",
+                    "text": "Thank you for the shoutout! We really appreciate it.",
+                },
+            },
+            "Reply thanking them (comment mentions only - see above)",
+            280,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "mention_trigger", "thank_you_reply"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Component 16: Instagram - Hide a Comment
+# ---------------------------------------------------------------------------
+
+_INSTAGRAM_HIDE_SPAM_COMMENT_FRAGMENT = {
+    "nodes": [
+        _node(
+            "hide_comment",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "hide_comment",
+                "params": {"comment_id": "{{trigger.comment_id}}", "hidden": True},
+            },
+            "Hide the comment",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 17: Instagram - Delete a Comment
+# ---------------------------------------------------------------------------
+
+_INSTAGRAM_DELETE_COMMENT_FRAGMENT = {
+    "nodes": [
+        _node(
+            "delete_comment",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "delete_comment",
+                "params": {"comment_id": "{{trigger.comment_id}}"},
+            },
+            "Delete the comment",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 18: Instagram - Comment Moderation Combo
+# ---------------------------------------------------------------------------
+# `spam_gate`'s "false" handle is left unwired on purpose, same convention
+# `_COUPON_CODE_CHECK_FRAGMENT`'s `check_coupon` node already establishes -
+# wire it to wherever your workflow already handles a normal (non-spam)
+# comment.
+
+_INSTAGRAM_COMMENT_MODERATION_COMBO_FRAGMENT = {
+    "nodes": [
+        _node(
+            "spam_gate",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "spam"},
+            "Does the comment look like spam? (replace keyword)",
+            0,
+        ),
+        _node(
+            "hide_spam_comment",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "hide_comment",
+                "params": {"comment_id": "{{trigger.comment_id}}", "hidden": True},
+            },
+            "Hide it",
+            280,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "spam_gate", "hide_spam_comment", source_handle="true"),
+        # `spam_gate`'s "false" handle is left unwired on purpose - wire it
+        # to whatever your workflow already does with a normal comment.
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Component 19: Instagram - Keyword Match Gate
+# ---------------------------------------------------------------------------
+# Both "true"/"false" handles are left unwired on purpose - a pure branch
+# point for the author to drop into their own graph and wire both ways.
+
+_INSTAGRAM_KEYWORD_MATCH_GATE_FRAGMENT = {
+    "nodes": [
+        _node(
+            "keyword_gate",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.text", "operator": "contains", "value": "REPLACE_WITH_YOUR_KEYWORD"},
+            "Does the text contain your keyword? (replace value)",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 20: Instagram - Post/Reel Scope Gate
+# ---------------------------------------------------------------------------
+# Same dangling-both-handles shape as the keyword gate above, scoped to
+# `instagram.comment_received`'s `media_id` field instead of `text`.
+
+_INSTAGRAM_POST_SCOPE_GATE_FRAGMENT = {
+    "nodes": [
+        _node(
+            "post_scope_gate",
+            "condition",
+            "condition.field_compare",
+            {"field_path": "trigger.media_id", "operator": "eq", "value": "REPLACE_WITH_YOUR_MEDIA_ID"},
+            "Is this comment on the specific post/reel? (replace value)",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 21: Instagram - Wait Before Replying
+# ---------------------------------------------------------------------------
+# Generic `flow.delay`, not Instagram-specific under the hood, but heavily
+# requested for pacing an Instagram auto-reply so it doesn't look instant.
+
+_INSTAGRAM_WAIT_BEFORE_REPLYING_FRAGMENT = {
+    "nodes": [
+        _node("wait_before_reply", "action", "flow.delay", {"minutes": 5}, "Wait 5 minutes", 0),
+    ],
+    "edges": [],
+}
+
+# ---------------------------------------------------------------------------
+# Component 22: Instagram - Escalate to a Human
+# ---------------------------------------------------------------------------
+# `pause_for_human`'s `auto_resume_after_hours` gives automation a chance
+# to pick back up on its own if no agent gets to the conversation - `None`
+# would mean "stays paused until an agent manually resumes it" instead, see
+# `inbox_pause_automation.py`'s docstring.
+
+_INSTAGRAM_ESCALATE_TO_HUMAN_FRAGMENT = {
+    "nodes": [
+        _node(
+            "ack_reaction",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "react_to_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "message_id": "{{trigger.message_id}}",
+                    "reaction": "love",
+                },
+            },
+            "Acknowledge with a reaction",
+            0,
+        ),
+        _node(
+            "ack_dm",
+            "action",
+            "connector.action",
+            {
+                "connector_instance_id": _PLACEHOLDER_CONNECTOR_ID,
+                "action": "send_direct_message",
+                "params": {
+                    "recipient_id": "{{trigger.from}}",
+                    "text": "Thanks for reaching out - one of our team members will follow up with you shortly!",
+                },
+            },
+            "Send an acknowledgement DM",
+            280,
+        ),
+        _node(
+            "pause_for_human",
+            "action",
+            "inbox.pause_automation",
+            {"connector_instance_id": _PLACEHOLDER_CONNECTOR_ID, "auto_resume_after_hours": 4},
+            "Pause automation for a human (auto-resumes after 4h)",
+            560,
+        ),
+    ],
+    "edges": [
+        _edge("e1", "ack_reaction", "ack_dm"),
+        _edge("e2", "ack_dm", "pause_for_human"),
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Component 23: Instagram - Capture a Lead from a DM
+# ---------------------------------------------------------------------------
+# `records.upsert`'s `operation` is only ever "create" or "update" (no
+# match-and-upsert-by-field mode exists on this node type - see
+# `record_upsert.py::RecordUpsertConfig`), so this creates a fresh
+# `customers` record every time it runs rather than deduping by
+# `external_ref`; an author who wants dedup can add their own
+# `records.query` lookup in front of this node.
+
+_INSTAGRAM_CAPTURE_LEAD_FROM_DM_FRAGMENT = {
+    "nodes": [
+        _node(
+            "capture_lead",
+            "action",
+            "records.upsert",
+            {
+                "module": "customers",
+                "operation": "create",
+                "fields": {
+                    "external_ref": "{{trigger.from}}",
+                    "name": "Instagram lead {{trigger.from}}",
+                    "custom_fields": {"source": "instagram_dm", "last_message": "{{trigger.text}}"},
+                },
+            },
+            "Save as a customer lead (replace the placeholder name)",
+            0,
+        ),
+    ],
+    "edges": [],
+}
+
 COMPONENTS: list[dict] = [
     {
         "key": "coupon_code_check",
@@ -556,6 +1014,176 @@ COMPONENTS: list[dict] = [
         "category": "Payments",
         "icon": "bell",
         "graph_fragment": _NOTIFY_ON_PAYMENT_RECEIVED_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_reply_to_comment",
+        "name": "Instagram: Reply to Comment",
+        "description": "Replies to an Instagram comment with your own text - wire your own trigger or keyword "
+        "condition into this node.",
+        "category": "Instagram",
+        "icon": "reply",
+        "graph_fragment": _INSTAGRAM_REPLY_TO_COMMENT_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_private_reply_to_comment",
+        "name": "Instagram: Private Reply to Comment",
+        "description": "Sends a private direct message to whoever left a comment, even if they've never messaged "
+        "you before.",
+        "category": "Instagram",
+        "icon": "send",
+        "graph_fragment": _INSTAGRAM_PRIVATE_REPLY_TO_COMMENT_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_reply_to_dm",
+        "name": "Instagram: Reply to Direct Message",
+        "description": "Sends a direct message back to whoever messaged your Instagram account.",
+        "category": "Instagram",
+        "icon": "message-circle",
+        "graph_fragment": _INSTAGRAM_REPLY_TO_DM_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_react_to_message",
+        "name": "Instagram: React to Message",
+        "description": "Reacts to an inbound Instagram message with a heart - a quick way to acknowledge it before "
+        "replying.",
+        "category": "Instagram",
+        "icon": "heart",
+        "graph_fragment": _INSTAGRAM_REACT_TO_MESSAGE_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_send_media_reply",
+        "name": "Instagram: Send a Media Reply",
+        "description": "Sends an image (or video) as a direct message reply - replace the placeholder link with "
+        "your own media.",
+        "category": "Instagram",
+        "icon": "image",
+        "graph_fragment": _INSTAGRAM_SEND_MEDIA_REPLY_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_send_button_menu",
+        "name": "Instagram: Send a Button Menu",
+        "description": "Sends a short menu of tappable buttons so the customer can choose what they need next.",
+        "category": "Instagram",
+        "icon": "list",
+        "graph_fragment": _INSTAGRAM_SEND_BUTTON_MENU_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_thank_story_reply",
+        "name": "Instagram: Thank a Story Reply",
+        "description": "Fires when someone replies to your Story and sends them a thank-you direct message.",
+        "category": "Instagram",
+        "icon": "heart-handshake",
+        "graph_fragment": _INSTAGRAM_THANK_STORY_REPLY_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_thank_mention",
+        "name": "Instagram: Thank a Mention",
+        "description": "Fires when someone @mentions your account in a comment and thanks them with a reply.",
+        "category": "Instagram",
+        "icon": "at-sign",
+        "graph_fragment": _INSTAGRAM_THANK_MENTION_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_hide_spam_comment",
+        "name": "Instagram: Hide a Comment",
+        "description": "Hides a comment from public view without deleting it - reversible, and still visible to "
+        "its own author.",
+        "category": "Instagram",
+        "icon": "eye-off",
+        "graph_fragment": _INSTAGRAM_HIDE_SPAM_COMMENT_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_delete_comment",
+        "name": "Instagram: Delete a Comment",
+        "description": "Permanently deletes a comment - use this instead of hiding it when it needs to be removed "
+        "outright.",
+        "category": "Instagram",
+        "icon": "trash-2",
+        "graph_fragment": _INSTAGRAM_DELETE_COMMENT_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_comment_moderation_combo",
+        "name": "Instagram: Comment Moderation Combo",
+        "description": "Checks a comment's text for a spam keyword and hides it automatically when it matches - "
+        "wire the non-matching path into your normal comment flow.",
+        "category": "Instagram",
+        "icon": "filter",
+        "graph_fragment": _INSTAGRAM_COMMENT_MODERATION_COMBO_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_keyword_match_gate",
+        "name": "Instagram: Keyword Match Gate",
+        "description": "Checks incoming text against a keyword you choose, ready to branch your workflow on a "
+        "match.",
+        "category": "Instagram",
+        "icon": "filter",
+        "graph_fragment": _INSTAGRAM_KEYWORD_MATCH_GATE_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_post_scope_gate",
+        "name": "Instagram: Post/Reel Scope Gate",
+        "description": "Checks which specific post or reel a comment was left on, so you can scope an automation "
+        "to just that one.",
+        "category": "Instagram",
+        "icon": "image",
+        "graph_fragment": _INSTAGRAM_POST_SCOPE_GATE_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_wait_before_replying",
+        "name": "Instagram: Wait Before Replying",
+        "description": "Pauses for 5 minutes before continuing, so an automated reply doesn't feel instant.",
+        "category": "Instagram",
+        "icon": "clock",
+        "graph_fragment": _INSTAGRAM_WAIT_BEFORE_REPLYING_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_escalate_to_human",
+        "name": "Instagram: Escalate to a Human",
+        "description": "Acknowledges the customer, lets them know a person is taking over, and pauses automation "
+        "on this conversation for 4 hours.",
+        "category": "Instagram",
+        "icon": "user-check",
+        "graph_fragment": _INSTAGRAM_ESCALATE_TO_HUMAN_FRAGMENT,
+        "required_object_types": None,
+        "is_active": True,
+    },
+    {
+        "key": "instagram_capture_lead_from_dm",
+        "name": "Instagram: Capture a Lead from a DM",
+        "description": "Saves the DM sender as a new customer record, so an interested follower doesn't get lost.",
+        "category": "Instagram",
+        "icon": "user-plus",
+        "graph_fragment": _INSTAGRAM_CAPTURE_LEAD_FROM_DM_FRAGMENT,
         "required_object_types": None,
         "is_active": True,
     },

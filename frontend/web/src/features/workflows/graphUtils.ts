@@ -52,7 +52,12 @@ export function edgesFromJson(edges: WorkflowGraphEdge[]): Edge[] {
     target: edge.target,
     sourceHandle: edge.sourceHandle ?? undefined,
     targetHandle: edge.targetHandle ?? undefined,
-    type: "default",
+    // "smoothstep" (a built-in @xyflow/react edge type) for right-angled
+    // routing instead of the default bezier curve - set here rather than
+    // relying solely on `WorkflowEditorPage.tsx`'s `defaultEdgeOptions`,
+    // since an edge object with its own explicit `type` (as every hydrated
+    // edge has, right here) always wins over that prop's fallback.
+    type: "smoothstep",
     data: edge.data ?? undefined,
     label: edge.data?.label ?? undefined,
   }));

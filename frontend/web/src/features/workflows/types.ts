@@ -73,6 +73,12 @@ export interface Workflow {
   name: string;
   status: WorkflowStatus;
   purpose: WorkflowPurpose;
+  /** Advisory "which channel is this workflow for" tag - a `connector_types.key`
+   * (e.g. "whatsapp", "instagram") the New Workflow wizard's "channel" step
+   * set, or `null` for "General" (no specific channel) - shown as a colored
+   * badge on `WorkflowsListPage.tsx`. Never enforced against the actual
+   * graph's trigger node type - purely informational. */
+  channel_connector_type_key: string | null;
   current_published_version_id: string | null;
   created_at: string;
   updated_at: string;

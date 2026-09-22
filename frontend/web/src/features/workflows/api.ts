@@ -60,6 +60,10 @@ export async function createWorkflow(payload: {
   /** Defaults to `"automation"` server-side when omitted - see
    * `WorkflowsListPage.tsx`'s new "purpose" step. */
   purpose?: WorkflowPurpose;
+  /** Advisory "which channel is this workflow for" tag - a `connector_types.key`
+   * (e.g. "whatsapp", "instagram"), or `null`/omitted for "General" (no
+   * specific channel) - see `WorkflowsListPage.tsx`'s new "channel" step. */
+  channel_connector_type_key?: string | null;
 }): Promise<Workflow> {
   const { data } = await apiClient.post<Workflow>(BASE, payload);
   return data;

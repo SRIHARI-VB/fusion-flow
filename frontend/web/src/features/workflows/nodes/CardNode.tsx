@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps, type Node, useNodeConnections } from "@xyflow/react";
-import { ChevronDown, ChevronUp, GitBranch, PlayCircle, Trash2, Zap } from "lucide-react";
-import { cn } from "@fusion-flow/ui";
+import { Check, ChevronDown, ChevronUp, GitBranch, PlayCircle, Trash2, X, Zap } from "lucide-react";
+import { Badge, cn } from "@fusion-flow/ui";
 import type { CardNodeData } from "../graphUtils";
 import { deriveOutputHandles, NODE_ICONS, GROUP_COLORS, DEFAULT_GROUP_COLOR } from "./cardSummaries";
 import { CollapsedPreview, collapsedPreviewRowClass } from "./NodePreview";
@@ -30,6 +30,19 @@ import { DraftInput } from "../components/DraftFields";
  */
 
 const KIND_ICON = { trigger: Zap, action: PlayCircle, condition: GitBranch } as const;
+
+/** A condition node's `true`/`false` output handles read as a colored
+ * IF/ELSE pill (green check / red X) instead of a plain dot-and-label,
+ * matching the competitor builder screenshot this redesign was scoped
+ * against - any other handle id (a `condition.multi_branch` case value,
+ * "default", "yes"/"no" for `flow.confirm`, ...) keeps the existing plain
+ * styling untouched below. */
+function booleanHandleLabel(handleId: string): { isTrue: boolean } | null {
+  const normalized = handleId.toLowerCase();
+  if (normalized === "true") return { isTrue: true };
+  if (normalized === "false") return { isTrue: false };
+  return null;
+}
 
 function PortHandle({
   type,
@@ -183,19 +196,29 @@ export function CardNode({
 
       {outputHandles && outputHandles.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-border px-3 py-2">
-          {outputHandles.map((handleId) => (
-            <div key={handleId} className="relative flex items-center justify-end gap-2 text-xs">
-              <span className="capitalize text-muted-foreground">{handleId}</span>
-              <PortHandle
-                type="source"
-                id={handleId}
-                position={Position.Right}
-                label={handleId}
-                style={{ position: "static", transform: "none" }}
-                nested={nested}
-              />
-            </div>
-          ))}
+          {outputHandles.map((handleId) => {
+            const boolHandle = booleanHandleLabel(handleId);
+            return (
+              <div key={handleId} className="relative flex items-center justify-end gap-2 text-xs">
+                {boolHandle ? (
+                  <Badge variant={boolHandle.isTrue ? "success" : "destructive"} className="gap-1 font-medium">
+                    {boolHandle.isTrue ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    {boolHandle.isTrue ? "IF · TRUE" : "ELSE · FALSE"}
+                  </Badge>
+                ) : (
+                  <span className="capitalize text-muted-foreground">{handleId}</span>
+                )}
+                <PortHandle
+                  type="source"
+                  id={handleId}
+                  position={Position.Right}
+                  label={handleId}
+                  style={{ position: "static", transform: "none" }}
+                  nested={nested}
+                />
+              </div>
+            );
+          })}
         </div>
       ) : (
         <PortHandle type="source" id="default" position={Position.Right} style={{ top: 22 }} nested={nested} />

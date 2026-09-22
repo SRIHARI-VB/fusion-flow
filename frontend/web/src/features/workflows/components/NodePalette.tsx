@@ -4,7 +4,7 @@ import { cn } from "@fusion-flow/ui";
 import type { ConnectorInstance } from "../../connectors/types";
 import type { NodeKind, NodeType } from "../types";
 import { ChannelFilterBar } from "./ChannelFilterBar";
-import { GROUP_COLORS, DEFAULT_GROUP_COLOR } from "../nodes/cardSummaries";
+import { GROUP_COLORS, DEFAULT_GROUP_COLOR, NODE_ICONS } from "../nodes/cardSummaries";
 
 /**
  * Right-hand collapsible palette, grouped into labeled task-oriented
@@ -25,7 +25,6 @@ import { GROUP_COLORS, DEFAULT_GROUP_COLOR } from "../nodes/cardSummaries";
  */
 
 const KIND_ICON: Record<NodeKind, typeof Zap> = { trigger: Zap, action: PlayCircle, condition: GitBranch };
-const KIND_LABEL: Record<NodeKind, string> = { trigger: "Trigger", action: "Action", condition: "Condition" };
 
 /** Fixed display order for the known palette groups - "Triggers" leads
  * (an author reaches for a trigger first when building from scratch),
@@ -144,32 +143,28 @@ function buildGroups(nodeTypes: NodeType[]): PaletteGroupSection[] {
 }
 
 function PaletteItem({ nodeType, onDragStartNodeType }: { nodeType: NodeType; onDragStartNodeType: NodePaletteProps["onDragStartNodeType"] }) {
-  const KindIcon = KIND_ICON[nodeType.kind];
-  const groupAccent = (GROUP_COLORS[nodeType.palette_group] ?? DEFAULT_GROUP_COLOR).border;
-  const hasDescription = Boolean(nodeType.description && nodeType.description.trim().length > 0);
+  // Same icon-resolution precedence `CardNode.tsx` uses for its own header
+  // badge (a node-type-specific `NODE_ICONS` entry, falling back to the
+  // generic trigger/action/condition kind icon) - so a palette card and the
+  // node it drops onto the canvas show the same icon.
+  const Icon = (nodeType.icon && NODE_ICONS[nodeType.icon]) || KIND_ICON[nodeType.kind];
+  const groupColors = GROUP_COLORS[nodeType.palette_group] ?? DEFAULT_GROUP_COLOR;
   return (
     <div
       draggable
       onDragStart={(event) => onDragStartNodeType(nodeType, event)}
       title={nodeType.description}
       className={cn(
-        "flex cursor-grab items-start gap-2 rounded-md border border-l-2 border-border bg-background px-2 py-1.5",
+        "flex cursor-grab flex-col items-center gap-1.5 rounded-md border border-border bg-background px-2 py-2.5 text-center",
         "text-xs text-foreground hover:border-accent hover:bg-accent-soft active:cursor-grabbing",
-        groupAccent,
       )}
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate font-medium leading-snug">{nodeType.label}</span>
-        {hasDescription && (
-          <span className="line-clamp-2 text-[10px] leading-snug text-muted-foreground">{nodeType.description}</span>
-        )}
-      </div>
       <span
-        className="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-        title={KIND_LABEL[nodeType.kind]}
+        className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full", groupColors.iconBg, groupColors.iconText)}
       >
-        <KindIcon className="h-2.5 w-2.5" />
+        <Icon className="h-4 w-4" />
       </span>
+      <span className="line-clamp-2 w-full font-medium leading-snug">{nodeType.label}</span>
     </div>
   );
 }
@@ -260,7 +255,7 @@ export function NodePalette({
   }
 
   return (
-    <div className="flex w-64 min-h-0 shrink-0 flex-col border-l border-border bg-card">
+    <div className="flex w-80 min-h-0 shrink-0 flex-col border-l border-border bg-card">
       <ChannelFilterBar
         instances={channelInstances}
         nodeTypes={allNodeTypes}
@@ -301,9 +296,9 @@ export function NodePalette({
 
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {trimmedSearch ? (
-          <div className="flex flex-col gap-1">
+          <div className="grid grid-cols-2 gap-2">
             {filteredNodeTypes.length === 0 ? (
-              <p className="px-2 py-4 text-xs text-muted-foreground">No matching nodes.</p>
+              <p className="col-span-2 px-2 py-4 text-xs text-muted-foreground">No matching nodes.</p>
             ) : (
               filteredNodeTypes.map((nodeType) => (
                 <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
@@ -317,7 +312,7 @@ export function NodePalette({
                 <span className="mb-1 block px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Quick Start
                 </span>
-                <div className="flex flex-col gap-1">
+                <div className="grid grid-cols-2 gap-2">
                   {quickStartItems.map((nodeType) => (
                     <PaletteItem key={`quick-start-${nodeType.node_type}`} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
                   ))}
@@ -354,7 +349,7 @@ export function NodePalette({
                           )}
 
                           {directItems.length > 0 && (
-                            <div className="flex flex-col gap-1">
+                            <div className="grid grid-cols-2 gap-2">
                               {directItems.map((nodeType) => (
                                 <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
                               ))}
@@ -366,9 +361,11 @@ export function NodePalette({
                               <span className="pl-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
                                 {subcategory}
                               </span>
-                              {items.map((nodeType) => (
-                                <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
-                              ))}
+                              <div className="grid grid-cols-2 gap-2">
+                                {items.map((nodeType) => (
+                                  <PaletteItem key={nodeType.node_type} nodeType={nodeType} onDragStartNodeType={onDragStartNodeType} />
+                                ))}
+                              </div>
                             </div>
                           ))}
                         </div>

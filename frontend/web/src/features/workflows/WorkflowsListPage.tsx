@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { MessageCircle, Megaphone, Plus, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
+import { MessageCircle, Megaphone, Plus, Sparkles, Trash2, Workflow as WorkflowIcon, X } from "lucide-react";
 import {
   Badge,
   Button,
@@ -21,6 +21,8 @@ import {
 } from "@fusion-flow/ui";
 import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
+import { OptionPickerCard } from "../communication/wizard";
+import { useConnectorInstances } from "../connectors/hooks";
 import { createWorkflow, deleteWorkflow, listWorkflows } from "./api";
 import { DeleteWorkflowDialog } from "./components/DeleteWorkflowDialog";
 import { StarterTemplatePicker } from "./components/StarterTemplatePicker";
@@ -32,13 +34,25 @@ const statusVariant: Record<WorkflowStatus, BadgeVariant> = {
   archived: "secondary",
 };
 
+/** Per-channel badge colors for the workflows list (falls back to a neutral
+ * gray "General" badge for `null`/an unrecognized key) - matches this
+ * codebase's established WhatsApp=green/Instagram=pink convention (see
+ * `nodes/cardSummaries.ts`'s `GROUP_COLORS`'s own "Talk to Customer"=emerald
+ * entry for the same green), rather than inventing new colors. */
+const CHANNEL_BADGE_CLASSES: Record<string, string> = {
+  whatsapp: "bg-emerald-100 text-emerald-700 border-transparent",
+  instagram: "bg-pink-100 text-pink-700 border-transparent",
+};
+const GENERAL_BADGE_CLASSES = "bg-gray-100 text-gray-600 border-transparent";
+
 /** Which step of the "New Workflow" flow is showing — `"purpose"` (pick
  * "Automated Conversation" vs. "Broadcast Campaign") always comes first;
- * `"picker"` (choose a starter template or start from scratch, Phase 6)
- * comes next; `"name"` is the same name form this page always had, now
- * reached either way (picking "Start from scratch" or a specific
- * template). */
-type NewWorkflowStep = "closed" | "purpose" | "picker" | "name";
+ * `"channel"` (pick which connected channel this workflow is for, or
+ * "General" for none) comes next; `"picker"` (choose a starter template or
+ * start from scratch, Phase 6) comes after that; `"name"` is the same name
+ * form this page always had, now reached either way (picking "Start from
+ * scratch" or a specific template). */
+type NewWorkflowStep = "closed" | "purpose" | "channel" | "picker" | "name";
 
 const PURPOSE_OPTIONS: Array<{
   purpose: WorkflowPurpose;
@@ -65,6 +79,7 @@ export function WorkflowsListPage() {
   const queryClient = useQueryClient();
   const [newWorkflowStep, setNewWorkflowStep] = useState<NewWorkflowStep>("closed");
   const [purpose, setPurpose] = useState<WorkflowPurpose>("automation");
+  const [channelConnectorTypeKey, setChannelConnectorTypeKey] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<WorkflowStarterTemplate | null>(null);
   const [name, setName] = useState("");
   const [workflowPendingDelete, setWorkflowPendingDelete] = useState<Workflow | null>(null);
@@ -72,6 +87,40 @@ export function WorkflowsListPage() {
   const { atLimit } = usage("workflows");
 
   const { data: workflows = [], isLoading } = useQuery({ queryKey: ["workflows"], queryFn: listWorkflows });
+  const { data: connectorInstances = [] } = useConnectorInstances();
+
+  /** One entry per distinct connected connector type - dedupes multiple
+   * instances of the same type (e.g. two WhatsApp numbers) down to one
+   * channel choice, keyed by `connector_type_key`. */
+  const channelOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const instance of connectorInstances) {
+      if (instance.state !== "connected") continue;
+      if (!byKey.has(instance.connector_type_key)) {
+        byKey.set(instance.connector_type_key, instance.connector_type_display_name);
+      }
+    }
+    return Array.from(byKey, ([key, label]) => ({ key, label }));
+  }, [connectorInstances]);
+
+  /** `connector_type_key` -> display label, for the list badge - falls back
+   * to the raw key capitalized if the connector was disconnected/removed
+   * since this workflow was created (same fallback `BroadcastCampaignWizardPage.tsx`
+   * implicitly relies on via `connector_type_display_name` off a *currently
+   * connected* instance). */
+  const channelLabelByKey = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const instance of connectorInstances) {
+      if (!byKey.has(instance.connector_type_key)) {
+        byKey.set(instance.connector_type_key, instance.connector_type_display_name);
+      }
+    }
+    return byKey;
+  }, [connectorInstances]);
+
+  function channelLabel(key: string): string {
+    return channelLabelByKey.get(key) ?? key.charAt(0).toUpperCase() + key.slice(1);
+  }
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteWorkflow(id),
@@ -82,7 +131,13 @@ export function WorkflowsListPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => createWorkflow({ name, starter_template_id: selectedTemplate?.id, purpose }),
+    mutationFn: () =>
+      createWorkflow({
+        name,
+        starter_template_id: selectedTemplate?.id,
+        purpose,
+        channel_connector_type_key: channelConnectorTypeKey,
+      }),
     onSuccess: (workflow) => {
       queryClient.invalidateQueries({ queryKey: ["workflows"] });
       navigate(`/workflows/${workflow.id}/edit`);
@@ -92,12 +147,18 @@ export function WorkflowsListPage() {
   function closeNewWorkflowFlow() {
     setNewWorkflowStep("closed");
     setPurpose("automation");
+    setChannelConnectorTypeKey(null);
     setSelectedTemplate(null);
     setName("");
   }
 
   function handlePurposeSelected(selected: WorkflowPurpose) {
     setPurpose(selected);
+    setNewWorkflowStep("channel");
+  }
+
+  function handleChannelSelected(key: string | null) {
+    setChannelConnectorTypeKey(key);
     setNewWorkflowStep("picker");
   }
 
@@ -173,12 +234,68 @@ export function WorkflowsListPage() {
         </Card>
       )}
 
+      {newWorkflowStep === "channel" && (
+        <Card>
+          <CardContent className="flex flex-col gap-3 py-4">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Which channel is this workflow for?</p>
+              <p className="text-xs text-muted-foreground">
+                Purely informational — shown as a badge on your workflows list so you can tell them apart
+                at a glance. It doesn't restrict which triggers or actions you can use.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <OptionPickerCard
+                title="General"
+                description="Not tied to one channel — e.g. a payment- or schedule-triggered workflow."
+                selected={channelConnectorTypeKey === null}
+                onSelect={() => handleChannelSelected(null)}
+              />
+              {channelOptions.map(({ key, label }) => (
+                <OptionPickerCard
+                  key={key}
+                  title={label}
+                  description={`Workflows that talk to customers over ${label}.`}
+                  selected={channelConnectorTypeKey === key}
+                  onSelect={() => handleChannelSelected(key)}
+                />
+              ))}
+            </div>
+
+            {channelOptions.length === 0 && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5" />
+                No channels connected yet — that's fine, pick "General" for now and connect one later.
+              </p>
+            )}
+
+            <div className="flex justify-end gap-4 border-t border-border pt-3">
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                onClick={() => setNewWorkflowStep("purpose")}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                onClick={closeNewWorkflowFlow}
+              >
+                Cancel
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {newWorkflowStep === "picker" && (
         <StarterTemplatePicker
           purpose={purpose}
           onSelect={handleTemplateSelected}
           onCancel={closeNewWorkflowFlow}
-          onBack={() => setNewWorkflowStep("purpose")}
+          onBack={() => setNewWorkflowStep("channel")}
         />
       )}
 
@@ -227,6 +344,7 @@ export function WorkflowsListPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Channel</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead className="w-10" />
             </TableRow>
@@ -234,14 +352,14 @@ export function WorkflowsListPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && workflows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-center text-muted-foreground">
                   No workflows yet — create one to get started.
                 </TableCell>
               </TableRow>
@@ -260,6 +378,15 @@ export function WorkflowsListPage() {
                 </TableCell>
                 <TableCell>
                   <Badge variant={statusVariant[workflow.status]}>{workflow.status}</Badge>
+                </TableCell>
+                <TableCell>
+                  {workflow.channel_connector_type_key ? (
+                    <Badge className={CHANNEL_BADGE_CLASSES[workflow.channel_connector_type_key] ?? GENERAL_BADGE_CLASSES}>
+                      {channelLabel(workflow.channel_connector_type_key)}
+                    </Badge>
+                  ) : (
+                    <Badge className={GENERAL_BADGE_CLASSES}>General</Badge>
+                  )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {new Date(workflow.updated_at).toLocaleString()}

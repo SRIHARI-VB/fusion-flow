@@ -1,6 +1,6 @@
 import { Handle, NodeResizer, Position, type Node, type NodeProps, useNodeConnections } from "@xyflow/react";
-import { ChevronDown, ChevronUp, GitBranch, PlayCircle, Repeat, Shuffle, Trash2 } from "lucide-react";
-import { cn } from "@fusion-flow/ui";
+import { Check, ChevronDown, ChevronUp, GitBranch, PlayCircle, Repeat, Shuffle, Trash2, X } from "lucide-react";
+import { Badge, cn } from "@fusion-flow/ui";
 import type { CardNodeData } from "../graphUtils";
 import { NodeSummaryLine, collapsedPreviewRowClass } from "./NodePreview";
 import { NodeInlineForm } from "../components/NodeInlineForm";
@@ -24,6 +24,18 @@ import { NodeInlineForm } from "../components/NodeInlineForm";
  * gated by `hasOwnConfig`/`expanded` below. The resizable child drop-zone
  * body is a separate concern and is never affected by that toggle.
  */
+
+/** Mirrors `CardNode.tsx`'s `booleanHandleLabel` - kept as its own small
+ * duplicate here (rather than a shared import) since these two files
+ * already each duplicate their own `PortHandle`/output-handle rendering
+ * block in full; consistent visual treatment without adding a new shared
+ * module for two call sites. */
+function booleanHandleLabel(handleId: string): { isTrue: boolean } | null {
+  const normalized = handleId.toLowerCase();
+  if (normalized === "true") return { isTrue: true };
+  if (normalized === "false") return { isTrue: false };
+  return null;
+}
 
 const CHILD_ROLE_ICON: Record<string, typeof Repeat> = {
   loop_body: Repeat,
@@ -180,18 +192,28 @@ export function ContainerNode({
 
       {outputHandles.length > 0 ? (
         <div className="flex flex-col gap-2 border-t border-dashed border-border bg-card px-3 py-2">
-          {outputHandles.map((handleId) => (
-            <div key={handleId} className="relative flex items-center justify-end gap-2 text-xs">
-              <span className="capitalize text-muted-foreground">{handleId}</span>
-              <PortHandle
-                type="source"
-                id={handleId}
-                position={Position.Right}
-                label={handleId}
-                style={{ position: "static", transform: "none" }}
-              />
-            </div>
-          ))}
+          {outputHandles.map((handleId) => {
+            const boolHandle = booleanHandleLabel(handleId);
+            return (
+              <div key={handleId} className="relative flex items-center justify-end gap-2 text-xs">
+                {boolHandle ? (
+                  <Badge variant={boolHandle.isTrue ? "success" : "destructive"} className="gap-1 font-medium">
+                    {boolHandle.isTrue ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    {boolHandle.isTrue ? "IF · TRUE" : "ELSE · FALSE"}
+                  </Badge>
+                ) : (
+                  <span className="capitalize text-muted-foreground">{handleId}</span>
+                )}
+                <PortHandle
+                  type="source"
+                  id={handleId}
+                  position={Position.Right}
+                  label={handleId}
+                  style={{ position: "static", transform: "none" }}
+                />
+              </div>
+            );
+          })}
         </div>
       ) : (
         <PortHandle type="source" id="default" position={Position.Right} style={{ bottom: 22, top: "auto" }} />

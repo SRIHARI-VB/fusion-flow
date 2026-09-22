@@ -33,6 +33,11 @@ class WorkflowCreateRequest(BaseModel):
     # triggers) or "broadcast" (`broadcast.scheduled_send` + a
     # `WorkflowSchedule`) - see `models.py::Workflow.purpose`'s docstring.
     purpose: WorkflowPurpose = "automation"
+    # Advisory "which channel is this workflow for" tag - a `connector_types.key`
+    # (e.g. "whatsapp", "instagram") or `None` for "General" (no specific
+    # channel) - see `models.py::Workflow.channel_connector_type_key`'s
+    # docstring. Chosen in the New Workflow wizard's new "channel" step.
+    channel_connector_type_key: str | None = None
 
 
 class WorkflowUpdateRequest(BaseModel):
@@ -51,6 +56,7 @@ class WorkflowOut(BaseModel):
     name: str
     status: WorkflowStatus
     purpose: str
+    channel_connector_type_key: str | None
     current_published_version_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime

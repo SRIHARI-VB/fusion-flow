@@ -107,6 +107,19 @@ class Workflow(Base, TenantScopedMixin, TimestampMixin):
     purpose: Mapped[str] = mapped_column(
         String(20), nullable=False, default="automation", server_default="automation"
     )
+    # Advisory "which channel is this workflow for" tag, chosen once in the
+    # New Workflow wizard (`WorkflowsListPage.tsx`'s new "channel" step) and
+    # never re-derived from the graph - same sibling-of-`purpose` simplicity
+    # as that column (plain `String`, no DB `Enum`). Unlike `purpose`,
+    # `NULL` is a legitimate, equally-valid value here ("General" / no
+    # specific channel - e.g. a payment- or schedule-triggered workflow),
+    # not just a not-yet-set placeholder. Holds a `connector_types.key`
+    # (e.g. "whatsapp", "instagram") but is not an FK to that table - same
+    # "no FK across this module boundary" reasoning as `WorkflowTrigger.
+    # connector_instance_id` above, and purely informational for the UI
+    # (list badge, wizard filtering), never enforced against the actual
+    # graph's trigger node type.
+    channel_connector_type_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     versions: Mapped[list["WorkflowVersion"]] = relationship(
         back_populates="workflow",

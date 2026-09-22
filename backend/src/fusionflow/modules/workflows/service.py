@@ -60,9 +60,15 @@ async def create_workflow(
     graph: dict,
     created_by: uuid.UUID,
     purpose: str = "automation",
+    channel_connector_type_key: str | None = None,
 ) -> Workflow:
     workflow = Workflow(
-        id=uuid.uuid4(), tenant_id=tenant_id, name=name, status=WorkflowStatus.DRAFT, purpose=purpose
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        name=name,
+        status=WorkflowStatus.DRAFT,
+        purpose=purpose,
+        channel_connector_type_key=channel_connector_type_key,
     )
     session.add(workflow)
     await session.flush()
@@ -141,6 +147,7 @@ async def create_workflow_from_starter_template(
     starter_template_id: uuid.UUID,
     created_by: uuid.UUID,
     purpose: str = "automation",
+    channel_connector_type_key: str | None = None,
 ) -> Workflow:
     """Seeds a new workflow's graph from a `WorkflowStarterTemplate`
     (composable-builder redesign, Phase 6), auto-provisioning any custom
@@ -164,6 +171,7 @@ async def create_workflow_from_starter_template(
         graph=template.graph_json,
         created_by=created_by,
         purpose=purpose,
+        channel_connector_type_key=channel_connector_type_key,
     )
 
 

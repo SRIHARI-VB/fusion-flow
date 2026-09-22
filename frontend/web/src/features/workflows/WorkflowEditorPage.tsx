@@ -368,6 +368,29 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     if (workflow) setName(workflow.name);
   }, [workflow]);
 
+  const channelAutoSelectedRef = useRef(false);
+
+  // Auto-select the palette's channel filter from the channel the author
+  // picked when creating this workflow (`Workflow.channel_connector_type_key`,
+  // set once in `WorkflowsListPage.tsx`'s New Workflow flow) - narrows the
+  // palette to that channel from the moment the canvas opens, instead of
+  // requiring a manual click on `ChannelFilterBar` every time. Runs once per
+  // workflow load (guarded by `channelAutoSelectedRef`, same "don't fight a
+  // manual pick afterward" convention as `hydratedRef` above); a `null`
+  // channel (the "General" choice) or one with no matching connected
+  // instance leaves the filter on "All channels", unchanged from today.
+  useEffect(() => {
+    if (channelAutoSelectedRef.current) return;
+    if (!workflow || connectorInstances.length === 0) return;
+    channelAutoSelectedRef.current = true;
+    if (!workflow.channel_connector_type_key) return;
+    const match = connectorInstances.find(
+      (instance) =>
+        instance.connector_type_key === workflow.channel_connector_type_key && instance.state === "connected",
+    );
+    if (match) setSelectedChannelInstanceId(match.id);
+  }, [workflow, connectorInstances]);
+
   // Hydrate the canvas from the latest version exactly once (per workflow
   // load) so an in-progress edit isn't clobbered by a background refetch.
   // Must also wait for `versions` itself to have resolved, not just
@@ -906,7 +929,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             onNodesDelete={handleNodesDelete}
             deleteKeyCode={["Backspace", "Delete"]}
             nodeTypes={nodeTypesForFlow}
-            defaultEdgeOptions={{ type: "default", style: { strokeWidth: 2 } }}
+            defaultEdgeOptions={{ type: "smoothstep", style: { strokeWidth: 2 } }}
             fitView
           >
             <Background />

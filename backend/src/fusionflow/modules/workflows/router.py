@@ -180,6 +180,7 @@ async def create_workflow(
                 starter_template_id=payload.starter_template_id,
                 created_by=context.user.id,
                 purpose=payload.purpose,
+                channel_connector_type_key=payload.channel_connector_type_key,
             )
         except service.WorkflowServiceError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -191,6 +192,7 @@ async def create_workflow(
             graph=payload.graph,
             created_by=context.user.id,
             purpose=payload.purpose,
+            channel_connector_type_key=payload.channel_connector_type_key,
         )
     await commit_and_keep_tenant_context(session)
     await session.refresh(workflow)
