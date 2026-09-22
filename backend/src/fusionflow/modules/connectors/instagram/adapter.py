@@ -268,6 +268,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 recipient_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, closed 24h messaging window,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the direct message send: {detail}") from exc
 
     async def send_media_message(
         self,
@@ -319,6 +331,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 recipient_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, closed 24h messaging window,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the media message send: {detail}") from exc
 
     async def react_to_message(
         self,
@@ -373,6 +397,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 message_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, closed 24h messaging window,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the reaction: {detail}") from exc
 
     async def list_media(
         self,
@@ -509,6 +545,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 comment_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, invalid/deleted comment id,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the comment reply: {detail}") from exc
 
     async def hide_comment(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, hidden: bool = True
@@ -538,6 +586,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 comment_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, invalid/deleted comment id,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the comment hide: {detail}") from exc
 
     async def delete_comment(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str
@@ -567,6 +627,19 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 comment_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, invalid/already-deleted
+            # comment id, rate limit, ...) must not be swallowed like the
+            # network-unreachable case above - re-raise with Meta's own
+            # error message so the caller gets a diagnosable failure
+            # instead of a raw exception, same convention as
+            # `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the comment delete: {detail}") from exc
 
     async def send_private_reply(
         self, *, instance: ConnectorInstance, session: AsyncSession, comment_id: str, text: str
@@ -614,6 +687,19 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 comment_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, comment older than 7 days,
+            # already-replied comment, rate limit, ...) must not be
+            # swallowed like the network-unreachable case above - re-raise
+            # with Meta's own error message so the caller gets a
+            # diagnosable failure instead of a raw exception, same
+            # convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the private reply: {detail}") from exc
 
     async def send_button_template(
         self,
@@ -678,6 +764,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance.id,
                 recipient_id,
             )
+        except httpx.HTTPStatusError as exc:
+            # A real Meta rejection (bad token, closed 24h messaging window,
+            # rate limit, ...) must not be swallowed like the network-
+            # unreachable case above - re-raise with Meta's own error
+            # message so the caller gets a diagnosable failure instead of a
+            # raw exception, same convention as `set_ice_breakers`.
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the button template send: {detail}") from exc
 
     async def set_ice_breakers(
         self, *, instance: ConnectorInstance, session: AsyncSession, questions: list[dict[str, str]]

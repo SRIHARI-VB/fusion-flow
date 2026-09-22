@@ -207,36 +207,49 @@ async def send_message(
 
     type_key = instance.connector_type.key
     adapter = connector_registry.get(type_key)
-    if type_key == "whatsapp":
-        await adapter.perform_action(
-            action="send_text_message",
-            params={"to": conversation.external_contact_id, "body": content},
-            instance=instance,
-            session=session,
-        )
-    elif type_key == "instagram":
-        await adapter.perform_action(
-            action="send_direct_message",
-            params={"recipient_id": conversation.external_contact_id, "text": content},
-            instance=instance,
-            session=session,
-        )
-    elif type_key == "telegram":
-        await adapter.perform_action(
-            action="send_message",
-            params={"chat_id": conversation.external_contact_id, "text": content},
-            instance=instance,
-            session=session,
-        )
-    elif type_key == "facebook":
-        await adapter.perform_action(
-            action="send_message",
-            params={"recipient_id": conversation.external_contact_id, "text": content},
-            instance=instance,
-            session=session,
-        )
-    else:
-        raise InboxError(f"Sending is not supported for connector type {type_key!r}", status_code=400)
+    # Adapters raise `RuntimeError` (no credential stored, missing
+    # provider-ref ids) or `ValueError` (a real provider rejection - bad
+    # token, closed messaging window, rate limit, ...) rather than
+    # returning a result - left unhandled, either would propagate straight
+    # out of this function as a bare 500, past `router.py`'s
+    # `except InboxError` handler, with no detail for the agent replying
+    # from the Unified Inbox. Same gap `instagram/router.py::set_ice_breakers`
+    # already closed for the ice-breakers settings endpoint; closing it
+    # here too by translating both into the existing `InboxError`
+    # convention `router.py` already unwraps into a proper HTTP response.
+    try:
+        if type_key == "whatsapp":
+            await adapter.perform_action(
+                action="send_text_message",
+                params={"to": conversation.external_contact_id, "body": content},
+                instance=instance,
+                session=session,
+            )
+        elif type_key == "instagram":
+            await adapter.perform_action(
+                action="send_direct_message",
+                params={"recipient_id": conversation.external_contact_id, "text": content},
+                instance=instance,
+                session=session,
+            )
+        elif type_key == "telegram":
+            await adapter.perform_action(
+                action="send_message",
+                params={"chat_id": conversation.external_contact_id, "text": content},
+                instance=instance,
+                session=session,
+            )
+        elif type_key == "facebook":
+            await adapter.perform_action(
+                action="send_message",
+                params={"recipient_id": conversation.external_contact_id, "text": content},
+                instance=instance,
+                session=session,
+            )
+        else:
+            raise InboxError(f"Sending is not supported for connector type {type_key!r}", status_code=400)
+    except (RuntimeError, ValueError) as exc:
+        raise InboxError(str(exc), status_code=400) from exc
 
     message = Message(
         id=uuid.uuid4(),

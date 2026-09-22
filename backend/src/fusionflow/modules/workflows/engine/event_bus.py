@@ -18,9 +18,23 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.workflows.models import RunStatus, WorkflowRun, WorkflowTriggerInbox
+
+
+async def _find_existing_by_dedupe_key(
+    session: AsyncSession, *, tenant_id: uuid.UUID, dedupe_key: str
+) -> WorkflowTriggerInbox | None:
+    return (
+        await session.execute(
+            select(WorkflowTriggerInbox).where(
+                WorkflowTriggerInbox.tenant_id == tenant_id,
+                WorkflowTriggerInbox.dedupe_key == dedupe_key,
+            )
+        )
+    ).scalar_one_or_none()
 
 
 async def _insert_or_get(
@@ -34,18 +48,44 @@ async def _insert_or_get(
 ) -> WorkflowTriggerInbox:
     """Shared by `publish_trigger_event` and `publish_resume_event`: the
     dedupe-by-existing-row check plus the actual insert, so neither
-    function repeats the lookup logic."""
+    function repeats the lookup logic.
+
+    The SELECT-then-INSERT below is not itself race-free: two requests
+    (concurrent workers, or Meta's ~20s webhook redelivery landing on two
+    workers at once) can both see `existing is None` and both attempt the
+    INSERT, and only one wins the unique `(tenant_id, dedupe_key)`
+    constraint (see `models.py`'s `uq_workflow_trigger_inbox_tenant_dedupe_key`).
+    The loser's INSERT is wrapped in its own SAVEPOINT
+    (`session.begin_nested()`) so the resulting `IntegrityError` only
+    rolls back that nested SAVEPOINT instead of poisoning the caller's
+    still-open outer transaction - this function only ever `flush()`es,
+    never commits (see module docstring), so the caller must still be able
+    to use `session` afterwards. On that race, re-fetch and return the
+    winner's row, same as the plain dedupe-hit path above.
+    """
     if dedupe_key is not None:
-        existing = (
-            await session.execute(
-                select(WorkflowTriggerInbox).where(
-                    WorkflowTriggerInbox.tenant_id == tenant_id,
-                    WorkflowTriggerInbox.dedupe_key == dedupe_key,
-                )
-            )
-        ).scalar_one_or_none()
+        existing = await _find_existing_by_dedupe_key(session, tenant_id=tenant_id, dedupe_key=dedupe_key)
         if existing is not None:
             return existing
+
+        row = WorkflowTriggerInbox(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload=payload,
+            connector_instance_id=connector_instance_id,
+            dedupe_key=dedupe_key,
+        )
+        try:
+            async with session.begin_nested():
+                session.add(row)
+                await session.flush()
+        except IntegrityError:
+            existing = await _find_existing_by_dedupe_key(session, tenant_id=tenant_id, dedupe_key=dedupe_key)
+            if existing is not None:
+                return existing
+            raise
+        return row
 
     row = WorkflowTriggerInbox(
         id=uuid.uuid4(),
@@ -53,7 +93,7 @@ async def _insert_or_get(
         event_type=event_type,
         payload=payload,
         connector_instance_id=connector_instance_id,
-        dedupe_key=dedupe_key,
+        dedupe_key=None,
     )
     session.add(row)
     await session.flush()
