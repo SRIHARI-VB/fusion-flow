@@ -19,6 +19,10 @@ export interface BroadcastCampaign {
   recipient_phone_numbers: string[];
   media_url: string | null;
   media_type: string | null;
+  location_latitude: number | null;
+  location_longitude: number | null;
+  location_name: string | null;
+  location_address: string | null;
   workflow_id: string;
   created_at: string;
   updated_at: string;
@@ -36,4 +40,8 @@ export interface CreateBroadcastCampaignPayload {
   scheduled_at: string;
   media_url: string | null;
   media_type: string | null;
+  location_latitude: number | null;
+  location_longitude: number | null;
+  location_name: string | null;
+  location_address: string | null;
 }

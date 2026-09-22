@@ -16,6 +16,14 @@ class BroadcastCampaignCreate(BaseModel):
     # `message_text` - `None` (default) is the original text-only behavior.
     media_url: str | None = Field(default=None)
     media_type: str | None = Field(default=None)
+    # Optional location attachment - WhatsApp only (Instagram's Send API
+    # has no location-message capability); `service.create_campaign`
+    # rejects this for an Instagram connector instance. All four are set
+    # together or not at all - `None` (default) is the original behavior.
+    location_latitude: float | None = Field(default=None)
+    location_longitude: float | None = Field(default=None)
+    location_name: str | None = Field(default=None)
+    location_address: str | None = Field(default=None)
 
 
 class BroadcastCampaignSetActive(BaseModel):
@@ -30,6 +38,10 @@ class BroadcastCampaignOut(BaseModel):
     recipient_phone_numbers: list[str]
     media_url: str | None
     media_type: str | None
+    location_latitude: float | None
+    location_longitude: float | None
+    location_name: str | None
+    location_address: str | None
     workflow_id: uuid.UUID
     created_at: datetime
     updated_at: datetime

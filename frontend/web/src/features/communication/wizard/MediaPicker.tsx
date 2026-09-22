@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from "react";
 import { isAxiosError } from "axios";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Upload, X } from "lucide-react";
+import { File as FileIcon, Loader2, Upload, X } from "lucide-react";
 import { Button, Card, CardContent } from "@fusion-flow/ui";
 import { useConnectorInstances } from "../../connectors/hooks";
 import { fetchMediaAssets, uploadMedia } from "../media-library/api";
@@ -15,9 +15,15 @@ interface MediaPickerProps {
   value: SelectedMedia | null;
   onChange: (media: SelectedMedia | null) => void;
   /** Restricts the "pick from library" grid and the accepted file input
-   * to one media family - most Instagram send actions only support image
-   * or video attachments, never arbitrary documents. */
-  accept?: "image" | "video" | "image,video";
+   * to one media family. Most Instagram send actions only support image
+   * or video attachments, never arbitrary documents - callers for an
+   * Instagram-only wizard step should leave this at its default
+   * (`"image,video"`) and never pass `"file"`. WhatsApp's
+   * `send_media_message` action does support a generic document
+   * attachment (`media_type: "document"`), so `"file"` is only meant for
+   * WhatsApp-capable callers (e.g. the Broadcast Campaign wizard, gated
+   * on the selected channel). */
+  accept?: "image" | "video" | "image,video" | "image,video,file";
 }
 
 /**
@@ -55,7 +61,13 @@ export function MediaPicker({ value, onChange, accept = "image,video" }: MediaPi
   });
 
   const acceptAttr =
-    accept === "image" ? "image/*" : accept === "video" ? "video/*" : "image/*,video/*";
+    accept === "image"
+      ? "image/*"
+      : accept === "video"
+        ? "video/*"
+        : accept === "image,video,file"
+          ? "image/*,video/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+          : "image/*,video/*";
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -79,12 +91,18 @@ export function MediaPicker({ value, onChange, accept = "image,video" }: MediaPi
   }
 
   if (value) {
+    const isImage = value.content_type.startsWith("image");
+    const isVideo = value.content_type.startsWith("video");
     return (
       <div className="flex items-center gap-2 rounded-md border border-border bg-card p-2">
-        {value.content_type.startsWith("video") ? (
+        {isVideo ? (
           <video src={value.url} muted className="h-14 w-14 rounded object-cover" />
-        ) : (
+        ) : isImage ? (
           <img src={value.url} alt="" className="h-14 w-14 rounded object-cover" />
+        ) : (
+          <div className="flex h-14 w-14 items-center justify-center rounded bg-muted">
+            <FileIcon className="h-5 w-5 text-muted-foreground" />
+          </div>
         )}
         <span className="flex-1 truncate text-xs text-muted-foreground">{value.url}</span>
         <Button type="button" variant="outline" size="sm" onClick={() => onChange(null)}>
@@ -141,9 +159,10 @@ export function MediaPicker({ value, onChange, accept = "image,video" }: MediaPi
     );
   }
 
-  const filteredAssets = (libraryAssets ?? []).filter((asset) =>
-    accept === "image,video" ? true : asset.content_type.startsWith(accept),
-  );
+  const filteredAssets = (libraryAssets ?? []).filter((asset) => {
+    if (accept === "image" || accept === "video") return asset.content_type.startsWith(accept);
+    return true; // "image,video" or "image,video,file" - every asset qualifies
+  });
 
   return (
     <div className="flex flex-col gap-2">
@@ -165,8 +184,15 @@ export function MediaPicker({ value, onChange, accept = "image,video" }: MediaPi
             >
               {asset.content_type.startsWith("video") ? (
                 <video src={asset.url} muted className="h-16 w-16 object-cover" />
-              ) : (
+              ) : asset.content_type.startsWith("image") ? (
                 <img src={asset.url} alt={asset.filename} className="h-16 w-16 object-cover" />
+              ) : (
+                <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 bg-muted p-1">
+                  <FileIcon className="h-4 w-4 text-muted-foreground" />
+                  <span className="w-full truncate text-center text-[9px] text-muted-foreground">
+                    {asset.filename}
+                  </span>
+                </div>
               )}
             </button>
           ))}

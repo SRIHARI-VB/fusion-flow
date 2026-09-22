@@ -374,33 +374,49 @@ class InstagramAdapter(base.ConnectorAdapter):
                 message_id,
             )
 
-    async def list_media(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, Any]]:
-        """List this account's own posts/reels - the post/reel picker for
-        Comment Automation/Comment Moderation's "scope to one post/reel"
-        option (account-wide, the default, when nothing is picked). Returns
-        `[]` on any stub/unreachable/error condition rather than raising -
-        an empty picker (falls back to "every post") is a legal state, not
-        an error, same convention as `get_ice_breakers`.
+    async def list_media(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        after: str | None = None,
+        limit: int = 25,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List one page of this account's own posts/reels - the post/reel
+        picker for Comment Automation/Comment Moderation's "scope to
+        specific posts/reels" option (account-wide, the default, when
+        nothing is picked). An account with hundreds of posts can't be
+        handed back in one response, so this pages through Meta's own
+        cursor (`after`) rather than fetching everything - `limit` per
+        page, `after` to continue from a previous call's returned cursor.
+
+        Returns `([], None)` on any stub/unreachable/error condition
+        rather than raising - an empty picker (falls back to "every post")
+        is a legal state, not an error, same convention as
+        `get_ice_breakers`.
         """
         secret = await connector_service.get_credential_secret(session, instance=instance)
         if secret is None:
-            return []
+            return [], None
         instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
         if not instagram_account_id:
-            return []
+            return [], None
 
         # TODO(meta-graph-api): GET /{instagram_account_id}/media
         #   ?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp
-        #   &access_token={access_token}
+        #   &limit={limit}&after={after}&access_token={access_token}
+        params: dict[str, Any] = {
+            "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
+            "limit": limit,
+        }
+        if after:
+            params["after"] = after
         try:
             async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
                 response = await client.get(
                     f"/{instagram_account_id}/media",
                     headers={"Authorization": f"Bearer {secret['access_token']}"},
-                    params={
-                        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp",
-                        "limit": 50,
-                    },
+                    params=params,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -408,9 +424,16 @@ class InstagramAdapter(base.ConnectorAdapter):
             logger.warning(
                 "[instagram] could not list media (%s) - returning empty (instance=%s).", exc, instance.id
             )
-            return []
+            return [], None
 
-        return list(data.get("data") or [])
+        next_cursor = ((data.get("paging") or {}).get("cursors") or {}).get("after")
+        # Meta still returns a cursor even past the last page - only trust
+        # it when `paging.next` (the actual "there IS a next page" signal)
+        # is also present, or the picker's "Load more" button would spin
+        # forever re-fetching an empty final page.
+        if "next" not in (data.get("paging") or {}):
+            next_cursor = None
+        return list(data.get("data") or []), next_cursor
 
     async def get_user_profile(
         self, *, instance: ConnectorInstance, session: AsyncSession, user_id: str

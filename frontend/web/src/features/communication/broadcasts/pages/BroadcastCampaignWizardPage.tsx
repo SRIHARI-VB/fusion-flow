@@ -5,8 +5,8 @@ import { Badge, Button, Input, Textarea } from "@fusion-flow/ui";
 import { X } from "lucide-react";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import type { ConnectorInstance } from "../../../connectors/types";
-import { WizardShell, SummarySidebar, TipsCallout, OptionPickerCard, MediaPicker } from "../../wizard";
-import type { SelectedMedia } from "../../wizard";
+import { WizardShell, SummarySidebar, TipsCallout, OptionPickerCard, MediaPicker, LocationPicker } from "../../wizard";
+import type { SelectedMedia, SelectedLocation } from "../../wizard";
 import { useConversations } from "../../inbox/hooks";
 import { useCreateCampaign } from "../hooks";
 
@@ -43,6 +43,8 @@ export function BroadcastCampaignWizardPage() {
   const [recipientSearch, setRecipientSearch] = useState("");
   const [manualRecipientInput, setManualRecipientInput] = useState("");
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null);
+  const [attachmentMode, setAttachmentMode] = useState<"none" | "media" | "location">("none");
   const [scheduledAtLocal, setScheduledAtLocal] = useState("");
   const [stepError, setStepError] = useState<string | null>(null);
 
@@ -84,6 +86,17 @@ export function BroadcastCampaignWizardPage() {
 
   const isInstagram = selectedInstance?.connector_type_key === "instagram";
 
+  // Location attachments are WhatsApp-only (Instagram's Send API has no
+  // location-message capability at all) - drop any picked location and
+  // fall back to "none" if the tenant switches to an Instagram instance
+  // while one is selected.
+  useEffect(() => {
+    if (isInstagram && attachmentMode === "location") {
+      setAttachmentMode("none");
+      setSelectedLocation(null);
+    }
+  }, [isInstagram, attachmentMode]);
+
   // Contacts who've already messaged this channel instance - the only
   // recipients realistically reachable anyway, since both WhatsApp's
   // messaging window and Instagram's 24h rule require a prior inbound
@@ -100,13 +113,30 @@ export function BroadcastCampaignWizardPage() {
     [conversations, selectedInstance],
   );
 
+  // Capped, not the full list - with hundreds of conversations, dumping
+  // every unselected contact in one long dropdown is as hard to scan as
+  // typing the raw id was. Show a short default list so there's always
+  // something to click without typing first, and let search narrow it
+  // down beyond the cap.
+  const RECIPIENT_RESULTS_LIMIT = 8;
   const recipientSearchResults = useMemo(() => {
     const query = recipientSearch.trim().toLowerCase();
-    return knownContacts.filter((contact) => {
+    const matches = knownContacts.filter((contact) => {
       if (selectedRecipientIds.includes(contact.id)) return false;
       if (!query) return true;
       return contact.label.toLowerCase().includes(query) || contact.id.toLowerCase().includes(query);
     });
+    return matches.slice(0, RECIPIENT_RESULTS_LIMIT);
+  }, [knownContacts, recipientSearch, selectedRecipientIds]);
+
+  const recipientResultsTruncated = useMemo(() => {
+    const query = recipientSearch.trim().toLowerCase();
+    const total = knownContacts.filter((contact) => {
+      if (selectedRecipientIds.includes(contact.id)) return false;
+      if (!query) return true;
+      return contact.label.toLowerCase().includes(query) || contact.id.toLowerCase().includes(query);
+    }).length;
+    return total > RECIPIENT_RESULTS_LIMIT;
   }, [knownContacts, recipientSearch, selectedRecipientIds]);
 
   const recipients = selectedRecipientIds;
@@ -150,6 +180,10 @@ export function BroadcastCampaignWizardPage() {
       setStepError(isInstagram ? "Add at least one recipient Instagram user ID." : "Add at least one recipient phone number.");
       return;
     }
+    if (attachmentMode === "location" && !selectedLocation) {
+      setStepError("Pick a location on the map, or switch the attachment back to \"None\"/\"Media\".");
+      return;
+    }
     setStepError(null);
     setCurrentStepIndex(1);
   }
@@ -179,8 +213,19 @@ export function BroadcastCampaignWizardPage() {
         message_text: messageText,
         recipient_phone_numbers: recipients,
         scheduled_at: scheduledDate.toISOString(),
-        media_url: selectedMedia?.url ?? null,
-        media_type: selectedMedia ? (selectedMedia.content_type.startsWith("video") ? "video" : "image") : null,
+        media_url: attachmentMode === "media" ? selectedMedia?.url ?? null : null,
+        media_type:
+          attachmentMode === "media" && selectedMedia
+            ? selectedMedia.content_type.startsWith("video")
+              ? "video"
+              : selectedMedia.content_type.startsWith("image")
+                ? "image"
+                : "document"
+            : null,
+        location_latitude: attachmentMode === "location" ? selectedLocation?.latitude ?? null : null,
+        location_longitude: attachmentMode === "location" ? selectedLocation?.longitude ?? null : null,
+        location_name: attachmentMode === "location" ? selectedLocation?.name ?? null : null,
+        location_address: attachmentMode === "location" ? selectedLocation?.address ?? null : null,
       },
       {
         onSuccess: () => navigate("/communication/broadcasts"),
@@ -207,7 +252,19 @@ export function BroadcastCampaignWizardPage() {
               : "",
           },
           { label: "Recipients", value: recipients.length > 0 ? `${recipients.length} recipient(s)` : "" },
-          { label: "Media", value: selectedMedia ? "1 attachment" : "None" },
+          {
+            label: "Attachment",
+            value:
+              attachmentMode === "media"
+                ? selectedMedia
+                  ? "1 media file"
+                  : "None"
+                : attachmentMode === "location"
+                  ? selectedLocation
+                    ? "1 location"
+                    : "None"
+                  : "None",
+          },
           { label: "Scheduled For", value: scheduledForSummary },
         ]}
       />
@@ -343,29 +400,46 @@ export function BroadcastCampaignWizardPage() {
               value={recipientSearch}
               onChange={(event) => setRecipientSearch(event.target.value)}
             />
-            {recipientSearch && recipientSearchResults.length > 0 && (
-              <div className="max-h-40 overflow-y-auto rounded-md border border-border">
-                {recipientSearchResults.map((contact) => (
-                  <button
-                    key={contact.id}
-                    type="button"
-                    onClick={() => {
-                      addRecipient(contact.id);
-                      setRecipientSearch("");
-                    }}
-                    className="flex w-full flex-col px-3 py-2 text-left text-sm hover:bg-muted"
-                  >
-                    <span>{contact.label}</span>
-                    {contact.label !== contact.id && (
-                      <span className="text-xs text-muted-foreground">{contact.id}</span>
-                    )}
-                  </button>
-                ))}
+            {recipientSearchResults.length > 0 ? (
+              <div className="flex flex-col gap-1 rounded-md border border-border">
+                {!recipientSearch && (
+                  <p className="px-3 pt-2 text-xs text-muted-foreground">
+                    {knownContacts.length > RECIPIENT_RESULTS_LIMIT
+                      ? `Showing ${RECIPIENT_RESULTS_LIMIT} of ${knownContacts.length} contacts — search to find more.`
+                      : "Known contacts"}
+                  </p>
+                )}
+                <div className="max-h-40 overflow-y-auto">
+                  {recipientSearchResults.map((contact) => (
+                    <button
+                      key={contact.id}
+                      type="button"
+                      onClick={() => {
+                        addRecipient(contact.id);
+                        setRecipientSearch("");
+                      }}
+                      className="flex w-full flex-col px-3 py-2 text-left text-sm hover:bg-muted"
+                    >
+                      <span>{contact.label}</span>
+                      {contact.label !== contact.id && (
+                        <span className="text-xs text-muted-foreground">{contact.id}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {recipientResultsTruncated && (
+                  <p className="px-3 pb-2 text-xs text-muted-foreground">
+                    More matches exist — keep typing to narrow the list down.
+                  </p>
+                )}
               </div>
-            )}
-            {recipientSearch && recipientSearchResults.length === 0 && (
+            ) : recipientSearch ? (
               <p className="text-xs text-muted-foreground">No matching contacts found.</p>
-            )}
+            ) : knownContacts.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No known contacts yet for this channel — add a recipient manually below.
+              </p>
+            ) : null}
 
             <div className="flex gap-2">
               <Input
@@ -390,12 +464,41 @@ export function BroadcastCampaignWizardPage() {
             )}
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Media attachment (optional)</label>
-            <p className="text-xs text-muted-foreground">
-              Attach an image or video to send alongside the message text.
-            </p>
-            <MediaPicker value={selectedMedia} onChange={setSelectedMedia} accept="image,video" />
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Attachment (optional)</label>
+            <div className={`grid grid-cols-2 gap-2 ${isInstagram ? "" : "sm:grid-cols-3"}`}>
+              <OptionPickerCard
+                title="None"
+                description="Text only"
+                selected={attachmentMode === "none"}
+                onSelect={() => setAttachmentMode("none")}
+              />
+              <OptionPickerCard
+                title="Media"
+                description="Image, video, or file"
+                selected={attachmentMode === "media"}
+                onSelect={() => setAttachmentMode("media")}
+              />
+              {!isInstagram && (
+                <OptionPickerCard
+                  title="Location"
+                  description="Pick a spot on a map"
+                  selected={attachmentMode === "location"}
+                  onSelect={() => setAttachmentMode("location")}
+                />
+              )}
+            </div>
+
+            {attachmentMode === "media" && (
+              <MediaPicker
+                value={selectedMedia}
+                onChange={setSelectedMedia}
+                accept={isInstagram ? "image,video" : "image,video,file"}
+              />
+            )}
+            {attachmentMode === "location" && (
+              <LocationPicker value={selectedLocation} onChange={setSelectedLocation} />
+            )}
           </div>
         </>
       )}

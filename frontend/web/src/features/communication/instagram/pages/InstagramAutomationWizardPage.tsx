@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { EyeOff } from "lucide-react";
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, cn } from "@fusion-flow/ui";
-import { OptionPickerCard, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
+import { OptionPickerCard, PostReelMultiPicker, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import {
@@ -14,7 +13,6 @@ import {
   MATCHING_METHODS,
 } from "../constants";
 import { isCommentAutomationConfig, type InstagramCommentAutomationConfig, type InstagramMatchingMethod } from "../types";
-import { fetchInstagramMedia } from "../media-api";
 
 const STEPS = ["Keywords & Matching", "Actions"];
 
@@ -26,7 +24,7 @@ const STEPS = ["Keywords & Matching", "Actions"];
  * both keys entirely) still narrows cleanly. */
 type CommentAutomationConfig = InstagramCommentAutomationConfig & {
   reply_delay_minutes?: number | null;
-  media_id?: string | null;
+  media_ids?: string[];
 };
 
 /** Match choice shown at the top of Step 1 - "All comments" collapses
@@ -54,9 +52,10 @@ function parseKeywords(raw: string): string[] {
  * `/communication/instagram/automations/new` and
  * `/communication/instagram/automations/:id/edit` - the "Comment
  * Automation" wizard. Account-wide by default (fires on comments across
- * every post/reel on the connected Instagram account) unless a specific
- * post/reel is picked in the "Scope" section, which scopes the generated
- * graph to just that one (`media_id`, see the backend's `build_graph`).
+ * every post/reel on the connected Instagram account) unless one or more
+ * specific posts/reels are picked in the "Scope" section, which scopes
+ * the generated graph to just those (`media_ids`, see the backend's
+ * `build_graph`).
  */
 export function InstagramAutomationWizardPage() {
   const { id } = useParams<{ id: string }>();
@@ -79,23 +78,13 @@ export function InstagramAutomationWizardPage() {
   const [matchMode, setMatchMode] = useState<MatchMode>("keywords");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
-  const [mediaId, setMediaId] = useState<string | null>(null);
+  const [mediaIds, setMediaIds] = useState<string[]>([]);
   const [autoHide, setAutoHide] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [dmText, setDmText] = useState("");
   const [replyDelayMinutesInput, setReplyDelayMinutesInput] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
-
-  // This account's own posts/reels - the "Scope" grid's options. Fetched
-  // once `instagramInstance` is resolved; not gated on `matchMode`/step
-  // since editing an existing scoped automation needs it available
-  // immediately to render the current selection.
-  const { data: mediaItems, isLoading: mediaLoading } = useQuery({
-    queryKey: ["instagram-media", instagramInstance?.id],
-    queryFn: () => fetchInstagramMedia(instagramInstance!.id),
-    enabled: Boolean(instagramInstance),
-  });
 
   // Seeds form state from the fetched automation exactly once, when
   // editing - guarded by `initialized` so a background refetch (e.g. the
@@ -106,7 +95,7 @@ export function InstagramAutomationWizardPage() {
     setMatchMode(config.trigger_keywords.length === 0 ? "all" : "keywords");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
-    setMediaId(config.media_id ?? null);
+    setMediaIds(config.media_ids ?? []);
     setAutoHide(config.auto_hide);
     setReplyText(config.reply_comment_text ?? "");
     setDmText(config.dm_text ?? "");
@@ -157,7 +146,7 @@ export function InstagramAutomationWizardPage() {
       reply_comment_text: trimmedReply || null,
       dm_text: trimmedDm || null,
       reply_delay_minutes,
-      media_id: mediaId,
+      media_ids: mediaIds,
     };
 
     if (isEditing && id) {
@@ -197,8 +186,6 @@ export function InstagramAutomationWizardPage() {
     );
   }
 
-  const selectedMedia = mediaId ? (mediaItems ?? []).find((item) => item.id === mediaId) : undefined;
-
   const sidebar = (
     <>
       <SummarySidebar
@@ -207,7 +194,10 @@ export function InstagramAutomationWizardPage() {
           ...(matchMode === "keywords"
             ? [{ label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] }]
             : []),
-          { label: "Scope", value: mediaId ? selectedMedia?.caption?.slice(0, 24) || mediaId : "All posts/reels" },
+          {
+            label: "Scope",
+            value: mediaIds.length > 0 ? `${mediaIds.length} post(s)/reel(s)` : "All posts/reels",
+          },
           { label: "Reply Delay", value: replyDelayMinutesInput.trim() ? `${replyDelayMinutesInput} min` : "None" },
           { label: "Auto-Hide", value: autoHide ? "On" : "Off" },
           { label: "Public Reply", value: replyText.trim() || "Off" },
@@ -311,54 +301,9 @@ export function InstagramAutomationWizardPage() {
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium">Scope</span>
             <p className="text-xs text-muted-foreground">
-              Apply this automation to every post/reel, or just one.
+              Apply this automation to every post/reel, or scope it to one or more specific ones.
             </p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={() => setMediaId(null)}
-                className={cn(
-                  "flex h-28 flex-col items-center justify-center gap-1 rounded-md border p-2 text-center transition-colors",
-                  mediaId === null ? "border-accent bg-accent-soft" : "border-border hover:bg-muted",
-                )}
-              >
-                <span className={cn("text-sm font-medium", mediaId === null ? "text-accent" : "text-foreground")}>
-                  All posts/reels
-                </span>
-                <span className="text-xs text-muted-foreground">Account-wide</span>
-              </button>
-
-              {mediaLoading && (
-                <p className="col-span-full text-xs text-muted-foreground">Loading your posts…</p>
-              )}
-
-              {(mediaItems ?? []).map((media) => {
-                const thumbnail = media.thumbnail_url || media.media_url;
-                const selected = mediaId === media.id;
-                return (
-                  <button
-                    key={media.id}
-                    type="button"
-                    onClick={() => setMediaId(media.id)}
-                    className={cn(
-                      "flex h-28 flex-col overflow-hidden rounded-md border text-left transition-colors",
-                      selected ? "border-accent" : "border-border hover:bg-muted",
-                    )}
-                  >
-                    {thumbnail ? (
-                      <img src={thumbnail} alt="" className="h-20 w-full object-cover" />
-                    ) : (
-                      <div className="flex h-20 w-full items-center justify-center bg-muted text-xs text-muted-foreground">
-                        {media.media_type}
-                      </div>
-                    )}
-                    <span className="flex-1 truncate p-1 text-[11px] text-muted-foreground">
-                      {media.caption?.slice(0, 40) || media.media_type}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <PostReelMultiPicker instanceId={instagramInstance?.id} value={mediaIds} onChange={setMediaIds} />
           </div>
 
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}

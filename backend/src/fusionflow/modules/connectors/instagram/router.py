@@ -18,7 +18,12 @@ from fastapi import APIRouter, HTTPException
 from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.base import registry as connector_registry
-from fusionflow.modules.connectors.instagram.schemas import IceBreakerQuestion, IceBreakersRequest, InstagramMediaOut
+from fusionflow.modules.connectors.instagram.schemas import (
+    IceBreakerQuestion,
+    IceBreakersRequest,
+    InstagramMediaOut,
+    InstagramMediaPage,
+)
 
 router = APIRouter(prefix="/connectors/{instance_id}/instagram", tags=["instagram"])
 
@@ -53,13 +58,20 @@ async def set_ice_breakers(
     return payload.questions
 
 
-@router.get("/media", response_model=list[InstagramMediaOut])
+@router.get("/media", response_model=InstagramMediaPage)
 async def list_media(
-    instance_id: uuid.UUID, context: TenantContextDep, session: SessionDep
-) -> list[InstagramMediaOut]:
-    """This account's own posts/reels - the post/reel picker for Comment
-    Automation/Comment Moderation's "scope to one post" option."""
+    instance_id: uuid.UUID,
+    context: TenantContextDep,
+    session: SessionDep,
+    after: str | None = None,
+    limit: int = 25,
+) -> InstagramMediaPage:
+    """One page of this account's own posts/reels - the post/reel picker
+    for Comment Automation/Comment Moderation's "scope to specific
+    posts/reels" option. `after`/`next_cursor` page through an account
+    with hundreds of posts rather than fetching everything at once - pass
+    a previous response's `next_cursor` back as `after` to continue."""
     instance = await _get_instance_or_404(session, context.tenant_id, instance_id)
     adapter = connector_registry.get("instagram")
-    media = await adapter.list_media(instance=instance, session=session)
-    return [InstagramMediaOut(**m) for m in media]
+    items, next_cursor = await adapter.list_media(instance=instance, session=session, after=after, limit=limit)
+    return InstagramMediaPage(items=[InstagramMediaOut(**m) for m in items], next_cursor=next_cursor)

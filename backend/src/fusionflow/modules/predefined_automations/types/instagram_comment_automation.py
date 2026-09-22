@@ -12,7 +12,7 @@ Config shape (the wizard's own structured answers, stored verbatim on
       "reply_comment_text": "Check your DM!" | null, # public reply; null/empty disables it
       "dm_text": "Here are our prices..." | null,     # DM reply; null/empty disables it
       "reply_delay_minutes": 5 | null,                 # null = act immediately
-      "media_id": "1784...5" | null,                   # null = every post/reel on the account
+      "media_ids": ["1784...5", "1784...9"],           # [] = every post/reel on the account
     }
 
 Deliberately scoped smaller than every toggle Profiterasoft's reference
@@ -42,25 +42,24 @@ now supported:
     `flow.delay`) - a generic suspend/auto-resume wait, reused here rather
     than a bespoke node type.
   - Post/reel scoping is backed by `instagram/adapter.py::list_media` (the
-    wizard's post/reel picker) and an unconditional
-    `condition.field_compare` gate on `trigger.media_id` inserted right
-    after the trigger - see `build_graph` below.
+    wizard's post/reel picker - paginated, since an account can have
+    hundreds of posts/reels) and can now target several posts/reels at
+    once, not just one - see `graph_helpers.build_scoped_keyword_condition_chain`.
 
 Generated graph shape: trigger (`instagram.comment_received`) -> IF
-`media_id` is configured, an unconditional `condition.field_compare` gate
-comparing `trigger.media_id` to it first (`true` -> the rest of this
-shape, `false` -> a `log.noop` terminal - this is a single either/or gate,
-not `build_keyword_condition_chain`'s OR-over-many shape, so it's built by
-hand right in `build_graph`) -> an OR-chained sequence of
-`condition.field_compare` nodes (one per configured keyword - see
+`media_ids` is configured, an OR-chained sequence of
+`condition.field_compare` nodes (one per selected post/reel - "matches
+ANY of these") -> an OR-chained sequence of `condition.field_compare`
+nodes (one per configured keyword - see
 `graph_helpers.build_keyword_condition_chain`, which also owns the "every
 keyword's `true` handle converges on the same target, the last one's
 `false` handle terminates in a `log.noop`" wiring every automation type in
-this package reuses; an empty keyword list collapses this into a single
-direct edge - "match every comment") -> IF `reply_delay_minutes` is
-configured, a `flow.delay` wait node -> the enabled `connector.action`
-nodes (one per toggle), chained sequentially - order doesn't matter
-functionally since neither of hide/reply/DM depends on the others' output.
+this package reuses; an empty keyword or media-ids list collapses that
+layer into a single direct edge - "match every post/reel" and/or "match
+every comment", independently) -> IF `reply_delay_minutes` is configured,
+a `flow.delay` wait node -> the enabled `connector.action` nodes (one per
+toggle), chained sequentially - order doesn't matter functionally since
+neither of hide/reply/DM depends on the others' output.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from fusionflow.modules.predefined_automations.graph_helpers import build_keyword_condition_chain
+from fusionflow.modules.predefined_automations.graph_helpers import build_scoped_keyword_condition_chain
 from fusionflow.modules.predefined_automations.registry import PredefinedAutomationType, registry
 
 AUTOMATION_TYPE = "instagram.comment_automation"
@@ -92,7 +91,7 @@ class InstagramCommentAutomationConfig(BaseModel):
     reply_comment_text: str | None = None
     dm_text: str | None = None
     reply_delay_minutes: int | None = Field(default=None, ge=1, le=1440)
-    media_id: str | None = Field(default=None)  # None = account-wide (every post/reel)
+    media_ids: list[str] = Field(default_factory=list)  # [] = account-wide (every post/reel)
 
 
 def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dict[str, Any]:
@@ -226,74 +225,25 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
 
     on_match_target_id = delay_node["id"] if delay_node is not None else action_nodes[0]["id"]
 
-    # `media_id` scopes this whole automation to one post/reel via an
-    # unconditional `condition.field_compare` gate inserted right after the
-    # trigger - deliberately NOT `build_keyword_condition_chain` (that
-    # helper is for the OR-over-many-keywords shape; this is a single,
-    # separate either/or gate). When set, the keyword chain's own "trigger"
-    # is this gate's node id instead of the real trigger, and its first
-    # edge (always exactly one - see below) is retargeted onto the gate's
-    # `true` handle to satisfy the "every declared handle wired exactly
-    # once" rule (`graph_helpers.py` module docstring).
-    chain_trigger_id = "trigger" if parsed.media_id is None else "media-gate"
-    chain_start_x = 260 if parsed.media_id is None else 520
-
+    # `media_ids` scopes this whole automation to one or more posts/reels
+    # via an OR-chained gate spliced in front of the keyword match - see
+    # `build_scoped_keyword_condition_chain`'s docstring for how the two
+    # layers (post/reel scope, then keyword) compose and collapse when
+    # either or both are empty ("match everything" at that layer).
     operator = _METHOD_TO_OPERATOR[parsed.matching_method]
-    chain_nodes, chain_edges = build_keyword_condition_chain(
-        trigger_node_id=chain_trigger_id,
-        field_path="trigger.text",
+    chain_nodes, chain_edges = build_scoped_keyword_condition_chain(
+        trigger_node_id="trigger",
+        scope_field_path="trigger.media_id",
+        scope_values=parsed.media_ids,
+        keyword_field_path="trigger.text",
         keywords=parsed.trigger_keywords,
-        operator=operator,
+        keyword_operator=operator,
         on_match_target_id=on_match_target_id,
-        start_x=chain_start_x,
+        scope_id_prefix="media",
+        start_x=260,
     )
-
-    if parsed.media_id is not None:
-        # Exactly one edge in `chain_edges` has `source == "media-gate"`
-        # (the chain's very first edge, in both the empty- and
-        # non-empty-keywords cases) - give it the gate's `true` handle.
-        for edge in chain_edges:
-            if edge["source"] == "media-gate":
-                edge["sourceHandle"] = "true"
-
     nodes.extend(chain_nodes)
     edges.extend(chain_edges)
-
-    if parsed.media_id is not None:
-        media_noop_id = "media-gate-no-match"
-        nodes.append(
-            {
-                "id": "media-gate",
-                "type": "condition",
-                "position": {"x": 140, "y": 0},
-                "data": {
-                    "nodeType": "condition.field_compare",
-                    "label": "Matches Selected Post/Reel",
-                    "config": {"field_path": "trigger.media_id", "operator": "eq", "value": parsed.media_id},
-                },
-            }
-        )
-        nodes.append(
-            {
-                "id": media_noop_id,
-                "type": "action",
-                "position": {"x": 140, "y": 200},
-                "data": {
-                    "nodeType": "log.noop",
-                    "label": "Wrong Post/Reel",
-                    "config": {"message": "Comment is not on the configured post/reel"},
-                },
-            }
-        )
-        edges.append({"id": "e-trigger-media-gate", "source": "trigger", "target": "media-gate"})
-        edges.append(
-            {
-                "id": f"e-media-gate-{media_noop_id}",
-                "source": "media-gate",
-                "target": media_noop_id,
-                "sourceHandle": "false",
-            }
-        )
 
     return {"nodes": nodes, "edges": edges}
 

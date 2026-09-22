@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -42,6 +42,15 @@ class BroadcastCampaign(Base, TenantScopedMixin, TimestampMixin):
     # together) means text-only, the original/unchanged behavior.
     media_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     media_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Optional location attachment, sent via `whatsapp.send_location_message`
+    # ahead of `message_text` - WhatsApp-only (Instagram's Send API has no
+    # location-message capability at all); `service.create_campaign`
+    # rejects this combination before it ever reaches `_build_graph`.
+    # All four are set together or not at all.
+    location_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    location_address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     workflow_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )

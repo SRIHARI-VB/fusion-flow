@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { EyeOff, Trash2 } from "lucide-react";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
-import { OptionPickerCard, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
+import { OptionPickerCard, PostReelMultiPicker, SummarySidebar, TipsCallout, ToggleSettingRow, WizardShell } from "../../wizard";
 import { useConnectorInstances } from "../../../connectors/hooks";
 import { useCreateInstagramAutomation, useInstagramAutomations, useUpdateInstagramAutomation } from "../hooks";
 import { MATCHING_METHOD_DESCRIPTIONS, MATCHING_METHOD_LABELS, MATCHING_METHODS } from "../constants";
 import type { InstagramMatchingMethod } from "../types";
-import { fetchInstagramMedia } from "../media-api";
 
 /** Backend automation type key for `POST /api/v1/predefined-automations` -
  * kept local to this file (not the shared `constants.ts`) per this
@@ -25,7 +23,7 @@ interface InstagramCommentModerationConfig {
   matching_method: InstagramMatchingMethod;
   hide: boolean;
   delete: boolean;
-  media_id: string | null;
+  media_ids: string[];
 }
 
 /** "All comments" vs "Specific keywords" - the wizard's own toggle, not a
@@ -56,8 +54,8 @@ function parseKeywords(raw: string): string[] {
  * spam/abuse filter (hide and/or delete matching comments) - distinct
  * from `InstagramAutomationWizardPage`'s "Comment Automation", which is
  * about replying to genuine engagement. Account-wide by default (every
- * post/reel), optionally scoped down to a single post/reel via the
- * "Scope" picker on step 1 (`config.media_id`).
+ * post/reel), optionally scoped down to one or more specific posts/reels
+ * via the "Scope" picker on step 1 (`config.media_ids`).
  */
 export function InstagramCommentModerationWizardPage() {
   const { id } = useParams<{ id: string }>();
@@ -84,17 +82,11 @@ export function InstagramCommentModerationWizardPage() {
   const [commentScope, setCommentScope] = useState<CommentScope>("keywords");
   const [keywordsInput, setKeywordsInput] = useState("");
   const [matchingMethod, setMatchingMethod] = useState<InstagramMatchingMethod>("contains");
-  const [mediaId, setMediaId] = useState<string | null>(null);
+  const [mediaIds, setMediaIds] = useState<string[]>([]);
   const [hide, setHide] = useState(false);
   const [deleteComment, setDeleteComment] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
-
-  const { data: mediaItems, isLoading: mediaLoading } = useQuery({
-    queryKey: ["instagram-media", instagramInstance?.id],
-    queryFn: () => fetchInstagramMedia(instagramInstance!.id),
-    enabled: Boolean(instagramInstance),
-  });
 
   // Seeds form state from the fetched automation exactly once, when
   // editing - guarded by `initialized` so a background refetch (e.g. the
@@ -105,7 +97,7 @@ export function InstagramCommentModerationWizardPage() {
     setCommentScope(config.trigger_keywords.length === 0 ? "all" : "keywords");
     setKeywordsInput(config.trigger_keywords.join(", "));
     setMatchingMethod(config.matching_method);
-    setMediaId(config.media_id ?? null);
+    setMediaIds(config.media_ids ?? []);
     setHide(config.hide);
     setDeleteComment(config.delete);
     setInitialized(true);
@@ -142,7 +134,7 @@ export function InstagramCommentModerationWizardPage() {
       matching_method: matchingMethod,
       hide,
       delete: deleteComment,
-      media_id: mediaId,
+      media_ids: mediaIds,
     };
 
     if (isEditing && id) {
@@ -196,9 +188,7 @@ export function InstagramCommentModerationWizardPage() {
           { label: "Matching Method", value: MATCHING_METHOD_LABELS[matchingMethod] },
           {
             label: "Scope",
-            value: mediaId
-              ? (mediaItems ?? []).find((media) => media.id === mediaId)?.caption?.slice(0, 24) || "1 selected post/reel"
-              : "All posts/reels",
+            value: mediaIds.length > 0 ? `${mediaIds.length} post(s)/reel(s)` : "All posts/reels",
           },
           { label: "Hide", value: hide ? "On" : "Off" },
           { label: "Delete", value: deleteComment ? "On" : "Off" },
@@ -300,46 +290,9 @@ export function InstagramCommentModerationWizardPage() {
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium">Scope</span>
             <p className="text-xs text-muted-foreground">
-              By default this applies to every post/reel on this account. Optionally scope it to just one.
+              By default this applies to every post/reel on this account. Optionally scope it to one or more.
             </p>
-            {mediaLoading ? (
-              <p className="text-xs text-muted-foreground">Loading posts/reels…</p>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                <button
-                  type="button"
-                  onClick={() => setMediaId(null)}
-                  className={`flex aspect-square flex-col items-center justify-center gap-1 rounded-md border p-2 text-center text-xs transition-colors ${
-                    mediaId === null ? "border-accent bg-accent-soft text-accent" : "border-border hover:bg-muted text-foreground"
-                  }`}
-                >
-                  All posts/reels
-                </button>
-                {(mediaItems ?? []).map((media) => {
-                  const thumbnail = media.thumbnail_url || media.media_url;
-                  const selected = mediaId === media.id;
-                  return (
-                    <button
-                      key={media.id}
-                      type="button"
-                      onClick={() => setMediaId(media.id)}
-                      className={`flex aspect-square flex-col overflow-hidden rounded-md border transition-colors ${
-                        selected ? "border-accent ring-2 ring-accent" : "border-border hover:bg-muted"
-                      }`}
-                      title={media.caption ?? media.media_type}
-                    >
-                      {thumbnail ? (
-                        <img src={thumbnail} alt={media.caption ?? ""} className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center bg-muted p-1 text-[10px] text-muted-foreground">
-                          {(media.caption ?? media.media_type).slice(0, 40)}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <PostReelMultiPicker instanceId={instagramInstance?.id} value={mediaIds} onChange={setMediaIds} />
           </div>
 
           {validationError && <p className="text-sm text-destructive">{validationError}</p>}

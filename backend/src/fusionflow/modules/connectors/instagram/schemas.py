@@ -26,3 +26,14 @@ class InstagramMediaOut(BaseModel):
     thumbnail_url: str | None = None
     permalink: str | None = None
     timestamp: str | None = None
+
+
+class InstagramMediaPage(BaseModel):
+    """One page of `list_media` - a tenant with hundreds of posts/reels
+    can't be handed the whole account in one response, so the post/reel
+    picker (Comment Automation/Comment Moderation's "scope to specific
+    posts/reels" option) pages through it via Meta's own cursor, `after`.
+    `next_cursor: None` means this was the last page."""
+
+    items: list[InstagramMediaOut]
+    next_cursor: str | None = None

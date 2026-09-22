@@ -221,3 +221,99 @@ def build_branching_condition_chain(
     )
 
     return nodes, edges
+
+
+def build_scoped_keyword_condition_chain(
+    *,
+    trigger_node_id: str,
+    scope_field_path: str,
+    scope_values: list[str],
+    keyword_field_path: str,
+    keywords: list[str],
+    keyword_operator: str,
+    on_match_target_id: str,
+    scope_id_prefix: str = "scope",
+    keyword_id_prefix: str = "match",
+    start_x: float = 260,
+    step_x: float = 260,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Composes two `build_keyword_condition_chain` layers in series: an
+    optional OR-over-`scope_values` gate (e.g. "which post/reel was this
+    comment on") feeding into an optional OR-over-`keywords` gate (e.g.
+    "which trigger word"), both ultimately converging on the same
+    `on_match_target_id`. Covers every "post/reel scoping in front of a
+    keyword match" automation type (`instagram_comment_automation.py`,
+    `instagram_comment_moderation.py`) without each duplicating this
+    composition by hand.
+
+    Either layer being empty means "match everything" at that layer (see
+    `build_keyword_condition_chain`'s docstring) - all four combinations
+    collapse correctly:
+      - both empty: a single direct edge, `trigger_node_id` ->
+        `on_match_target_id` (unscoped, unfiltered - the original
+        pre-scoping shape).
+      - scope only: the scope chain's `true` handles go straight to
+        `on_match_target_id`, no keyword layer at all.
+      - keywords only: a single direct edge from `trigger_node_id` into
+        the keyword chain (the original pre-scoping shape, unchanged).
+      - both: the scope chain's `true` handles feed the keyword chain's
+        first condition node instead of `trigger_node_id` directly.
+    """
+    keyword_entry_id = f"{keyword_id_prefix}-0" if keywords else on_match_target_id
+
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    x = start_x
+
+    if scope_values:
+        scope_nodes, scope_edges = build_keyword_condition_chain(
+            trigger_node_id=trigger_node_id,
+            field_path=scope_field_path,
+            keywords=scope_values,
+            operator="eq",
+            on_match_target_id=keyword_entry_id,
+            id_prefix=scope_id_prefix,
+            start_x=x,
+            step_x=step_x,
+        )
+        nodes.extend(scope_nodes)
+        edges.extend(scope_edges)
+        x += step_x * len(scope_values)
+        keyword_feed_id: str | None = None
+    else:
+        keyword_feed_id = trigger_node_id
+
+    if keywords:
+        kw_nodes, kw_edges = build_keyword_condition_chain(
+            trigger_node_id=trigger_node_id,
+            field_path=keyword_field_path,
+            keywords=keywords,
+            operator=keyword_operator,
+            on_match_target_id=on_match_target_id,
+            id_prefix=keyword_id_prefix,
+            start_x=x,
+            step_x=step_x,
+        )
+        if keyword_feed_id is None:
+            # The scope chain above already wires every scope condition's
+            # `true` handle straight to this chain's first node
+            # (`keyword_entry_id`) - drop the redundant direct edge this
+            # call also generated from `trigger_node_id` (unused here;
+            # nothing should feed the keyword chain unconditionally when a
+            # scope gate precedes it).
+            kw_edges = [edge for edge in kw_edges if edge["source"] != trigger_node_id]
+        nodes.extend(kw_nodes)
+        edges.extend(kw_edges)
+    elif keyword_feed_id is not None:
+        edges.append(
+            {
+                "id": f"e-{trigger_node_id}-{on_match_target_id}",
+                "source": trigger_node_id,
+                "target": on_match_target_id,
+            }
+        )
+    # else: keywords empty AND scope_values non-empty - the scope chain's
+    # `true` handles already point straight at `on_match_target_id`
+    # (`keyword_entry_id == on_match_target_id` in this branch).
+
+    return nodes, edges

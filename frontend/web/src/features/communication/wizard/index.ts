@@ -7,3 +7,5 @@ export { LivePreviewPanel } from "./LivePreviewPanel";
 export { SummarySidebar } from "./SummarySidebar";
 export { TipsCallout } from "./TipsCallout";
 export { MediaPicker, type SelectedMedia } from "./MediaPicker";
+export { PostReelMultiPicker } from "./PostReelMultiPicker";
+export { LocationPicker, type SelectedLocation } from "./LocationPicker";

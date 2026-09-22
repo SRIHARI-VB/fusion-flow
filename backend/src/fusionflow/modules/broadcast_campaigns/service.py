@@ -65,6 +65,7 @@ def _build_graph(
     message_text: str,
     media_url: str | None = None,
     media_type: str | None = None,
+    location: dict | None = None,
 ) -> dict:
     instance_id = str(connector_instance_id)
     action, recipient_param = _SEND_ACTION_BY_CONNECTOR_TYPE[connector_type_key]
@@ -74,7 +75,34 @@ def _build_graph(
     # name (see `whatsapp/adapter.py`/`instagram/adapter.py`'s
     # `perform_action` dispatch) - only the recipient param key differs,
     # and `_SEND_ACTION_BY_CONNECTOR_TYPE` already carries that.
+    # `location` (WhatsApp only - validated before this is ever called,
+    # see `create_campaign`) uses `send_location_message` instead, since
+    # Instagram's Send API has no equivalent action at all.
     children: list[dict] = []
+    if location:
+        children.append(
+            {
+                "id": "send-location",
+                "type": "action",
+                "position": {"x": 260, "y": 40},
+                "parentId": "loop",
+                "data": {
+                    "nodeType": "connector.action",
+                    "label": "Send Location",
+                    "config": {
+                        "connector_instance_id": instance_id,
+                        "action": "send_location_message",
+                        "params": {
+                            recipient_param: "{{loop.item}}",
+                            "latitude": location["latitude"],
+                            "longitude": location["longitude"],
+                            "name": location.get("name"),
+                            "address": location.get("address"),
+                        },
+                    },
+                },
+            }
+        )
     if media_url:
         children.append(
             {
@@ -117,10 +145,11 @@ def _build_graph(
 
     edges = [{"id": "e-trigger-loop", "source": "trigger", "target": "loop"}]
     # An edge is only needed among SIBLINGS to order them - see this
-    # module's docstring - so it's only added when there's more than one
-    # child (i.e. a media node was added ahead of the text send).
-    if len(children) > 1:
-        edges.append({"id": "e-send-media-send", "source": "send-media", "target": "send"})
+    # module's docstring - so chained edges are only added between
+    # consecutive children when there's more than one (i.e. location
+    # and/or media were added ahead of the text send).
+    for previous, current in zip(children, children[1:]):
+        edges.append({"id": f"e-{previous['id']}-{current['id']}", "source": previous["id"], "target": current["id"]})
 
     return {
         "nodes": [
@@ -182,9 +211,29 @@ async def create_campaign(
     created_by: uuid.UUID,
     media_url: str | None = None,
     media_type: str | None = None,
+    location_latitude: float | None = None,
+    location_longitude: float | None = None,
+    location_name: str | None = None,
+    location_address: str | None = None,
 ) -> BroadcastCampaign:
     instance = await _get_broadcastable_instance_or_raise(
         session, tenant_id=tenant_id, connector_instance_id=connector_instance_id
+    )
+
+    if location_latitude is not None and instance.connector_type.key != "whatsapp":
+        raise BroadcastCampaignError(
+            400, "Location attachments are only supported for WhatsApp broadcast campaigns"
+        )
+
+    location = (
+        {
+            "latitude": location_latitude,
+            "longitude": location_longitude,
+            "name": location_name,
+            "address": location_address,
+        }
+        if location_latitude is not None
+        else None
     )
 
     graph = _build_graph(
@@ -193,6 +242,7 @@ async def create_campaign(
         message_text=message_text,
         media_url=media_url,
         media_type=media_type,
+        location=location,
     )
     workflow = await workflows_service.create_workflow(
         session, tenant_id=tenant_id, name=name, graph=graph, created_by=created_by, purpose="broadcast"
@@ -222,6 +272,10 @@ async def create_campaign(
         recipient_phone_numbers=recipient_phone_numbers,
         media_url=media_url,
         media_type=media_type,
+        location_latitude=location_latitude,
+        location_longitude=location_longitude,
+        location_name=location_name,
+        location_address=location_address,
         workflow_id=workflow.id,
         schedule_id=schedule.id,
     )
