@@ -37,7 +37,12 @@ export function PostReelMultiPicker({ instanceId, value, onChange }: PostReelMul
   });
 
   const loadedItems: InstagramMedia[] = useMemo(
-    () => (data?.pages ?? []).flatMap((page) => page.items),
+    // Defensive `page?.items ?? []`, not just `page.items`: a stale
+    // server/CDN response predating this paginated `{items, next_cursor}`
+    // shape (or any other unexpected response) would otherwise silently
+    // insert `undefined` into this list via `flatMap` and crash every
+    // consumer below that assumes real `InstagramMedia` objects.
+    () => (data?.pages ?? []).flatMap((page) => page?.items ?? []),
     [data],
   );
 
