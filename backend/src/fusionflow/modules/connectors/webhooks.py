@@ -31,7 +31,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Mapping
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 from sqlalchemy import select
 
 from fusionflow.config import get_settings
@@ -58,7 +58,9 @@ settings = get_connector_settings()
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-async def _dispatch(type_key: str, request: Request, session: SessionDep) -> dict[str, object]:
+async def _dispatch(
+    type_key: str, request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
     adapter_impl = base.registry.get_or_none(type_key)
     if adapter_impl is None:
         raise HTTPException(status_code=404, detail=f"Unknown connector type: {type_key!r}")
@@ -118,24 +120,42 @@ async def _dispatch(type_key: str, request: Request, session: SessionDep) -> dic
     if get_settings().is_serverless:
         # No persistent process to run `outbox_poller`'s background loop
         # in (see `Settings.is_serverless`'s docstring) - dispatch this
-        # tenant's just-written trigger-inbox row(s) synchronously, right
-        # here, instead of leaving them to a poller that would never
-        # actually run. Deferred import: `workflows.engine.outbox_poller`
-        # pulls in the `workflows` package, which imports every built-in
-        # node (including the connector adapters, for registration) -
+        # tenant's just-written trigger-inbox row(s) after this response
+        # is sent, via FastAPI's `BackgroundTasks`, instead of leaving
+        # them to a poller that would never actually run.
+        #
+        # Deliberately NOT awaited inline here (an earlier version did):
+        # dispatching a run can mean a real outbound API call to the
+        # provider (e.g. a comment-automation or button-menu reply),
+        # which can push this handler's total response time close to
+        # Meta's webhook retry threshold - confirmed live, Meta redelivers
+        # the identical event (same payload/id) roughly every 20s when a
+        # response is slow, and a redelivered trigger with no dedupe key
+        # (or one that's merely rare, not impossible) fires its own extra
+        # run - a single button tap producing several replies. Responding
+        # to Meta immediately and dispatching afterward, in the same
+        # request's background-task phase (FastAPI keeps `session`'s
+        # dependency alive until this finishes), removes the main reason
+        # Meta would need to retry in the first place.
+        #
+        # Deferred import: `workflows.engine.outbox_poller` pulls in the
+        # `workflows` package, which imports every built-in node
+        # (including the connector adapters, for registration) -
         # importing it at module level here would risk exactly the
         # circular import `handle_webhook`'s own deferred `event_bus`/
         # `inbox.service` imports already dodge, one layer further out.
         from fusionflow.modules.workflows.engine.outbox_poller import process_pending_now
 
-        await process_pending_now(session, tenant_id)
+        background_tasks.add_task(process_pending_now, session, tenant_id)
 
     return {"received": True, "events": len(events)}
 
 
 @router.post("/whatsapp")
-async def whatsapp_webhook(request: Request, session: SessionDep) -> dict[str, object]:
-    return await _dispatch("whatsapp", request, session)
+async def whatsapp_webhook(
+    request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
+    return await _dispatch("whatsapp", request, session, background_tasks)
 
 
 @router.get("/whatsapp")
@@ -153,13 +173,17 @@ async def whatsapp_webhook_verify(
 
 
 @router.post("/razorpay")
-async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, object]:
-    return await _dispatch("razorpay", request, session)
+async def razorpay_webhook(
+    request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
+    return await _dispatch("razorpay", request, session, background_tasks)
 
 
 @router.post("/instagram")
-async def instagram_webhook(request: Request, session: SessionDep) -> dict[str, object]:
-    return await _dispatch("instagram", request, session)
+async def instagram_webhook(
+    request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
+    return await _dispatch("instagram", request, session, background_tasks)
 
 
 async def _instagram_verify_token_matches_any_instance(token: str) -> bool:
@@ -211,8 +235,10 @@ async def instagram_webhook_verify(
 
 
 @router.post("/facebook")
-async def facebook_webhook(request: Request, session: SessionDep) -> dict[str, object]:
-    return await _dispatch("facebook", request, session)
+async def facebook_webhook(
+    request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
+    return await _dispatch("facebook", request, session, background_tasks)
 
 
 async def _facebook_verify_token_matches_any_instance(token: str) -> bool:
@@ -252,10 +278,12 @@ async def facebook_webhook_verify(
 
 
 @router.post("/telegram")
-async def telegram_webhook(request: Request, session: SessionDep) -> dict[str, object]:
+async def telegram_webhook(
+    request: Request, session: SessionDep, background_tasks: BackgroundTasks
+) -> dict[str, object]:
     """No matching `GET /webhooks/telegram` handshake route - unlike Meta's
     providers, Telegram has no GET-based verification step at all; this
     adapter self-registers its own webhook (with a `secret_token` and a
     `?instance_id=` query param baked into the URL) via `setWebhook` inside
     `initiate_connect` - see `telegram/adapter.py`'s module docstring."""
-    return await _dispatch("telegram", request, session)
+    return await _dispatch("telegram", request, session, background_tasks)

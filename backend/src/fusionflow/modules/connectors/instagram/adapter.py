@@ -844,7 +844,17 @@ class InstagramAdapter(base.ConnectorAdapter):
         """A tap on a button-template or ice-breaker button - arrives as
         `messaging[].postback = {"mid": ..., "payload": ..., "title": ...}`,
         a sibling field to `.message` on the same Messaging webhook (never
-        both on the same entry)."""
+        both on the same entry).
+
+        `postback.mid` IS a real, stable id (confirmed live: Meta
+        redelivers the identical event - same `mid`, same top-level
+        `timestamp` - multiple times, ~20s apart, when our response
+        takes too long) - it must be used as the trigger's dedupe key,
+        exactly like a normal message's `message.mid`. An earlier version
+        of this method assumed no stable id existed here and left it
+        undeduplicated, which meant every one of Meta's retries fired its
+        own workflow run - a single button tap producing several replies.
+        """
         entries = body.get("entry") or []
         for entry in entries:
             for messaging in entry.get("messaging") or []:
@@ -855,6 +865,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "from": (messaging.get("sender") or {}).get("id"),
                     "payload": postback.get("payload"),
                     "title": postback.get("title"),
+                    "mid": postback.get("mid"),
                 }
         return None
 
@@ -865,7 +876,16 @@ class InstagramAdapter(base.ConnectorAdapter):
         or `messaging[].postback.referral`/`messaging[].message` alongside
         a `referral` key (an in-context referral attached to the first
         real message) - checked independently of, and not mutually
-        exclusive with, `_extract_inbound_message`/`_extract_postback`."""
+        exclusive with, `_extract_inbound_message`/`_extract_postback`.
+
+        Unlike a message or postback, a referral event carries no `mid` of
+        its own - `timestamp` (present on every Messaging webhook entry,
+        confirmed live alongside `postback.mid`) is captured here instead,
+        so the caller can build a synthetic dedupe key from
+        `(sender, ref, timestamp)` and avoid the exact same
+        redelivery-causes-duplicate-runs bug `_extract_postback`'s
+        docstring describes.
+        """
         entries = body.get("entry") or []
         for entry in entries:
             for messaging in entry.get("messaging") or []:
@@ -877,6 +897,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "ref": referral.get("ref"),
                     "source": referral.get("source"),
                     "ad_id": referral.get("ad_id"),
+                    "timestamp": messaging.get("timestamp"),
                 }
         return None
 
@@ -1044,11 +1065,12 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "title": inbound_postback.get("title"),
                 },
                 connector_instance_id=instance.id,
-                # No stable id of its own (unlike a message's `mid`) - a
-                # redelivered postback is rare and re-firing the matched
-                # branch again is harmless (same class of button click),
-                # so this is left undeduplicated rather than invented.
-                dedupe_key=None,
+                # `postback.mid` IS a stable id (see `_extract_postback`'s
+                # docstring - Meta redelivers the identical event on a
+                # slow response) - a real production bug when this was
+                # left `None`: one button tap fired a workflow run per
+                # retry, each sending its own reply.
+                dedupe_key=inbound_postback.get("mid"),
             )
 
         inbound_referral = self._extract_referral(body)
@@ -1064,7 +1086,16 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "ad_id": inbound_referral.get("ad_id"),
                 },
                 connector_instance_id=instance.id,
-                dedupe_key=None,
+                # No `mid` of its own (see `_extract_referral`'s
+                # docstring) - a synthetic key from sender+ref+timestamp
+                # still catches the same class of Meta-redelivery bug
+                # `_extract_postback`'s dedupe fix addresses, without
+                # needing a real id that doesn't exist here.
+                dedupe_key=(
+                    f"{inbound_referral.get('from')}:{inbound_referral.get('ref')}:{inbound_referral.get('timestamp')}"
+                    if inbound_referral.get("timestamp")
+                    else None
+                ),
             )
 
         inbound_reaction = self._extract_message_reaction(body)
