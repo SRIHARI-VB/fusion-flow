@@ -113,6 +113,20 @@ async def get_customer_by_phone(
     ).scalar_one_or_none()
 
 
+async def get_customer_by_external_ref(
+    session: AsyncSession, tenant_id: uuid.UUID, external_ref: str
+) -> Customer | None:
+    """Exact-match lookup by `external_ref` - the sibling of
+    `get_customer_by_phone` for a channel with no phone number
+    (Instagram/Messenger's own scoped user id is the natural bridge
+    there instead). Used by `instagram.find_or_create_customer`."""
+    return (
+        await session.execute(
+            select(Customer).where(Customer.external_ref == external_ref, Customer.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+
+
 async def create_customer(
     session: AsyncSession, tenant_id: uuid.UUID, payload: CustomerCreate
 ) -> Customer:

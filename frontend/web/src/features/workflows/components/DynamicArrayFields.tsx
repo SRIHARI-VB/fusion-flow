@@ -237,26 +237,127 @@ interface JsonObjectFieldProps {
   upstreamSuggestions?: { path: string; label: string }[];
 }
 
+/** A plain string value, or - for something shaped like Instagram/WhatsApp's
+ * `buttons`/`sections` params (an array of flat objects, e.g.
+ * `[{"title": "Today", "payload": "DAY_TODAY"}, ...]`) - the array kept
+ * as real objects instead of being flattened to a JSON string, so it can
+ * render as its own small structured editor (see `isObjectArray`/
+ * `JsonArrayRowEditor` below) rather than forcing "Advanced: edit as
+ * JSON" just to add a button. */
 interface KeyValueRow {
   key: string;
-  value: string;
+  value: string | Record<string, unknown>[];
+}
+
+function isObjectArray(val: unknown): val is Record<string, unknown>[] {
+  return (
+    Array.isArray(val) &&
+    val.length > 0 &&
+    val.every((item) => item !== null && typeof item === "object" && !Array.isArray(item))
+  );
 }
 
 /** Turns a `dict[str, Any]`-typed config value into the row editor's own
- * local shape - non-string values (rare, but possible for e.g.
- * `connector.action`'s `params`) are stringified so the row editor never
- * crashes on an unusual saved value; a user who needs to keep a nested
- * object/array intact should reach for the "Advanced: edit as JSON" mode
- * instead, which round-trips the real value untouched. */
+ * local shape. An array-of-objects value (see `isObjectArray`) is kept
+ * as real objects; anything else non-string is stringified so the row
+ * editor never crashes on an unusual saved value - a user who needs to
+ * keep some OTHER nested shape (a plain object, a mixed array) intact
+ * can reach for "Advanced: edit as JSON" instead, which round-trips the
+ * real value untouched. */
 function rowsFromObject(value: unknown): KeyValueRow[] {
   if (!value || typeof value !== "object") return [];
   return Object.entries(value as Record<string, unknown>).map(([key, val]) => ({
     key,
-    value: typeof val === "string" ? val : JSON.stringify(val),
+    value: isObjectArray(val) ? val : typeof val === "string" ? val : JSON.stringify(val),
   }));
 }
 
-function objectFromRows(rows: KeyValueRow[]): Record<string, string> {
+/** Every key seen across an array-of-objects value's items, in first-seen
+ * order - the column set for `JsonArrayRowEditor`. An item missing a key
+ * another item has just renders that cell empty, rather than the whole
+ * row editor assuming every item shares one exact shape. */
+function columnsFor(items: Record<string, unknown>[]): string[] {
+  const seen: string[] = [];
+  for (const item of items) {
+    for (const key of Object.keys(item)) {
+      if (!seen.includes(key)) seen.push(key);
+    }
+  }
+  return seen;
+}
+
+interface JsonArrayRowEditorProps {
+  items: Record<string, unknown>[];
+  onChange: (next: Record<string, unknown>[]) => void;
+}
+
+/** The structured editor for a `buttons`/`sections`-shaped param value -
+ * one row per array item, one small input per key found across those
+ * items (see `columnsFor`), with add/remove-item controls. Falls back to
+ * a single generic "value" column for a brand-new, still-empty array
+ * (there's nothing to infer a shape from yet). */
+function JsonArrayRowEditor({ items, onChange }: JsonArrayRowEditorProps) {
+  const columns = columnsFor(items);
+
+  function updateItem(index: number, key: string, next: string) {
+    onChange(items.map((item, i) => (i === index ? { ...item, [key]: next } : item)));
+  }
+
+  function addItem() {
+    const blank = Object.fromEntries((columns.length > 0 ? columns : ["title", "payload"]).map((c) => [c, ""]));
+    onChange([...items, blank]);
+  }
+
+  function removeItem(index: number) {
+    onChange(items.filter((_, i) => i !== index));
+  }
+
+  return (
+    <div className="flex flex-1 flex-col gap-1.5 rounded-md border border-border bg-background p-1.5">
+      {items.map((item, index) => (
+        <div key={index} className="flex items-center gap-1.5">
+          {columns.map((column) => (
+            <DraftInput
+              key={column}
+              value={typeof item[column] === "string" ? (item[column] as string) : JSON.stringify(item[column] ?? "")}
+              onCommit={(next) => updateItem(index, column, next)}
+              placeholder={column}
+              className="flex-1"
+            />
+          ))}
+          <button
+            type="button"
+            aria-label="Remove item"
+            className="nodrag rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              removeItem(index);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="nodrag w-fit"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          addItem();
+        }}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add item
+      </Button>
+    </div>
+  );
+}
+
+function objectFromRows(rows: KeyValueRow[]): Record<string, unknown> {
   return Object.fromEntries(rows.filter((row) => row.key.trim().length > 0).map((row) => [row.key, row.value]));
 }
 
@@ -325,7 +426,11 @@ export function JsonObjectField({ value, onChange, field, upstreamSuggestions = 
         <button
           type="button"
           className="nodrag self-start text-[11px] text-muted-foreground underline hover:text-foreground"
-          onClick={switchToSimple}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            switchToSimple();
+          }}
         >
           Use simple editor
         </button>
@@ -343,43 +448,71 @@ export function JsonObjectField({ value, onChange, field, upstreamSuggestions = 
             placeholder="Key"
             className="w-2/5"
           />
-          {/* A dict value is just as likely to be a long/multi-line
-           * message (a DM's "text", a button template's prompt, ...) as a
-           * short id - a single-line input made those genuinely hard to
-           * edit. A small resizable textarea handles both without a
-           * separate "is this a long field" heuristic; newlines the
-           * author types here are sent through exactly as typed (the
-           * adapters pass `params` values through untouched). */}
-          <DraftTextarea
-            value={row.value}
-            onCommit={(next) => updateRowAt(index, { value: next })}
-            placeholder="Value"
-            rows={2}
-            className="min-h-[38px] flex-1 resize-y"
-          />
-          <InsertVariableMenu
-            suggestions={upstreamSuggestions}
-            onInsert={(path) => updateRowAt(index, { value: `${row.value}{{${path}}}` })}
-          />
+          {isObjectArray(row.value) ? (
+            // A `buttons`/`sections`-shaped value (an array of flat
+            // objects) - a proper add/remove-item editor instead of a
+            // flattened JSON string, so e.g. Instagram/WhatsApp button
+            // templates are as editable as any other structured field.
+            <JsonArrayRowEditor items={row.value} onChange={(next) => updateRowAt(index, { value: next })} />
+          ) : (
+            // A dict value is just as likely to be a long/multi-line
+            // message (a DM's "text", a button template's prompt, ...) as
+            // a short id - a single-line input made those genuinely hard
+            // to edit. A small resizable textarea handles both without a
+            // separate "is this a long field" heuristic; newlines the
+            // author types here are sent through exactly as typed (the
+            // adapters pass `params` values through untouched).
+            <DraftTextarea
+              value={row.value as string}
+              onCommit={(next) => updateRowAt(index, { value: next })}
+              placeholder="Value"
+              rows={2}
+              className="min-h-[38px] flex-1 resize-y"
+            />
+          )}
+          {!isObjectArray(row.value) && (
+            <InsertVariableMenu
+              suggestions={upstreamSuggestions}
+              onInsert={(path) => updateRowAt(index, { value: `${row.value}{{${path}}}` })}
+            />
+          )}
           <button
             type="button"
             aria-label="Remove field"
             className="nodrag mt-1.5 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
-            onClick={() => updateRows(rows.filter((_, i) => i !== index))}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              updateRows(rows.filter((_, i) => i !== index));
+            }}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       ))}
       <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" size="sm" className="nodrag" onClick={() => updateRows([...rows, { key: "", value: "" }])}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="nodrag"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            updateRows([...rows, { key: "", value: "" }]);
+          }}
+        >
           <Plus className="h-3.5 w-3.5" />
           Add {field.label.toLowerCase()}
         </Button>
         <button
           type="button"
           className="nodrag text-[11px] text-muted-foreground underline hover:text-foreground"
-          onClick={switchToAdvanced}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            switchToAdvanced();
+          }}
         >
           Advanced: edit as JSON
         </button>
