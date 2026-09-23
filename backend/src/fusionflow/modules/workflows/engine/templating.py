@@ -14,8 +14,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_TEMPLATE_RE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
-_WHOLE_TEMPLATE_RE = re.compile(r"^\{\{\s*([\w.]+)\s*\}\}$")
+# `[\w.]+` (the original pattern) doesn't include `-`, silently failing to
+# match any reference to a hyphenated node id (e.g. `{{find-customer.count}}`)
+# - `\w` alone already matched every graph built with underscore-only ids,
+# so this went unnoticed until a hyphenated custom node id was referenced
+# through this specific module for the first time. Node ids in this
+# codebase are always `[a-zA-Z0-9_-]+`, so widening to `[\w.-]+` is safe.
+_TEMPLATE_RE = re.compile(r"\{\{\s*([\w.-]+)\s*\}\}")
+_WHOLE_TEMPLATE_RE = re.compile(r"^\{\{\s*([\w.-]+)\s*\}\}$")
 
 
 def resolve_path(data: dict[str, Any], path: str) -> Any:

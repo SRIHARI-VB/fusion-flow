@@ -1376,20 +1376,44 @@ class InstagramAdapter(base.ConnectorAdapter):
 
         inbound_message = self._extract_inbound_message(body)
         if inbound_message is not None:
-            await event_bus.publish_trigger_event(
+            # Phase 8 Part A (mirrors whatsapp/adapter.py's identical
+            # check): if this contact already has a run paused waiting for
+            # exactly their next reply (on this connector instance), this
+            # message resumes that run instead of firing a brand-new
+            # trigger - needed for `instagram.collect_text`'s suspend/
+            # resume multi-turn capability. A second inbound message from
+            # the same contact while a run is waiting always continues
+            # that same conversation, never starts a parallel one.
+            pending_run = await event_bus.find_pending_wait(
                 session,
                 tenant_id=instance.tenant_id,
-                event_type="instagram.message_received",
-                payload={
-                    "from": inbound_message.get("from"),
-                    "message_id": inbound_message.get("message_id"),
-                    "text": inbound_message.get("text"),
-                },
                 connector_instance_id=instance.id,
-                dedupe_key=inbound_message.get("message_id"),
+                correlation_key=inbound_message.get("from"),
             )
+            if pending_run is not None:
+                await event_bus.publish_resume_event(
+                    session,
+                    run=pending_run,
+                    reply_payload=inbound_message,
+                    dedupe_key=inbound_message.get("message_id"),
+                )
+            else:
+                await event_bus.publish_trigger_event(
+                    session,
+                    tenant_id=instance.tenant_id,
+                    event_type="instagram.message_received",
+                    payload={
+                        "from": inbound_message.get("from"),
+                        "message_id": inbound_message.get("message_id"),
+                        "text": inbound_message.get("text"),
+                    },
+                    connector_instance_id=instance.id,
+                    dedupe_key=inbound_message.get("message_id"),
+                )
             # Unified Inbox: DMs only - comments (below) aren't a
-            # "conversation" in the inbox sense.
+            # "conversation" in the inbox sense. Recorded regardless of
+            # resume-vs-trigger above - the inbox is a plain message log,
+            # not aware of the workflow engine's suspend/resume state.
             if inbound_message.get("text"):
                 sender_id = inbound_message.get("from")
 

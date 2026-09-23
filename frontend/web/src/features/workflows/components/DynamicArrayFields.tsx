@@ -336,17 +336,26 @@ export function JsonObjectField({ value, onChange, field, upstreamSuggestions = 
   return (
     <div className="flex flex-col gap-2">
       {rows.map((row, index) => (
-        <div key={index} className="flex items-center gap-1.5">
+        <div key={index} className="flex items-start gap-1.5">
           <DraftInput
             value={row.key}
             onCommit={(next) => updateRowAt(index, { key: next })}
             placeholder="Key"
             className="w-2/5"
           />
-          <DraftInput
+          {/* A dict value is just as likely to be a long/multi-line
+           * message (a DM's "text", a button template's prompt, ...) as a
+           * short id - a single-line input made those genuinely hard to
+           * edit. A small resizable textarea handles both without a
+           * separate "is this a long field" heuristic; newlines the
+           * author types here are sent through exactly as typed (the
+           * adapters pass `params` values through untouched). */}
+          <DraftTextarea
             value={row.value}
             onCommit={(next) => updateRowAt(index, { value: next })}
             placeholder="Value"
+            rows={2}
+            className="min-h-[38px] flex-1 resize-y"
           />
           <InsertVariableMenu
             suggestions={upstreamSuggestions}
@@ -355,7 +364,7 @@ export function JsonObjectField({ value, onChange, field, upstreamSuggestions = 
           <button
             type="button"
             aria-label="Remove field"
-            className="nodrag rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
+            className="nodrag mt-1.5 rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive"
             onClick={() => updateRows(rows.filter((_, i) => i !== index))}
           >
             <Trash2 className="h-3.5 w-3.5" />
