@@ -84,6 +84,13 @@ ask_choice`'s always-single-select button/list messages.
 for that arbitrary-size cart shape, kept as its own node rather than a
 second mode on that already-tested node — see both nodes' own module
 docstrings.
+`schedule_resolve_business_hours` (`schedule.resolve_business_hours`) is
+another plain, self-contained action node in the `data.transform`/
+`flow.delay` mould — a deterministic, stdlib-only (`datetime`/`zoneinfo`)
+day/time-window resolver against a tenant-configured set of business
+hours (closed weekdays, open/close time, named time-of-day windows), so
+any tenant's day/time-window booking or "are we open right now" branch
+logic is one config-driven node instead of a bespoke one per tenant.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -128,6 +135,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     payments_send_razorpay_link,
     record_query,
     record_upsert,
+    schedule_resolve_business_hours,
     telegram_message_received,
     whatsapp_ask_choice,
     whatsapp_ask_for_cart,
@@ -181,6 +189,7 @@ __all__ = [
     "payments_send_razorpay_link",
     "record_query",
     "record_upsert",
+    "schedule_resolve_business_hours",
     "telegram_message_received",
     "whatsapp_ask_choice",
     "whatsapp_ask_for_cart",

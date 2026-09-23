@@ -20,6 +20,18 @@ _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "lt": operator.lt,
     "lte": operator.le,
     "contains": lambda haystack, needle: needle in haystack if haystack is not None else False,
+    # Case-insensitive sibling of "contains", added because the
+    # case-sensitive check above was silently failing to match customer
+    # replies typed in natural capitalization (e.g. "Thanks!"/"OK"/"COST")
+    # against lowercase-configured keyword gates. Purely additive - other
+    # tenants' workflows may already depend on "contains" staying
+    # case-sensitive, so that entry is left untouched. `str(...)` on both
+    # sides before `.casefold()` so a non-string haystack/needle (e.g. an
+    # int actual value) degrades to a normal substring check instead of
+    # raising, same None-safety shape as "contains" itself.
+    "icontains": (
+        lambda haystack, needle: str(needle).casefold() in str(haystack).casefold() if haystack is not None else False
+    ),
     "starts_with": lambda haystack, needle: isinstance(haystack, str) and haystack.startswith(needle),
     "ends_with": lambda haystack, needle: isinstance(haystack, str) and haystack.endswith(needle),
 }

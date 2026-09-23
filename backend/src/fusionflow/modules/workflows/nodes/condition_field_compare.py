@@ -23,7 +23,9 @@ from fusionflow.modules.workflows.engine.registry import (
 #: Shared with `condition.multi_branch`'s `MultiBranchCase.operator` -
 #: every operator a condition node in this codebase can compare with, kept
 #: in exactly one place so the two node types can never drift apart.
-ComparisonOperator = Literal["eq", "neq", "gt", "gte", "lt", "lte", "contains", "starts_with", "ends_with"]
+ComparisonOperator = Literal[
+    "eq", "neq", "gt", "gte", "lt", "lte", "contains", "icontains", "starts_with", "ends_with"
+]
 
 
 class FieldCompareConfig(BaseModel):
