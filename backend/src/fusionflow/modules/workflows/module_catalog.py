@@ -67,12 +67,14 @@ class ModuleCatalogSpec:
 #: author in the first place.
 FIXED_MODULE_CATALOG: dict[str, ModuleCatalogSpec] = {
     "products": ModuleCatalogSpec(
-        "products", "Product", "Ecommerce", "package", ProductServiceCreate, EntityType.PRODUCT,
-        frozenset({"custom_fields", "entity_type"}),
+        "products", "Product", "Ecommerce", "package", ProductServiceCreate,
+        custom_fields_entity_type=EntityType.PRODUCT,
+        create_schema_exclude=frozenset({"custom_fields", "entity_type"}),
     ),
     "services": ModuleCatalogSpec(
-        "services", "Service", "Ecommerce", "wrench", ProductServiceCreate, EntityType.SERVICE,
-        frozenset({"custom_fields", "entity_type"}),
+        "services", "Service", "Ecommerce", "wrench", ProductServiceCreate,
+        custom_fields_entity_type=EntityType.SERVICE,
+        create_schema_exclude=frozenset({"custom_fields", "entity_type"}),
     ),
     "coupons": ModuleCatalogSpec("coupons", "Coupon", "Ecommerce", "ticket-percent", CouponCreate, EntityType.COUPON),
     "offers": ModuleCatalogSpec("offers", "Offer", "Ecommerce", "gift", OfferCreate, EntityType.OFFER),
