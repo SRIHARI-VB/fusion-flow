@@ -61,6 +61,7 @@ import { CardNode } from "./nodes/CardNode";
 import { ContainerNode, CONTAINER_MIN_HEIGHT, CONTAINER_MIN_WIDTH } from "./nodes/ContainerNode";
 import { NodePalette } from "./components/NodePalette";
 import { EdgeConfigDrawer } from "./components/EdgeConfigDrawer";
+import { NodeInspectorPanel } from "./components/NodeInspectorPanel";
 import { ValidationPanel } from "./components/ValidationPanel";
 import { SchedulePanel } from "./components/SchedulePanel";
 import { RunStepTrace } from "./components/RunStepTrace";
@@ -291,6 +292,26 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
     return map;
   }, [nodes, edges, nodeTypesByKey]);
 
+  // `upstreamSuggestionsByNode`/`expandedNodeIds` change on essentially
+  // every keystroke-commit (any field blur touches `nodes`, which both
+  // depend on) - reading them through a ref instead of closing over them
+  // directly means `nodeTypesForFlow` below never has to include them in
+  // its own dependency array. That matters a lot more than it looks: React
+  // Flow treats any change to the `nodeTypes` object's identity as "these
+  // are different component types now" and fully unmounts+remounts every
+  // node on the canvas, including whatever local state a card's inline
+  // form had (e.g. `JsonObjectField`'s "advanced JSON" toggle) - which is
+  // exactly why that toggle used to appear to "open and immediately close"
+  // the instant any other field's edit committed. The ref is always read
+  // fresh on every render of the node component itself (React Flow still
+  // re-renders existing, already-mounted nodes normally on every data
+  // change - only *swapping the component type* needs identity stability),
+  // so this loses no reactivity, only the spurious remounts.
+  const upstreamSuggestionsByNodeRef = useRef(upstreamSuggestionsByNode);
+  upstreamSuggestionsByNodeRef.current = upstreamSuggestionsByNode;
+  const expandedNodeIdsRef = useRef(expandedNodeIds);
+  expandedNodeIdsRef.current = expandedNodeIds;
+
   const nodeTypesForFlow = useMemo(() => {
     const cardNodeWithContext = (props: NodeProps<Node<CardNodeData>>) => (
       <CardNode
@@ -298,8 +319,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         onConfigChange={updateNodeConfig}
         onLabelChange={updateNodeLabel}
         onDeleteNode={deleteNode}
-        upstreamSuggestions={upstreamSuggestionsByNode.get(props.id) ?? []}
-        expanded={expandedNodeIds.has(props.id)}
+        upstreamSuggestions={upstreamSuggestionsByNodeRef.current.get(props.id) ?? []}
+        expanded={expandedNodeIdsRef.current.has(props.id)}
         onToggleExpand={toggleNodeExpanded}
       />
     );
@@ -311,8 +332,8 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
         }}
         onConfigChange={updateNodeConfig}
         onDeleteNode={deleteNode}
-        upstreamSuggestions={upstreamSuggestionsByNode.get(props.id) ?? []}
-        expanded={expandedNodeIds.has(props.id)}
+        upstreamSuggestions={upstreamSuggestionsByNodeRef.current.get(props.id) ?? []}
+        expanded={expandedNodeIdsRef.current.has(props.id)}
         onToggleExpand={toggleNodeExpanded}
       />
     );
@@ -322,7 +343,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
       condition: cardNodeWithContext,
       [CONTAINER_RF_TYPE]: containerNodeWithContext,
     };
-  }, [updateNodeConfig, updateNodeLabel, deleteNode, upstreamSuggestionsByNode, expandedNodeIds, toggleNodeExpanded]);
+  }, [updateNodeConfig, updateNodeLabel, deleteNode, toggleNodeExpanded]);
 
   // Channel-first filter (Part D): the selected instance narrows only the
   // Messaging-category nodes to its own connector type — `required_connector_type_key`
@@ -781,6 +802,16 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
   }
 
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
+  // Exactly one node selected (and no edge drawer open) swaps the right
+  // column's `NodePalette` for `NodeInspectorPanel` - see that component's
+  // own docstring for why this exists alongside (not instead of) the
+  // card's inline expand.
+  const singleSelectedNode = !selectedEdge && selectedNodes.length === 1 ? selectedNodes[0] : null;
+
+  function closeNodeInspector() {
+    if (!singleSelectedNode) return;
+    setNodes((nds) => nds.map((n) => (n.id === singleSelectedNode.id ? { ...n, selected: false } : n)));
+  }
 
   // Fired by React Flow's own Backspace/Delete keyboard handling (see the
   // `deleteKeyCode` prop below) for however many nodes were selected -
@@ -1002,6 +1033,15 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
             data={selectedEdge.data as WorkflowGraphEdgeData | undefined}
             onSave={saveSelectedEdgeData}
             onClose={() => setSelectedEdgeId(null)}
+          />
+        ) : singleSelectedNode ? (
+          <NodeInspectorPanel
+            node={singleSelectedNode}
+            onConfigChange={updateNodeConfig}
+            onLabelChange={updateNodeLabel}
+            onDeleteNode={deleteNode}
+            onClose={closeNodeInspector}
+            upstreamSuggestions={upstreamSuggestionsByNode.get(singleSelectedNode.id) ?? []}
           />
         ) : (
           <NodePalette

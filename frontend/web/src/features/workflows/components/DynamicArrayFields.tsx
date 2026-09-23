@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, cn } from "@fusion-flow/ui";
 import type { ResolvedField } from "../jsonSchemaForm";
-import { DraftInput, DraftTextarea } from "./DraftFields";
+import { DraftInput, DraftTextarea, TemplateHint } from "./DraftFields";
 import { InsertVariableMenu } from "./InsertVariableMenu";
 
 /**
@@ -462,13 +462,16 @@ export function JsonObjectField({ value, onChange, field, upstreamSuggestions = 
             // separate "is this a long field" heuristic; newlines the
             // author types here are sent through exactly as typed (the
             // adapters pass `params` values through untouched).
-            <DraftTextarea
-              value={row.value as string}
-              onCommit={(next) => updateRowAt(index, { value: next })}
-              placeholder="Value"
-              rows={2}
-              className="min-h-[38px] flex-1 resize-y"
-            />
+            <div className="flex flex-1 flex-col gap-0.5">
+              <DraftTextarea
+                value={row.value as string}
+                onCommit={(next) => updateRowAt(index, { value: next })}
+                placeholder="Value"
+                rows={2}
+                className="min-h-[38px] w-full resize-y"
+              />
+              <TemplateHint value={row.value as string} suggestions={upstreamSuggestions} />
+            </div>
           )}
           {!isObjectArray(row.value) && (
             <InsertVariableMenu

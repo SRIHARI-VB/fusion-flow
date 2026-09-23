@@ -37,6 +37,50 @@ function useDraft(value: string, onCommit: (next: string) => void) {
   return { draft, setDraft, commit, onFocus: () => setEditing(true) };
 }
 
+/** A field value's `{{...}}` tokens, translated to plain English - so
+ * "Customer Id" showing `{{find-or-create-customer-pb.customer.id}}"`
+ * reads as "Uses: Customer's Id from Find or Create Customer" instead of
+ * making a non-technical author decode raw node-id/path syntax. `trigger.*`
+ * tokens (the one namespace that's never an `upstreamSuggestions` entry -
+ * it's the run's trigger payload, not a completed node's output) get a
+ * generic fallback description instead of being left as raw path text. */
+export function describeTemplateTokens(
+  value: string,
+  suggestions: { path: string; label: string }[],
+): string[] {
+  const matches = value.match(/\{\{\s*([\w.-]+)\s*\}\}/g);
+  if (!matches) return [];
+  const seen = new Set<string>();
+  const descriptions: string[] = [];
+  for (const raw of matches) {
+    const path = raw.replace(/\{\{\s*|\s*\}\}/g, "");
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const suggestion = suggestions.find((s) => s.path === path);
+    if (suggestion) {
+      descriptions.push(suggestion.label);
+    } else if (path.startsWith("trigger.")) {
+      descriptions.push(`the incoming event's "${path.slice("trigger.".length)}"`);
+    } else {
+      descriptions.push(path);
+    }
+  }
+  return descriptions;
+}
+
+/** A field value's live "Uses: ..." translation - mounted explicitly by
+ * call sites that already have a `flex flex-col` wrapper around their
+ * input (so adding this line never risks changing an input's width/flex
+ * sizing the way returning it bundled inside `DraftInput`/`DraftTextarea`
+ * itself would for the many callers that rely on their `className` width
+ * utility - e.g. `w-2/5` - applying directly to the input in a horizontal
+ * row). */
+export function TemplateHint({ value, suggestions }: { value: string; suggestions?: { path: string; label: string }[] }) {
+  const descriptions = describeTemplateTokens(value, suggestions ?? []);
+  if (descriptions.length === 0) return null;
+  return <p className="text-[10px] text-muted-foreground">Uses: {descriptions.join(", ")}</p>;
+}
+
 interface DraftInputProps extends Omit<InputProps, "value" | "onChange" | "onBlur" | "onFocus"> {
   value: string;
   onCommit: (next: string) => void;

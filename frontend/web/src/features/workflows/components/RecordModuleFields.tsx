@@ -1,4 +1,4 @@
-import { DraftInput } from "./DraftFields";
+import { DraftInput, TemplateHint } from "./DraftFields";
 import type { ModuleCatalogEntry } from "../types";
 
 /**
@@ -20,9 +20,10 @@ interface RecordModuleFieldsProps {
   modules: ModuleCatalogEntry[];
   config: Record<string, unknown>;
   onChange: (patch: Record<string, unknown>) => void;
+  upstreamSuggestions?: { path: string; label: string }[];
 }
 
-export function RecordModuleFields({ nodeType, modules, config, onChange }: RecordModuleFieldsProps) {
+export function RecordModuleFields({ nodeType, modules, config, onChange, upstreamSuggestions = [] }: RecordModuleFieldsProps) {
   const moduleKey = String(config.module ?? "");
   const defaultOperation = nodeType === "records.query" ? "list" : "create";
   const operation = String(config.operation ?? defaultOperation);
@@ -73,6 +74,7 @@ export function RecordModuleFields({ nodeType, modules, config, onChange }: Reco
             onCommit={(next) => onChange({ item_id: next })}
             placeholder="e.g. {{previous_step.reply.id}}"
           />
+          <TemplateHint value={String(config.item_id ?? "")} suggestions={upstreamSuggestions} />
         </div>
       )}
 
@@ -108,11 +110,14 @@ export function RecordModuleFields({ nodeType, modules, config, onChange }: Reco
                   ))}
                 </select>
               ) : (
-                <DraftInput
-                  type={field.field_type === "number" ? "number" : "text"}
-                  value={String(dataValue[field.key] ?? "")}
-                  onCommit={(next) => updateDataField(field.key, field.field_type === "number" ? Number(next) || 0 : next)}
-                />
+                <>
+                  <DraftInput
+                    type={field.field_type === "number" ? "number" : "text"}
+                    value={String(dataValue[field.key] ?? "")}
+                    onCommit={(next) => updateDataField(field.key, field.field_type === "number" ? Number(next) || 0 : next)}
+                  />
+                  <TemplateHint value={String(dataValue[field.key] ?? "")} suggestions={upstreamSuggestions} />
+                </>
               )}
             </div>
           ))}

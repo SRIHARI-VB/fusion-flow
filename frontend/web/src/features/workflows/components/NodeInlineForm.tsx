@@ -5,7 +5,7 @@ import type { NodeType } from "../types";
 import { listModules } from "../api";
 import { resolveFields, type ResolvedField } from "../jsonSchemaForm";
 import { ArrayObjectField, ArrayTextField, JsonObjectField } from "./DynamicArrayFields";
-import { DraftInput, DraftTextarea } from "./DraftFields";
+import { DraftInput, DraftTextarea, TemplateHint } from "./DraftFields";
 import { InsertVariableMenu } from "./InsertVariableMenu";
 import { AskChoiceSourceField, DEFAULT_STATIC_SOURCE, type AskChoiceSource } from "./AskChoiceSourceField";
 import { RecordModuleFields } from "./RecordModuleFields";
@@ -279,6 +279,7 @@ export function NodeInlineForm({ nodeType, config, onConfigChange, upstreamSugge
                     {charCount}/{field.maxLength}
                   </span>
                 )}
+                <TemplateHint value={textValue} suggestions={upstreamSuggestions} />
               </div>
             )}
 
@@ -294,6 +295,7 @@ export function NodeInlineForm({ nodeType, config, onConfigChange, upstreamSugge
                     {charCount}/{field.maxLength}
                   </span>
                 )}
+                <TemplateHint value={textValue} suggestions={upstreamSuggestions} />
               </div>
             )}
 
@@ -310,7 +312,10 @@ export function NodeInlineForm({ nodeType, config, onConfigChange, upstreamSugge
                   </button>
                 </div>
               ) : (
-                <DraftInput value={textValue} onCommit={(next) => onConfigChange({ [field.key]: next })} />
+                <div className="flex flex-col gap-0.5">
+                  <DraftInput value={textValue} onCommit={(next) => onConfigChange({ [field.key]: next })} />
+                  <TemplateHint value={textValue} suggestions={upstreamSuggestions} />
+                </div>
               ))}
 
             {field.kind === "auto_ref" && (
@@ -424,6 +429,7 @@ export function NodeInlineForm({ nodeType, config, onConfigChange, upstreamSugge
           modules={modules}
           config={config}
           onChange={onConfigChange}
+          upstreamSuggestions={upstreamSuggestions}
         />
       )}
     </div>
