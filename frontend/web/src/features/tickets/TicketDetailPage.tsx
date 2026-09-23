@@ -20,6 +20,7 @@ export function TicketDetailPage() {
   const queryClient = useQueryClient();
   const [reply, setReply] = useState("");
   const [authorType, setAuthorType] = useState<TicketMessageAuthorType>("agent");
+  const [dispatchNotice, setDispatchNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   const { data: ticket, isLoading: ticketLoading } = useQuery({
     queryKey: ["tickets", id],
@@ -43,8 +44,13 @@ export function TicketDetailPage() {
 
   const replyMutation = useMutation({
     mutationFn: () => addMessage(id as string, { author_type: authorType, body: reply }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setReply("");
+      setDispatchNotice(
+        result.dispatched
+          ? { ok: true, text: "Sent to the customer." }
+          : { ok: false, text: `Saved, but not sent to the customer: ${result.dispatch_error ?? "unknown error"}` },
+      );
       queryClient.invalidateQueries({ queryKey: ["tickets", id, "messages"] });
     },
   });
@@ -121,9 +127,15 @@ export function TicketDetailPage() {
             className="mt-4 flex flex-col gap-2 border-t border-border pt-4"
             onSubmit={(event) => {
               event.preventDefault();
+              setDispatchNotice(null);
               if (reply.trim()) replyMutation.mutate();
             }}
           >
+            {dispatchNotice && (
+              <p className={cn("text-xs", dispatchNotice.ok ? "text-success" : "text-destructive")}>
+                {dispatchNotice.text}
+              </p>
+            )}
             <select
               className="h-9 w-fit rounded-md border border-input bg-card px-2 text-xs text-foreground"
               value={authorType}

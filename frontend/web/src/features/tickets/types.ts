@@ -44,3 +44,13 @@ export interface TicketMessageCreateInput {
   body: string;
   attachments?: unknown[];
 }
+
+/** `POST /{ticket_id}/messages`'s response - the message is always stored,
+ * but reaching the customer over their original channel is a separate,
+ * best-effort outbound call reported here so "saved" is never confused
+ * with "delivered" (see `tickets.schemas.TicketMessageSendResult`). */
+export interface TicketMessageSendResult {
+  message: TicketMessage;
+  dispatched: boolean;
+  dispatch_error: string | null;
+}

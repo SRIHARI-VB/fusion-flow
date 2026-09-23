@@ -4,6 +4,7 @@ import type {
   TicketCreateInput,
   TicketMessage,
   TicketMessageCreateInput,
+  TicketMessageSendResult,
   TicketUpdateInput,
 } from "./types";
 
@@ -37,7 +38,7 @@ export async function listMessages(ticketId: string): Promise<TicketMessage[]> {
 export async function addMessage(
   ticketId: string,
   payload: TicketMessageCreateInput,
-): Promise<TicketMessage> {
-  const { data } = await apiClient.post<TicketMessage>(`${BASE}/${ticketId}/messages`, payload);
+): Promise<TicketMessageSendResult> {
+  const { data } = await apiClient.post<TicketMessageSendResult>(`${BASE}/${ticketId}/messages`, payload);
   return data;
 }

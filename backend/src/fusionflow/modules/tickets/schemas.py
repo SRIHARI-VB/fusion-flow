@@ -59,3 +59,19 @@ class TicketMessageOut(BaseModel):
     body: str
     attachments: list[dict[str, Any]]
     created_at: datetime
+
+
+class TicketMessageSendResult(BaseModel):
+    """Response for `POST /{ticket_id}/messages` - the message is always
+    stored (it's the ticket thread's own audit trail, see
+    `TicketMessage`'s docstring), but actually reaching the customer over
+    their original channel is a separate, best-effort outbound call that
+    can fail independently (no linked customer/connector instance, the
+    channel's own send API rejecting it, ...). Surfacing both lets the
+    frontend show "saved but not delivered" instead of a misleading
+    "Send reply" success with no actual delivery - the bug this type
+    exists to stop being silent about."""
+
+    message: TicketMessageOut
+    dispatched: bool
+    dispatch_error: str | None = None

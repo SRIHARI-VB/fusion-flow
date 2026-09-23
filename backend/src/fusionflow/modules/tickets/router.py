@@ -14,10 +14,12 @@ from fusionflow.core.deps import SessionDep, TenantContextDep
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.tickets import service as tickets_service
+from fusionflow.modules.tickets.models import TicketMessageAuthorType
 from fusionflow.modules.tickets.schemas import (
     TicketCreate,
     TicketMessageCreate,
     TicketMessageOut,
+    TicketMessageSendResult,
     TicketOut,
     TicketUpdate,
 )
@@ -83,18 +85,32 @@ async def list_ticket_messages(
 
 
 @router.post(
-    "/{ticket_id}/messages", response_model=TicketMessageOut, status_code=status.HTTP_201_CREATED
+    "/{ticket_id}/messages", response_model=TicketMessageSendResult, status_code=status.HTTP_201_CREATED
 )
 async def add_ticket_message(
     ticket_id: uuid.UUID,
     payload: TicketMessageCreate,
     session: SessionDep,
     context: TenantContextDep,
-) -> TicketMessageOut:
+) -> TicketMessageSendResult:
     ticket = await tickets_service.get_ticket(session, context.tenant_id, ticket_id)
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
     message = await tickets_service.add_message(session, context.tenant_id, ticket_id, payload)
+
+    # Only an agent/system-authored reply is ever meant to reach the
+    # customer - a "customer" or "support_agent_ai" authored row is a log
+    # entry of something that already happened elsewhere, not a fresh
+    # outbound send (see `dispatch_reply_to_customer`'s docstring for what
+    # "dispatched" means here).
+    dispatched, dispatch_error = False, None
+    if payload.author_type in (TicketMessageAuthorType.AGENT, TicketMessageAuthorType.SYSTEM):
+        dispatched, dispatch_error = await tickets_service.dispatch_reply_to_customer(
+            session, context.tenant_id, ticket, payload.body
+        )
+
     await commit_and_keep_tenant_context(session)
     await session.refresh(message)
-    return TicketMessageOut.model_validate(message)
+    return TicketMessageSendResult(
+        message=TicketMessageOut.model_validate(message), dispatched=dispatched, dispatch_error=dispatch_error
+    )
