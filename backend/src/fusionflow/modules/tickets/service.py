@@ -60,7 +60,16 @@ async def list_tickets(
         stmt = stmt.where(Ticket.assigned_user_id == assigned_user_id)
     if customer_id is not None:
         stmt = stmt.where(Ticket.customer_id == customer_id)
-    stmt = stmt.order_by(Ticket.created_at.desc())
+    # `id` as a secondary sort key: Postgres's `now()` is transaction-start
+    # time, not per-statement time, so two tickets created back-to-back in
+    # the same transaction can carry an identical `created_at` - without a
+    # tie-breaker, "most recent first" becomes whatever order the scan
+    # happens to return, not necessarily creation order. UUIDs aren't
+    # naturally sortable-by-time, but a stable (if arbitrary) tie-break is
+    # still strictly better than an unstable one for anything that treats
+    # `list_tickets(..., limit=1)` as "the newest ticket" (see
+    # `tickets.get_latest_for_customer`).
+    stmt = stmt.order_by(Ticket.created_at.desc(), Ticket.id.desc())
     if limit is not None:
         stmt = stmt.limit(limit)
     rows = await session.execute(stmt)

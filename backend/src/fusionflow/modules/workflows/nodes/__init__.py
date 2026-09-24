@@ -98,6 +98,14 @@ logic is one config-driven node instead of a bespoke one per tenant.
 name/concern/contact-info/timestamps/raw-message detail block a
 conversation actually collects, so this node logs that block as a normal
 `TicketMessage` thread entry instead.
+`tickets_get_latest_for_customer` (`tickets.get_latest_for_customer`)
+answers "what's the status of my most recent request" - `records.query`
+(module=tickets, list) returns a list, and `resolve_path`'s dict-only
+traversal can never index into one (`{{node.items.0.subject}}` doesn't
+resolve), so this flattens "the newest ticket, if any" to one object the
+same way `find_or_create_customer` flattens "found or created" - a
+config/data-driven CRUD front door couldn't do this on its own without
+that indexing gap closing platform-wide first.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -145,6 +153,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     schedule_resolve_business_hours,
     telegram_message_received,
     tickets_add_note,
+    tickets_get_latest_for_customer,
     whatsapp_ask_choice,
     whatsapp_ask_for_cart,
     whatsapp_ask_question,
@@ -200,6 +209,7 @@ __all__ = [
     "schedule_resolve_business_hours",
     "telegram_message_received",
     "tickets_add_note",
+    "tickets_get_latest_for_customer",
     "whatsapp_ask_choice",
     "whatsapp_ask_for_cart",
     "whatsapp_ask_question",
