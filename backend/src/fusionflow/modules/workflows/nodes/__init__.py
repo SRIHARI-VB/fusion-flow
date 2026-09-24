@@ -106,6 +106,11 @@ resolve), so this flattens "the newest ticket, if any" to one object the
 same way `find_or_create_customer` flattens "found or created" - a
 config/data-driven CRUD front door couldn't do this on its own without
 that indexing gap closing platform-wide first.
+`record_get_latest` (`records.get_latest`) generalizes that same
+flattening to *any* module/filter combination instead of one hardcoded
+ticket lookup - `records.query` plus "take the first item, if any" baked
+in, since that step alone is what `resolve_path`'s list-indexing gap
+blocks a workflow author from doing themselves.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -148,6 +153,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     orders_create_from_conversation,
     payment_captured,
     payments_send_razorpay_link,
+    record_get_latest,
     record_query,
     record_upsert,
     schedule_resolve_business_hours,
@@ -204,6 +210,7 @@ __all__ = [
     "orders_create_from_conversation",
     "payment_captured",
     "payments_send_razorpay_link",
+    "record_get_latest",
     "record_query",
     "record_upsert",
     "schedule_resolve_business_hours",
