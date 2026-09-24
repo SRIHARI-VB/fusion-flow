@@ -91,6 +91,13 @@ day/time-window resolver against a tenant-configured set of business
 hours (closed weekdays, open/close time, named time-of-day windows), so
 any tenant's day/time-window booking or "are we open right now" branch
 logic is one config-driven node instead of a bespoke one per tenant.
+`tickets_add_note` (`tickets.add_note`) is a thin wrapper around
+`modules/tickets/service.py::add_message`, meant to run right after a
+`records.upsert` (module=tickets, create) node: that create's own
+`subject` field caps out at 300 characters, far too short for the full
+name/concern/contact-info/timestamps/raw-message detail block a
+conversation actually collects, so this node logs that block as a normal
+`TicketMessage` thread entry instead.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -137,6 +144,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     record_upsert,
     schedule_resolve_business_hours,
     telegram_message_received,
+    tickets_add_note,
     whatsapp_ask_choice,
     whatsapp_ask_for_cart,
     whatsapp_ask_question,
@@ -191,6 +199,7 @@ __all__ = [
     "record_upsert",
     "schedule_resolve_business_hours",
     "telegram_message_received",
+    "tickets_add_note",
     "whatsapp_ask_choice",
     "whatsapp_ask_for_cart",
     "whatsapp_ask_question",
