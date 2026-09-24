@@ -10,6 +10,7 @@ disagree with each other.
 from __future__ import annotations
 
 import operator
+import re
 from typing import Any, Callable
 
 _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
@@ -34,6 +35,22 @@ _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     ),
     "starts_with": lambda haystack, needle: isinstance(haystack, str) and haystack.startswith(needle),
     "ends_with": lambda haystack, needle: isinstance(haystack, str) and haystack.endswith(needle),
+    # Word-boundary sibling of "icontains" - added because a short, common
+    # keyword (e.g. "hi", "hey") matched via plain substring search false-
+    # positives on any longer word that happens to contain those letters in
+    # sequence ("this", "which", "shirt", "they" all contain "hi"/"hey"),
+    # misclassifying an unrelated message as a greeting before it ever
+    # reaches the real intent keywords. `\b` in Python's `re` is Unicode-
+    # aware by default, so this still only anchors on non-word-character
+    # boundaries (whitespace/punctuation/string edges) exactly like a
+    # human would read "is this word standalone". A non-string haystack
+    # degrades to `False` (nothing to search), matching "icontains"'s
+    # None-safety shape.
+    "icontains_word": (
+        lambda haystack, needle: bool(re.search(rf"\b{re.escape(str(needle))}\b", str(haystack), re.IGNORECASE))
+        if haystack is not None
+        else False
+    ),
 }
 
 
