@@ -95,6 +95,25 @@ def _parse_hhmm(value: str) -> time:
         raise ValueError(f"expected an 'HH:MM' 24-hour time string, got {value!r}") from exc
 
 
+def _is_template(value: str) -> bool:
+    """Whether `value` is (or contains) a `{{dot.path}}` reference rather
+    than a literal - `BusinessHoursConfig` is validated twice: once at
+    publish time against the raw, unresolved config (no `context.
+    variables` exist yet, so a templated `open_time` is still literally
+    the string `"{{business-settings.item.payload.open_time}}"` at that
+    point - see `execute()`'s docstring for why runtime is the only place
+    interpolation can happen) and once at runtime, against the output of
+    `_interpolate_config` (by then a real resolved string, or the
+    genuinely-invalid result of a bad/typo'd reference - see the module
+    docstring). The "HH:MM" format validators below need to be lenient
+    exactly at the first of those two checks, so a template-holding
+    config isn't rejected before it's ever had a chance to resolve, while
+    staying strict at the second (post-interpolation) so a broken
+    reference is still caught, just later, with the real bad value in
+    the error instead of a template marker."""
+    return "{{" in value
+
+
 class TimeWindow(BaseModel):
     """A named sub-window of the day (e.g. "morning") an author can offer
     a customer as a coarser choice than an exact time - purely a labelled
@@ -106,7 +125,8 @@ class TimeWindow(BaseModel):
     @field_validator("start", "end")
     @classmethod
     def _validate_hhmm(cls, value: str) -> str:
-        _parse_hhmm(value)
+        if not _is_template(value):
+            _parse_hhmm(value)
         return value
 
 
@@ -160,12 +180,15 @@ class BusinessHoursConfig(BaseModel):
     @field_validator("open_time", "close_time")
     @classmethod
     def _validate_hhmm(cls, value: str) -> str:
-        _parse_hhmm(value)
+        if not _is_template(value):
+            _parse_hhmm(value)
         return value
 
     @field_validator("break_start", "break_end")
     @classmethod
     def _validate_break_hhmm(cls, value: str | None) -> str | None:
+        if value is not None and _is_template(value):
+            return value
         # Both fields are optional (no break configured at all is the
         # common case) - only run the same "HH:MM" check `open_time`/
         # `close_time` use when a value is actually present.
