@@ -141,6 +141,21 @@ id in, a pre-joined "🎁 ..." summary line out (or `has_discount: False`),
 so a message node can mention an active coupon/offer without a workflow
 author hand-rolling `records.query` plus date-window filtering themselves.
 
+`catalog_get_all_active_discounts_summary`
+(`catalog.get_all_active_discounts_summary`) is that node's "which
+treatment(s) currently have a discount at all" sibling - no id in, every
+active coupon/offer scoped to a real service/product resolved to that
+service's name and joined into one multi-line block, for a flow that
+doesn't know which one treatment the customer wants yet.
+
+`catalog_classify_consultation_bucket`
+(`catalog.classify_consultation_bucket`) is a Faheem-workflow-shaped
+bridge, not a generic platform node: maps a picked service's name to
+that workflow's own `CONCERN_ORTHO`/`CONCERN_OTHER` postback literal by
+keyword, so a dynamically-picked service can re-enter the existing,
+already-tested concern -> ticket -> booking chain instead of duplicating
+it.
+
 `module_get_from_choice_payload` (`module.get_from_choice_payload`) is the
 safe consumer half of `instagram.ask_choice`'s `"<module>:<id>"` postback
 payloads - unlike `module_get`, "malformed payload"/"unknown module"/
@@ -157,7 +172,9 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     broadcast_scheduled_send,
+    catalog_classify_consultation_bucket,
     catalog_get_active_discounts,
+    catalog_get_all_active_discounts_summary,
     condition_field_compare,
     condition_multi_branch,
     connector_action,
@@ -218,7 +235,9 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 
 __all__ = [
     "broadcast_scheduled_send",
+    "catalog_classify_consultation_bucket",
     "catalog_get_active_discounts",
+    "catalog_get_all_active_discounts_summary",
     "condition_field_compare",
     "condition_multi_branch",
     "connector_action",

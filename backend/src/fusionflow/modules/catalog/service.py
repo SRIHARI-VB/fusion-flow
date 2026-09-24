@@ -397,3 +397,95 @@ async def get_active_discounts(
         )
 
     return results
+
+
+async def get_all_active_discounts_with_targets(session: AsyncSession, tenant_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Every currently-active coupon/offer that's scoped to at least one
+    specific service/product (an unscoped, empty `applies_to` is skipped -
+    nothing concrete to name), with each target id resolved to its real
+    name - for a "here's what's currently on offer, and for what" broad
+    listing (the general consultation flow, which doesn't know which one
+    treatment the customer wants yet, unlike `get_active_discounts`'s
+    single-id lookup used once a specific service is already known).
+
+    One dict per target (a discount scoped to 3 services yields 3 dicts,
+    one per service name) - simpler for a caller to turn straight into "one
+    line per treatment" than re-flattening a nested list later.
+    """
+    now = datetime.now(timezone.utc)
+
+    target_ids: set[uuid.UUID] = set()
+
+    def _collect_ids(applies_to: dict[str, Any]) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+        service_ids = []
+        for raw in applies_to.get("service_ids", []):
+            try:
+                service_ids.append(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+        product_ids = []
+        for raw in applies_to.get("product_ids", []):
+            try:
+                product_ids.append(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+        return service_ids, product_ids
+
+    candidates: list[tuple[str, str, str | None, str | None, list[uuid.UUID], list[uuid.UUID]]] = []
+
+    coupons = (await session.execute(select(Coupon).where(Coupon.tenant_id == tenant_id))).scalars().all()
+    for coupon in coupons:
+        if coupon.valid_from is not None and coupon.valid_from > now:
+            continue
+        if coupon.valid_to is not None and coupon.valid_to < now:
+            continue
+        service_ids, product_ids = _collect_ids(coupon.applies_to)
+        if not service_ids and not product_ids:
+            continue
+        target_ids.update(service_ids)
+        target_ids.update(product_ids)
+        candidates.append(("coupon", coupon.code, coupon.discount_type.value, str(coupon.discount_value), service_ids, product_ids))
+
+    offers = (await session.execute(select(Offer).where(Offer.tenant_id == tenant_id))).scalars().all()
+    for offer in offers:
+        if offer.active_from is not None and offer.active_from > now:
+            continue
+        if offer.active_to is not None and offer.active_to < now:
+            continue
+        service_ids, product_ids = _collect_ids(offer.applies_to)
+        if not service_ids and not product_ids:
+            continue
+        target_ids.update(service_ids)
+        target_ids.update(product_ids)
+        discount_type = offer.discount_type.value if offer.discount_type else None
+        discount_value = str(offer.discount_value) if offer.discount_value is not None else None
+        candidates.append(("offer", offer.name, discount_type, discount_value, service_ids, product_ids))
+
+    if not target_ids:
+        return []
+
+    names = (
+        await session.execute(
+            select(ProductService.id, ProductService.name).where(
+                ProductService.tenant_id == tenant_id, ProductService.id.in_(target_ids)
+            )
+        )
+    ).all()
+    name_by_id = {row.id: row.name for row in names}
+
+    results: list[dict[str, Any]] = []
+    for kind, label, discount_type, discount_value, service_ids, product_ids in candidates:
+        for target_id in [*service_ids, *product_ids]:
+            target_name = name_by_id.get(target_id)
+            if target_name is None:
+                continue
+            results.append(
+                {
+                    "kind": kind,
+                    "label": label,
+                    "discount_type": discount_type,
+                    "discount_value": discount_value,
+                    "target_name": target_name,
+                }
+            )
+    return results
