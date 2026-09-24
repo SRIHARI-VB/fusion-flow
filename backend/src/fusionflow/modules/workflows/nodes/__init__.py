@@ -135,6 +135,20 @@ payload - this node just sends and completes, exactly like
 options is a graph-authoring pattern (chain two instances with
 `offset=0,3,...`), not something this single node does internally.
 
+`catalog_get_active_discounts` (`catalog.get_active_discounts`) wraps
+`catalog.service.get_active_discounts` as a plain node - a service/product
+id in, a pre-joined "🎁 ..." summary line out (or `has_discount: False`),
+so a message node can mention an active coupon/offer without a workflow
+author hand-rolling `records.query` plus date-window filtering themselves.
+
+`module_get_from_choice_payload` (`module.get_from_choice_payload`) is the
+safe consumer half of `instagram.ask_choice`'s `"<module>:<id>"` postback
+payloads - unlike `module_get`, "malformed payload"/"unknown module"/
+"non-UUID id"/"not found" all resolve to a plain `{"found": False, ...}`
+rather than a `Failure` that would end the run, so it's safe to wire as a
+postback-routing chain's catch-all fallback even for taps this node's
+producer never generated.
+
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
 `engine/registry.py` as a side effect — matching `fusionflow.db.models`'s
@@ -143,6 +157,7 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     broadcast_scheduled_send,
+    catalog_get_active_discounts,
     condition_field_compare,
     condition_multi_branch,
     connector_action,
@@ -171,6 +186,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     manual_test_trigger,
     module_create,
     module_get,
+    module_get_from_choice_payload,
     module_list,
     module_update,
     order_created,
@@ -202,6 +218,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 
 __all__ = [
     "broadcast_scheduled_send",
+    "catalog_get_active_discounts",
     "condition_field_compare",
     "condition_multi_branch",
     "connector_action",
@@ -230,6 +247,7 @@ __all__ = [
     "manual_test_trigger",
     "module_create",
     "module_get",
+    "module_get_from_choice_payload",
     "module_list",
     "module_update",
     "order_created",

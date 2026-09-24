@@ -19,6 +19,15 @@ like `connector.action` already does for the `send_button_template`
 action (see `connector_action.py`) - it has no `extract_resume_value` and
 never returns `Suspend`.
 
+Each button's `payload` is `"<module>:<id>"`, not a bare id - the run
+that handles the tap has no other way to learn which module a
+dynamically-generated payload belongs to. `module.get_from_choice_payload`
+(see that node's own docstring) is the paired consumer: it parses this
+shape back apart and looks the row up, resolving `{"found": False, ...}`
+rather than failing the run for anything that isn't a well-formed
+`module:id` pair - so it's always safe to wire as a postback chain's final
+fallback, even one this node never produced.
+
 Meta hard-caps a single button template at 3 buttons (`send_button_template`'s
 own docstring in `modules/connectors/instagram/adapter.py`) and a button
 title at 20 characters (the same limit `_whatsapp_common.py::ButtonEntry`
@@ -242,7 +251,13 @@ class AskChoiceExecutor(NodeExecutor):
             base_title = str(_get_field(row, config.source.label_field) or "")
             suffix = await _discount_suffix_for(context, config.source.module, value)
             title = base_title[: _MAX_TITLE_LENGTH - len(suffix)] + suffix if suffix else base_title[:_MAX_TITLE_LENGTH]
-            buttons.append({"type": "postback", "title": title, "payload": str(value)})
+            # "<module>:<id>" rather than a bare id - the downstream run that
+            # handles the tap (a fresh postback-triggered run, per this
+            # module's own docstring) has no other way to know which module
+            # a dynamically-generated payload belongs to. Paired with
+            # `module.get_from_choice_payload`, which parses exactly this
+            # shape back apart.
+            buttons.append({"type": "postback", "title": title, "payload": f"{config.source.module}:{value}"})
 
         try:
             await adapter.perform_action(
