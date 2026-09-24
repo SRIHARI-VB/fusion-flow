@@ -24,6 +24,7 @@ import {
   MessageSquareText,
   Image,
   Megaphone,
+  CalendarClock,
 } from "lucide-react";
 
 export interface NavItem {
@@ -72,6 +73,7 @@ export const navGroups: NavGroup[] = [
     label: "Customers",
     items: [
       { label: "Customers", path: "/customers", icon: Users, moduleKey: "customers" },
+      { label: "Appointments", path: "/appointments", icon: CalendarClock },
       { label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
       { label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },
       { label: "Tickets", path: "/tickets", icon: LifeBuoy, moduleKey: "tickets" },

@@ -7,6 +7,7 @@ convention as `modules/tenancy/service.py` and `modules/custom_fields/service.py
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Sequence
 
@@ -205,6 +206,7 @@ async def create_coupon(
         valid_from=payload.valid_from,
         valid_to=payload.valid_to,
         usage_limit=payload.usage_limit,
+        applies_to=payload.applies_to,
         custom_fields=custom_fields,
     )
     session.add(coupon)
@@ -225,6 +227,8 @@ async def update_coupon(
         coupon.valid_to = payload.valid_to
     if payload.usage_limit is not None:
         coupon.usage_limit = payload.usage_limit
+    if payload.applies_to is not None:
+        coupon.applies_to = payload.applies_to
     if custom_fields is not None:
         coupon.custom_fields = custom_fields
     await session.flush()
@@ -310,3 +314,80 @@ async def update_offer(
 async def delete_offer(session: AsyncSession, offer: Offer) -> None:
     await session.delete(offer)
     await session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Cross-entity discount lookup (coupons + offers)
+# ---------------------------------------------------------------------------
+
+
+def _applies_to_target(applies_to: dict[str, Any], *, service_id: uuid.UUID | None, product_id: uuid.UUID | None) -> bool:
+    """`applies_to` round-trips UUIDs as strings via JSONB, so compare as strings."""
+    service_ids = {str(v) for v in applies_to.get("service_ids", [])}
+    product_ids = {str(v) for v in applies_to.get("product_ids", [])}
+    if service_id is not None and str(service_id) in service_ids:
+        return True
+    if product_id is not None and str(product_id) in product_ids:
+        return True
+    return False
+
+
+async def get_active_discounts(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    *,
+    service_id: uuid.UUID | None = None,
+    product_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Coupons + offers currently active for the tenant and scoped (via
+    `applies_to`) to the given service/product, if either is passed.
+
+    Used by a workflow node (see `workflow_adapter.py`/nodes registry in
+    another agent's pass) to surface "here's a discount you qualify for"
+    at run time - keep the returned dict shape stable, it's a cross-module
+    contract.
+    """
+    now = datetime.now(timezone.utc)
+    results: list[dict[str, Any]] = []
+
+    coupons = (
+        await session.execute(select(Coupon).where(Coupon.tenant_id == tenant_id))
+    ).scalars().all()
+    for coupon in coupons:
+        if coupon.valid_from is not None and coupon.valid_from > now:
+            continue
+        if coupon.valid_to is not None and coupon.valid_to < now:
+            continue
+        if not _applies_to_target(coupon.applies_to, service_id=service_id, product_id=product_id):
+            continue
+        results.append(
+            {
+                "kind": "coupon",
+                "id": str(coupon.id),
+                "label": coupon.code,
+                "discount_type": coupon.discount_type.value,
+                "discount_value": str(coupon.discount_value),
+            }
+        )
+
+    offers = (
+        await session.execute(select(Offer).where(Offer.tenant_id == tenant_id))
+    ).scalars().all()
+    for offer in offers:
+        if offer.active_from is not None and offer.active_from > now:
+            continue
+        if offer.active_to is not None and offer.active_to < now:
+            continue
+        if not _applies_to_target(offer.applies_to, service_id=service_id, product_id=product_id):
+            continue
+        results.append(
+            {
+                "kind": "offer",
+                "id": str(offer.id),
+                "label": offer.name,
+                "discount_type": None,
+                "discount_value": None,
+            }
+        )
+
+    return results

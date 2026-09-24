@@ -13,6 +13,7 @@ import { CustomFieldsSettingsPage } from "./features/custom-fields";
 import { SettingsPage } from "./features/settings";
 import { ProductsPage, ServicesPage, CouponsPage, OffersPage } from "./features/catalog";
 import { CustomersPage } from "./features/customers";
+import { AppointmentRecordsPage } from "./features/appointments";
 import { OrdersListPage, OrderDetailPage } from "./features/orders";
 import { PaymentsPage } from "./features/payments";
 import { TicketsListPage, TicketDetailPage } from "./features/tickets";
@@ -74,6 +75,12 @@ export default function App() {
         <Route path="/offers" element={<RequireModule moduleKey="offers"><OffersPage /></RequireModule>} />
 
         <Route path="/customers" element={<RequireModule moduleKey="customers"><CustomersPage /></RequireModule>} />
+        {/* `business_objects` deliberately has no `require_module_access`
+            gate (it's tenant-owned metadata, not a platform feature toggle -
+            see business_objects/router.py's module docstring), so this
+            route isn't wrapped in RequireModule, matching /connectors and
+            the /communication/* routes below. */}
+        <Route path="/appointments" element={<AppointmentRecordsPage />} />
         <Route path="/orders" element={<RequireModule moduleKey="orders"><OrdersListPage /></RequireModule>} />
         <Route path="/orders/:id" element={<RequireModule moduleKey="orders"><OrderDetailPage /></RequireModule>} />
         <Route path="/payments" element={<RequireModule moduleKey="payments"><PaymentsPage /></RequireModule>} />

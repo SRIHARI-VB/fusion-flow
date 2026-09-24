@@ -32,6 +32,7 @@ export interface Coupon {
   code: string;
   discount_type: DiscountType;
   discount_value: string;
+  applies_to: Record<string, unknown>;
   valid_from: string | null;
   valid_to: string | null;
   usage_limit: number | null;
@@ -44,6 +45,7 @@ export interface CouponCreateInput {
   code: string;
   discount_type: DiscountType;
   discount_value: number;
+  applies_to?: Record<string, unknown>;
   valid_from?: string | null;
   valid_to?: string | null;
   usage_limit?: number | null;

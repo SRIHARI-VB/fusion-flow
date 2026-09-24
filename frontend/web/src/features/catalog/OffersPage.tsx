@@ -26,11 +26,11 @@ import {
 import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createOffer, deleteOffer, listOffers, updateOffer } from "./api";
+import { appliesToSummary, EMPTY_APPLIES_TO, ServiceProductPicker, toAppliesTo, type AppliesTo } from "./ServiceProductPicker";
 import type { Offer } from "./types";
 
 interface FormValues {
   name: string;
-  applies_to_json: string;
   active_from: string;
   active_to: string;
   custom_fields: Record<string, unknown>;
@@ -38,7 +38,6 @@ interface FormValues {
 
 const DEFAULT_VALUES: FormValues = {
   name: "",
-  applies_to_json: "{}",
   active_from: "",
   active_to: "",
   custom_fields: {},
@@ -60,7 +59,7 @@ export function OffersPage() {
   const { atLimit } = usage("offers");
   const [editing, setEditing] = useState<Offer | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [appliesTo, setAppliesTo] = useState<AppliesTo>(EMPTY_APPLIES_TO);
 
   const { data: offers = [], isLoading } = useQuery({ queryKey, queryFn: listOffers });
   const { data: fieldDefinitions = [] } = useFieldDefinitions("offer");
@@ -75,7 +74,7 @@ export function OffersPage() {
   function closeForm() {
     setFormOpen(false);
     setEditing(null);
-    setJsonError(null);
+    setAppliesTo(EMPTY_APPLIES_TO);
   }
 
   const createMutation = useMutation({
@@ -103,6 +102,7 @@ export function OffersPage() {
   function openCreate() {
     setEditing(null);
     reset(DEFAULT_VALUES);
+    setAppliesTo(EMPTY_APPLIES_TO);
     setFormOpen(true);
   }
 
@@ -110,24 +110,15 @@ export function OffersPage() {
     setEditing(offer);
     reset({
       name: offer.name,
-      applies_to_json: JSON.stringify(offer.applies_to ?? {}, null, 2),
       active_from: toDatetimeLocal(offer.active_from),
       active_to: toDatetimeLocal(offer.active_to),
       custom_fields: offer.custom_fields ?? {},
     });
+    setAppliesTo(toAppliesTo(offer.applies_to));
     setFormOpen(true);
   }
 
   function onSubmit(values: FormValues) {
-    let appliesTo: Record<string, unknown>;
-    try {
-      appliesTo = values.applies_to_json.trim() ? JSON.parse(values.applies_to_json) : {};
-    } catch {
-      setJsonError("Applies to must be valid JSON, e.g. {\"product_ids\": [\"...\"]}");
-      return;
-    }
-    setJsonError(null);
-
     const payload = {
       name: values.name,
       applies_to: appliesTo,
@@ -191,17 +182,9 @@ export function OffersPage() {
                 <Input id="active_to" type="datetime-local" {...register("active_to")} />
               </div>
               <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <label htmlFor="applies_to_json" className="text-sm font-medium">
-                  Applies to (JSON)
-                </label>
-                <textarea
-                  id="applies_to_json"
-                  rows={4}
-                  className="flex w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  placeholder='{"product_ids": ["..."]}'
-                  {...register("applies_to_json")}
-                />
-                {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
+                <p className="text-sm font-medium">Applies to</p>
+                <p className="text-xs text-muted-foreground">Leave everything unchecked to apply to all services and products.</p>
+                <ServiceProductPicker value={appliesTo} onChange={setAppliesTo} />
               </div>
 
               {fieldDefinitions.length > 0 && (
@@ -233,6 +216,7 @@ export function OffersPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Active window</TableHead>
+              <TableHead>Applies to</TableHead>
               <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -240,14 +224,14 @@ export function OffersPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={3 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && offers.length === 0 && (
               <TableRow>
-                <TableCell colSpan={3 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No offers yet.
                 </TableCell>
               </TableRow>
@@ -258,6 +242,9 @@ export function OffersPage() {
                 <TableCell className="text-xs text-muted-foreground">
                   {offer.active_from ? new Date(offer.active_from).toLocaleDateString() : "—"} to{" "}
                   {offer.active_to ? new Date(offer.active_to).toLocaleDateString() : "—"}
+                </TableCell>
+                <TableCell>
+                  <span className="text-xs text-muted-foreground">{appliesToSummary(offer.applies_to)}</span>
                 </TableCell>
                 <DynamicCustomFieldsCells definitions={fieldDefinitions} values={offer.custom_fields} />
                 <TableCell className="text-right">

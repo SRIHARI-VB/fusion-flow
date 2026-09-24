@@ -27,6 +27,7 @@ import {
 import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createCoupon, deleteCoupon, listCoupons, updateCoupon } from "./api";
+import { appliesToSummary, EMPTY_APPLIES_TO, ServiceProductPicker, toAppliesTo, type AppliesTo } from "./ServiceProductPicker";
 import type { Coupon, DiscountType } from "./types";
 
 interface FormValues {
@@ -65,6 +66,7 @@ export function CouponsPage() {
   const { atLimit } = usage("coupons");
   const [editing, setEditing] = useState<Coupon | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [appliesTo, setAppliesTo] = useState<AppliesTo>(EMPTY_APPLIES_TO);
 
   const { data: coupons = [], isLoading } = useQuery({ queryKey, queryFn: listCoupons });
   const { data: fieldDefinitions = [] } = useFieldDefinitions("coupon");
@@ -79,6 +81,7 @@ export function CouponsPage() {
   function closeForm() {
     setFormOpen(false);
     setEditing(null);
+    setAppliesTo(EMPTY_APPLIES_TO);
   }
 
   function toPayload(values: FormValues) {
@@ -86,6 +89,7 @@ export function CouponsPage() {
       code: values.code,
       discount_type: values.discount_type,
       discount_value: values.discount_value,
+      applies_to: appliesTo,
       valid_from: toIsoOrNull(values.valid_from),
       valid_to: toIsoOrNull(values.valid_to),
       usage_limit: values.usage_limit === "" ? null : Number(values.usage_limit),
@@ -117,6 +121,7 @@ export function CouponsPage() {
   function openCreate() {
     setEditing(null);
     reset(DEFAULT_VALUES);
+    setAppliesTo(EMPTY_APPLIES_TO);
     setFormOpen(true);
   }
 
@@ -131,6 +136,7 @@ export function CouponsPage() {
       usage_limit: coupon.usage_limit ?? "",
       custom_fields: coupon.custom_fields ?? {},
     });
+    setAppliesTo(toAppliesTo(coupon.applies_to));
     setFormOpen(true);
   }
 
@@ -221,6 +227,12 @@ export function CouponsPage() {
                 <Input id="valid_to" type="datetime-local" {...register("valid_to")} />
               </div>
 
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <p className="text-sm font-medium">Applies to</p>
+                <p className="text-xs text-muted-foreground">Leave everything unchecked to apply to all services and products.</p>
+                <ServiceProductPicker value={appliesTo} onChange={setAppliesTo} />
+              </div>
+
               {fieldDefinitions.length > 0 && (
                 <div className="flex flex-col gap-4 border-t border-border pt-4 sm:col-span-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Custom fields</p>
@@ -252,6 +264,7 @@ export function CouponsPage() {
               <TableHead>Discount</TableHead>
               <TableHead>Usage limit</TableHead>
               <TableHead>Valid window</TableHead>
+              <TableHead>Applies to</TableHead>
               <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -259,14 +272,14 @@ export function CouponsPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={6 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && coupons.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={6 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No coupons yet.
                 </TableCell>
               </TableRow>
@@ -283,6 +296,9 @@ export function CouponsPage() {
                 <TableCell className="text-xs text-muted-foreground">
                   {coupon.valid_from ? new Date(coupon.valid_from).toLocaleDateString() : "—"} to{" "}
                   {coupon.valid_to ? new Date(coupon.valid_to).toLocaleDateString() : "—"}
+                </TableCell>
+                <TableCell>
+                  <span className="text-xs text-muted-foreground">{appliesToSummary(coupon.applies_to)}</span>
                 </TableCell>
                 <DynamicCustomFieldsCells definitions={fieldDefinitions} values={coupon.custom_fields} />
                 <TableCell className="text-right">

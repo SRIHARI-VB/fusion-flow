@@ -78,6 +78,10 @@ class Coupon(Base, TenantScopedMixin, TimestampMixin):
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     usage_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Free-form description of what the coupon applies to (product/service ids,
+    # categories, "all" ...) - JSONB rather than a join table, matching the
+    # same "shape still fluid in phase 1" rationale as custom_fields.
+    applies_to: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     custom_fields: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 

@@ -57,6 +57,7 @@ class CouponCreate(BaseModel):
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     usage_limit: int | None = Field(default=None, ge=1)
+    applies_to: dict[str, Any] = Field(default_factory=dict)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -66,6 +67,7 @@ class CouponUpdate(BaseModel):
     valid_from: datetime | None = None
     valid_to: datetime | None = None
     usage_limit: int | None = Field(default=None, ge=1)
+    applies_to: dict[str, Any] | None = None
     custom_fields: dict[str, Any] | None = None
 
 
@@ -79,6 +81,7 @@ class CouponOut(BaseModel):
     valid_from: datetime | None
     valid_to: datetime | None
     usage_limit: int | None
+    applies_to: dict[str, Any]
     custom_fields: dict[str, Any]
     created_at: datetime
     updated_at: datetime
