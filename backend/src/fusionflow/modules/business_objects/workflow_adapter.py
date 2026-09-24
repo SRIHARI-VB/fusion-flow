@@ -115,6 +115,18 @@ class CustomObjectQueryAdapter(ModuleQueryAdapter):
             )
         except HTTPException as exc:
             raise ValueError(_flatten_detail(exc)) from exc
+        # `updated_at`'s `onupdate=func.now()` is a server-side expression -
+        # SQLAlchemy can't know the resulting value client-side, so it
+        # marks the attribute expired after the flush inside
+        # `update_record`. `ObjectRecordOut.model_validate` below reads
+        # attributes synchronously (Pydantic validation, not itself
+        # awaited); accessing an expired attribute there tries an implicit
+        # lazy-refresh with no active greenlet bridge to run it through,
+        # raising `MissingGreenlet` (confirmed live - this update path had
+        # never been exercised by a real caller until a workflow's
+        # duplicate-appointment-cancel step hit it). An explicit, awaited
+        # refresh first avoids the implicit one.
+        await session.refresh(updated)
         return ObjectRecordOut.model_validate(updated).model_dump(mode="json")
 
 
