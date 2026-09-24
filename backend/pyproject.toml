@@ -22,6 +22,11 @@ dependencies = [
     "httpx>=0.27",
     "cryptography>=42.0",
     "truststore>=0.9",
+    # `zoneinfo.ZoneInfo(...)` (used by schedule.resolve_business_hours)
+    # relies on an OS-level IANA tz database, which Windows and some
+    # minimal Linux/container images don't ship - this package provides
+    # that data so timezone lookups work identically everywhere.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
