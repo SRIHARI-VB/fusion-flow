@@ -27,10 +27,13 @@ import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createOffer, deleteOffer, listOffers, updateOffer } from "./api";
 import { appliesToSummary, EMPTY_APPLIES_TO, ServiceProductPicker, toAppliesTo, type AppliesTo } from "./ServiceProductPicker";
-import type { Offer } from "./types";
+import type { DiscountType, Offer } from "./types";
 
 interface FormValues {
   name: string;
+  has_discount: boolean;
+  discount_type: DiscountType;
+  discount_value: number | "";
   active_from: string;
   active_to: string;
   custom_fields: Record<string, unknown>;
@@ -38,10 +41,18 @@ interface FormValues {
 
 const DEFAULT_VALUES: FormValues = {
   name: "",
+  has_discount: false,
+  discount_type: "percentage",
+  discount_value: "",
   active_from: "",
   active_to: "",
   custom_fields: {},
 };
+
+function formatDiscount(discountType: DiscountType | null, discountValue: string | null): string {
+  if (discountType == null || discountValue == null) return "—";
+  return discountType === "percentage" ? `${discountValue}%` : discountValue;
+}
 
 function toDatetimeLocal(iso: string | null): string {
   if (!iso) return "";
@@ -68,8 +79,10 @@ export function OffersPage() {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({ defaultValues: DEFAULT_VALUES });
+  const hasDiscount = watch("has_discount");
 
   function closeForm() {
     setFormOpen(false);
@@ -110,6 +123,9 @@ export function OffersPage() {
     setEditing(offer);
     reset({
       name: offer.name,
+      has_discount: offer.discount_type != null,
+      discount_type: offer.discount_type ?? "percentage",
+      discount_value: offer.discount_value != null ? Number(offer.discount_value) : "",
       active_from: toDatetimeLocal(offer.active_from),
       active_to: toDatetimeLocal(offer.active_to),
       custom_fields: offer.custom_fields ?? {},
@@ -121,6 +137,8 @@ export function OffersPage() {
   function onSubmit(values: FormValues) {
     const payload = {
       name: values.name,
+      discount_type: values.has_discount ? values.discount_type : null,
+      discount_value: values.has_discount && values.discount_value !== "" ? Number(values.discount_value) : null,
       applies_to: appliesTo,
       active_from: toIsoOrNull(values.active_from),
       active_to: toIsoOrNull(values.active_to),
@@ -181,6 +199,41 @@ export function OffersPage() {
                 </label>
                 <Input id="active_to" type="datetime-local" {...register("active_to")} />
               </div>
+              <div className="flex items-center gap-2 sm:col-span-2">
+                <input id="has_discount" type="checkbox" className="h-4 w-4" {...register("has_discount")} />
+                <label htmlFor="has_discount" className="text-sm font-medium">
+                  This offer has a specific discount amount
+                </label>
+              </div>
+              {hasDiscount && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="discount_type" className="text-sm font-medium">
+                      Discount type
+                    </label>
+                    <select
+                      id="discount_type"
+                      className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      {...register("discount_type")}
+                    >
+                      <option value="percentage">Percentage</option>
+                      <option value="fixed_amount">Fixed amount</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="discount_value" className="text-sm font-medium">
+                      Discount value
+                    </label>
+                    <Input
+                      id="discount_value"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      {...register("discount_value", { valueAsNumber: true })}
+                    />
+                  </div>
+                </>
+              )}
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <p className="text-sm font-medium">Applies to</p>
                 <p className="text-xs text-muted-foreground">Leave everything unchecked to apply to all services and products.</p>
@@ -215,6 +268,7 @@ export function OffersPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
+              <TableHead>Discount</TableHead>
               <TableHead>Active window</TableHead>
               <TableHead>Applies to</TableHead>
               <DynamicCustomFieldsColumns definitions={fieldDefinitions} />
@@ -224,14 +278,14 @@ export function OffersPage() {
           <TableBody>
             {isLoading && (
               <TableRow>
-                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
             {!isLoading && offers.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4 + fieldDefinitions.length} className="text-center text-muted-foreground">
+                <TableCell colSpan={5 + fieldDefinitions.length} className="text-center text-muted-foreground">
                   No offers yet.
                 </TableCell>
               </TableRow>
@@ -239,6 +293,9 @@ export function OffersPage() {
             {offers.map((offer) => (
               <TableRow key={offer.id}>
                 <TableCell className="font-medium text-foreground">{offer.name}</TableCell>
+                <TableCell className="text-sm text-foreground">
+                  {formatDiscount(offer.discount_type, offer.discount_value)}
+                </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {offer.active_from ? new Date(offer.active_from).toLocaleDateString() : "—"} to{" "}
                   {offer.active_to ? new Date(offer.active_to).toLocaleDateString() : "—"}

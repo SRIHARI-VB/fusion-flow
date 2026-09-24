@@ -94,6 +94,16 @@ class Offer(Base, TenantScopedMixin, TimestampMixin):
     # categories, "all" ...) - JSONB rather than a join table, matching the
     # same "shape still fluid in phase 1" rationale as custom_fields.
     applies_to: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    # Unlike Coupon's discount_type/discount_value (always required - a
+    # coupon *is* a discount), an offer's promotional value is optional:
+    # a qualitative offer ("free consultation with any treatment") has no
+    # percentage/amount to show, so both columns are nullable rather than
+    # forcing a fake number.
+    discount_type: Mapped[DiscountType | None] = mapped_column(
+        Enum(DiscountType, name="coupon_discount_type", values_callable=lambda e: [m.value for m in e]),
+        nullable=True,
+    )
+    discount_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     custom_fields: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     active_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     active_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

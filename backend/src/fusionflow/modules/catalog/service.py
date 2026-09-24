@@ -284,6 +284,8 @@ async def create_offer(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
         name=payload.name,
+        discount_type=payload.discount_type,
+        discount_value=payload.discount_value,
         applies_to=payload.applies_to,
         active_from=payload.active_from,
         active_to=payload.active_to,
@@ -299,6 +301,10 @@ async def update_offer(
 ) -> Offer:
     if payload.name is not None:
         offer.name = payload.name
+    if payload.discount_type is not None:
+        offer.discount_type = payload.discount_type
+    if payload.discount_value is not None:
+        offer.discount_value = payload.discount_value
     if payload.applies_to is not None:
         offer.applies_to = payload.applies_to
     if payload.active_from is not None:
@@ -385,8 +391,8 @@ async def get_active_discounts(
                 "kind": "offer",
                 "id": str(offer.id),
                 "label": offer.name,
-                "discount_type": None,
-                "discount_value": None,
+                "discount_type": offer.discount_type.value if offer.discount_type else None,
+                "discount_value": str(offer.discount_value) if offer.discount_value is not None else None,
             }
         )
 

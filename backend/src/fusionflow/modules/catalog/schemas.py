@@ -94,6 +94,8 @@ class CouponOut(BaseModel):
 
 class OfferCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    discount_type: DiscountType | None = None
+    discount_value: Decimal | None = Field(default=None, gt=0)
     applies_to: dict[str, Any] = Field(default_factory=dict)
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     active_from: datetime | None = None
@@ -102,6 +104,8 @@ class OfferCreate(BaseModel):
 
 class OfferUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    discount_type: DiscountType | None = None
+    discount_value: Decimal | None = Field(default=None, gt=0)
     applies_to: dict[str, Any] | None = None
     custom_fields: dict[str, Any] | None = None
     active_from: datetime | None = None
@@ -113,6 +117,8 @@ class OfferOut(BaseModel):
 
     id: uuid.UUID
     name: str
+    discount_type: DiscountType | None
+    discount_value: Decimal | None
     applies_to: dict[str, Any]
     custom_fields: dict[str, Any]
     active_from: datetime | None

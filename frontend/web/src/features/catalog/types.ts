@@ -57,6 +57,8 @@ export type CouponUpdateInput = Partial<CouponCreateInput>;
 export interface Offer {
   id: string;
   name: string;
+  discount_type: DiscountType | null;
+  discount_value: string | null;
   applies_to: Record<string, unknown>;
   custom_fields: CustomFieldsValue;
   active_from: string | null;
@@ -67,6 +69,8 @@ export interface Offer {
 
 export interface OfferCreateInput {
   name: string;
+  discount_type?: DiscountType | null;
+  discount_value?: number | null;
   applies_to?: Record<string, unknown>;
   custom_fields?: CustomFieldsValue;
   active_from?: string | null;

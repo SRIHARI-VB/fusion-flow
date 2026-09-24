@@ -54,11 +54,24 @@ def _summarize(discounts: list[dict]) -> str:
         return ""
     parts = []
     for d in discounts:
+        amount = _format_amount(d["discount_type"], d["discount_value"])
         if d["kind"] == "coupon":
-            parts.append(f"use code {d['label']} for a discount")
+            parts.append(f"use code {d['label']} for {amount} off" if amount else f"use code {d['label']} for a discount")
         else:
-            parts.append(d["label"])
+            parts.append(f"{d['label']} - {amount} off" if amount else d["label"])
     return "🎁 " + "; ".join(parts)
+
+
+def _format_amount(discount_type: str | None, discount_value: str | None) -> str:
+    """Mirrors the frontend's own percentage-vs-flat-amount display
+    convention (see CouponsPage.tsx's table cell: `discount_type ===
+    "percentage" ? value + "%" : value`) - no currency symbol, matching
+    that established convention exactly."""
+    if discount_type is None or discount_value is None:
+        return ""
+    if discount_type == "percentage":
+        return f"{discount_value}%"
+    return discount_value
 
 
 class GetActiveDiscountsExecutor(NodeExecutor):
