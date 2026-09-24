@@ -22,6 +22,7 @@ import {
 } from "@fusion-flow/ui";
 import { useAuthStore } from "../../lib/auth-store";
 import { listBusinessTemplates } from "../onboarding/business-templates-api";
+import { ClinicSchedulingCard } from "./components/ClinicSchedulingCard";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { fetchMembers, updateBusinessSettings } from "./api";
 
@@ -191,6 +192,9 @@ export function SettingsPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Clinic scheduling */}
+      <ClinicSchedulingCard businessId={businessId} />
 
       {/* Messaging kill switch */}
       <Card>

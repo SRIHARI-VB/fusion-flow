@@ -111,6 +111,14 @@ flattening to *any* module/filter combination instead of one hardcoded
 ticket lookup - `records.query` plus "take the first item, if any" baked
 in, since that step alone is what `resolve_path`'s list-indexing gap
 blocks a workflow author from doing themselves.
+`connectors_is_connected` (`connectors.is_connected`) answers "does this
+tenant have an actually-usable instance of connector type X right now"
+as a plain `{"connected": bool}`, generic over a config `connector_type_key`
+rather than a fixed `required_connector_type_key` like most connector-
+backed nodes - it exists so a workflow can gate a UI choice (e.g. only
+offer "online meeting" when `google_meet` is connected) on real
+capability instead of hardcoding an assumption, and treats "no instance
+of that type exists at all" as a normal `False`, never an error.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -123,6 +131,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     condition_field_compare,
     condition_multi_branch,
     connector_action,
+    connectors_is_connected,
     create_ticket,
     data_transform,
     facebook_message_received,
@@ -180,6 +189,7 @@ __all__ = [
     "condition_field_compare",
     "condition_multi_branch",
     "connector_action",
+    "connectors_is_connected",
     "create_ticket",
     "data_transform",
     "facebook_message_received",

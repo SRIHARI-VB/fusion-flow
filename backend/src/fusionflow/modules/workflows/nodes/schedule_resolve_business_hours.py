@@ -29,16 +29,42 @@ Two independent things this node answers, both from one config:
    field_compare` off `is_open_now` alone, using this node's default
    `day_reference="now"` and no `time_of_day` at all - no day/time-of-day
    reference needs to be configured for that case.
+
+Templating: `open_time`/`close_time`/`break_start`/`break_end`/each
+`closed_weekdays` entry/each `time_windows[name].start`/`.end` value are
+run through `engine.templating.interpolate` against `context.variables`
+before `BusinessHoursConfig.model_validate` - see `_interpolate_config`'s
+docstring for why that's a fixed, opt-in field list rather than a blind
+recursive walk of `context.config`. This lets a tenant's actual hours
+live in a `business_objects` "business_settings" record (looked up by an
+earlier node) and be referenced here as e.g.
+"{{business-settings.item.payload.open_time}}", instead of every
+workflow hardcoding that tenant's hours as literal config. A plain
+literal like "09:00" with no {{...}} in it is untouched by `interpolate`
+(no match, no substitution), so this is fully backward compatible with
+every config written before this change.
+
+Lunch-break support: `break_start`/`break_end` (both optional, both-or-
+neither) mark one daily window the business is closed even though it
+falls inside `open_time`/`close_time` - folded into `is_open_now` only.
+Deliberately NOT subtracted from `time_windows`: a tenant whose
+"afternoon" `TimeWindow` happens to straddle their break is assumed to
+have defined that window on purpose (e.g. as a coarse customer-facing
+label), and auto-splitting it would silently change what "afternoon"
+means out from under them. A tenant who wants a break-aware named window
+should define non-overlapping `time_windows` themselves. `is_open_now` is
+the one output that always reflects the literal true instant, so that's
+the only place the break is enforced.
 """
 
 from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, time, timedelta
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fusionflow.modules.workflows.engine.registry import (
     ExecutionContext,
@@ -47,6 +73,7 @@ from fusionflow.modules.workflows.engine.registry import (
     Success,
     node_executor_registry,
 )
+from fusionflow.modules.workflows.engine.templating import interpolate
 
 Weekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 #: Canonical lowercase weekday names, Monday-first, matching
@@ -108,6 +135,18 @@ class BusinessHoursConfig(BaseModel):
     time_of_day: str | None = Field(
         default=None, description="A key into 'time_windows' to check - must match one of its keys if set."
     )
+    break_start: str | None = Field(
+        default=None,
+        description=(
+            "24-hour 'HH:MM' a daily lunch/other break starts, e.g. '13:00'. Optional - a tenant "
+            "with no break omits this (and break_end). Only affects 'is_open_now', not "
+            "'time_of_day_passed' or 'time_windows' - see this module's docstring."
+        ),
+    )
+    break_end: str | None = Field(
+        default=None,
+        description="24-hour 'HH:MM' the break configured by break_start ends, e.g. '14:00'.",
+    )
 
     @field_validator("timezone")
     @classmethod
@@ -123,6 +162,22 @@ class BusinessHoursConfig(BaseModel):
     def _validate_hhmm(cls, value: str) -> str:
         _parse_hhmm(value)
         return value
+
+    @field_validator("break_start", "break_end")
+    @classmethod
+    def _validate_break_hhmm(cls, value: str | None) -> str | None:
+        # Both fields are optional (no break configured at all is the
+        # common case) - only run the same "HH:MM" check `open_time`/
+        # `close_time` use when a value is actually present.
+        if value is not None:
+            _parse_hhmm(value)
+        return value
+
+    @model_validator(mode="after")
+    def _validate_break_pair(self) -> "BusinessHoursConfig":
+        if (self.break_start is None) != (self.break_end is None):
+            raise ValueError("break_start and break_end must both be set, or both omitted")
+        return self
 
 
 _OUTPUT_SCHEMA = {
@@ -170,6 +225,66 @@ def _display(d: date) -> str:
     return f"{calendar.day_name[d.weekday()]}, {d.day} {calendar.month_name[d.month]} {d.year}"
 
 
+def _interpolate_config(raw_config: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
+    """Resolve `{{dot.path}}` templates in `raw_config` before Pydantic
+    ever sees it, so a value like `"{{business-settings.item.payload.
+    open_time}}"` lands as a real "HH:MM" string instead of failing
+    `BusinessHoursConfig`'s validators as literal template-marker text.
+
+    Deliberately touches an explicit, fixed set of fields
+    (`open_time`/`close_time`/`break_start`/`break_end`, each
+    `closed_weekdays` entry, each `time_windows[name].start`/`.end`)
+    rather than recursively interpolating every string anywhere in
+    `raw_config`. `day_reference`/`time_of_day` are also strings, but
+    they're identifiers this node dispatches on (a `Literal` value, or a
+    literal key into `time_windows`) rather than "HH:MM"-shaped data -
+    same reasoning `connector.action`'s `params` and `records.upsert`'s
+    `fields` already apply: templating is opt-in per field the node
+    actually expects to hold interpolatable data, not assumed for every
+    string an author could theoretically put in config. `interpolate` is
+    a no-op on a plain string with no `{{...}}` marker, so a config
+    written before this change (all literal "HH:MM" values) resolves to
+    the exact same dict it started as.
+    """
+    config = dict(raw_config)
+
+    for key in ("open_time", "close_time", "break_start", "break_end"):
+        value = config.get(key)
+        if isinstance(value, str):
+            config[key] = interpolate(value, variables)
+
+    closed_weekdays = config.get("closed_weekdays")
+    if isinstance(closed_weekdays, list):
+        config["closed_weekdays"] = [
+            interpolate(day, variables) if isinstance(day, str) else day for day in closed_weekdays
+        ]
+
+    time_windows = config.get("time_windows")
+    if isinstance(time_windows, dict):
+        resolved_windows: dict[str, Any] = {}
+        for name, window in time_windows.items():
+            if isinstance(window, dict):
+                resolved_window = dict(window)
+                for edge in ("start", "end"):
+                    edge_value = resolved_window.get(edge)
+                    if isinstance(edge_value, str):
+                        resolved_window[edge] = interpolate(edge_value, variables)
+                resolved_windows[name] = resolved_window
+            else:
+                resolved_windows[name] = window
+        config["time_windows"] = resolved_windows
+
+    return config
+
+
+def _in_break(config: "BusinessHoursConfig", now_time: time) -> bool:
+    """Whether `now_time` falls inside the configured lunch/other break
+    (`False` whenever no break is configured at all)."""
+    if config.break_start is None or config.break_end is None:
+        return False
+    return _parse_hhmm(config.break_start) <= now_time < _parse_hhmm(config.break_end)
+
+
 class ResolveBusinessHoursExecutor(NodeExecutor):
     node_type = "schedule.resolve_business_hours"
     kind = "action"
@@ -184,7 +299,7 @@ class ResolveBusinessHoursExecutor(NodeExecutor):
     output_schema = _OUTPUT_SCHEMA
 
     async def execute(self, context: ExecutionContext) -> NodeResult:
-        config = BusinessHoursConfig.model_validate(context.config)
+        config = BusinessHoursConfig.model_validate(_interpolate_config(context.config, context.variables))
         closed_weekdays = set(config.closed_weekdays)
 
         tz = ZoneInfo(config.timezone)
@@ -217,9 +332,16 @@ class ResolveBusinessHoursExecutor(NodeExecutor):
                 # resolved_date is strictly in the future - a window on a
                 # future date can never have "already passed".
                 time_of_day_passed = False
+            # Deliberately not break-aware: this answers "has the named
+            # window's own end time already gone by", which the break
+            # never changes (a window either already ended or it hasn't -
+            # the break doesn't move its `end`). The break's only job is
+            # gating `is_open_now` below; see this module's docstring.
 
-        is_open_now = today.strftime("%A").lower() not in closed_weekdays and (
-            _parse_hhmm(config.open_time) <= now.time() < _parse_hhmm(config.close_time)
+        is_open_now = (
+            today.strftime("%A").lower() not in closed_weekdays
+            and _parse_hhmm(config.open_time) <= now.time() < _parse_hhmm(config.close_time)
+            and not _in_break(config, now.time())
         )
 
         next_open = _next_open_day(resolved_date, closed_weekdays)
