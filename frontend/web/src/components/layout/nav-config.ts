@@ -29,6 +29,16 @@ import {
 export interface NavItem {
   label: string;
   /**
+   * Stable, permanent identifier for this item - unique across the WHOLE
+   * config (not just within its group). A saved per-user sidebar
+   * customization (reordering, moving between groups, archiving) references
+   * items by this key, so once assigned it must never change, even if the
+   * item's `label`/`path` later does. Deliberately independent of
+   * `moduleKey`, which is a different concept (a connector-catalog key)
+   * that could in principle be reused or changed.
+   */
+  key: string;
+  /**
    * Omitted for a parent item that exists purely to hold `children` (e.g.
    * a channel name under "Communication") - it renders as an
    * expand/collapse toggle instead of a link. Every leaf item (no
@@ -65,6 +75,12 @@ export interface NavItem {
 export interface NavGroup {
   label: string;
   /**
+   * Stable, permanent identifier for this group - unique among groups. See
+   * `NavItem.key` for why this must never change once assigned and why it's
+   * independent of `moduleKey`.
+   */
+  key: string;
+  /**
    * An OUTER gate checked before any item inside this group is considered
    * for visibility - matches a `connector_types.key` the same way
    * `NavItem.moduleKey` does, via `useModuleAccess()`. When set and not
@@ -81,66 +97,102 @@ export interface NavGroup {
 
 export const navGroups: NavGroup[] = [
   {
+    key: "main-menu",
     label: "Main Menu",
     items: [
-      { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, moduleKey: "dashboard" },
-      { label: "Products", path: "/products", icon: Package, moduleKey: "products" },
-      { label: "Services", path: "/services", icon: Wrench, moduleKey: "services" },
-      { label: "Coupons", path: "/coupons", icon: Tag, moduleKey: "coupons" },
-      { label: "Offers", path: "/offers", icon: Gift, moduleKey: "offers" },
+      { key: "dashboard", label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, moduleKey: "dashboard" },
+      { key: "products", label: "Products", path: "/products", icon: Package, moduleKey: "products" },
+      { key: "services", label: "Services", path: "/services", icon: Wrench, moduleKey: "services" },
+      { key: "coupons", label: "Coupons", path: "/coupons", icon: Tag, moduleKey: "coupons" },
+      { key: "offers", label: "Offers", path: "/offers", icon: Gift, moduleKey: "offers" },
     ],
   },
   {
+    key: "operations",
     label: "Operations",
     items: [
-      { label: "Customers", path: "/customers", icon: Users, moduleKey: "customers" },
+      { key: "customers", label: "Customers", path: "/customers", icon: Users, moduleKey: "customers" },
       {
+        key: "appointments",
         label: "Appointments",
         path: "/appointments",
         icon: CalendarClock,
         moduleKey: "appointments",
         requiresAnyChannelConnected: true,
       },
-      { label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
-      { label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },
-      { label: "Tickets", path: "/tickets", icon: LifeBuoy, moduleKey: "tickets" },
-      { label: "Knowledge Base", path: "/kb", icon: BookOpen, moduleKey: "kb" },
+      { key: "orders", label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
+      { key: "payments", label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },
+      { key: "tickets", label: "Tickets", path: "/tickets", icon: LifeBuoy, moduleKey: "tickets" },
+      { key: "knowledge-base", label: "Knowledge Base", path: "/kb", icon: BookOpen, moduleKey: "kb" },
     ],
   },
   {
+    key: "communication",
     label: "Communication",
     moduleKey: "communication",
     items: [
-      { label: "WhatsApp", path: "/communication/whatsapp/automations", icon: MessageCircle, moduleKey: "whatsapp" },
-      { label: "Instagram", path: "/communication/instagram/automations", icon: Instagram, moduleKey: "instagram" },
-      { label: "Telegram", path: "/communication/telegram/automations", icon: Send, moduleKey: "telegram" },
-      { label: "Facebook", path: "/communication/facebook/automations", icon: Facebook, moduleKey: "facebook" },
+      {
+        key: "whatsapp",
+        label: "WhatsApp",
+        path: "/communication/whatsapp/automations",
+        icon: MessageCircle,
+        moduleKey: "whatsapp",
+      },
+      {
+        key: "instagram",
+        label: "Instagram",
+        path: "/communication/instagram/automations",
+        icon: Instagram,
+        moduleKey: "instagram",
+      },
+      {
+        key: "telegram",
+        label: "Telegram",
+        path: "/communication/telegram/automations",
+        icon: Send,
+        moduleKey: "telegram",
+      },
+      {
+        key: "facebook",
+        label: "Facebook",
+        path: "/communication/facebook/automations",
+        icon: Facebook,
+        moduleKey: "facebook",
+      },
       // Common items - channel-agnostic, sit directly under Communication
       // rather than nested in any one channel.
-      { label: "Inbox", path: "/communication/inbox", icon: Inbox },
-      { label: "Quick Replies", path: "/communication/quick-replies", icon: MessageSquareText },
-      { label: "Media Library", path: "/communication/media-library", icon: Image },
-      { label: "Broadcast Campaigns", path: "/communication/broadcasts", icon: Megaphone },
+      { key: "inbox", label: "Inbox", path: "/communication/inbox", icon: Inbox },
+      { key: "quick-replies", label: "Quick Replies", path: "/communication/quick-replies", icon: MessageSquareText },
+      { key: "media-library", label: "Media Library", path: "/communication/media-library", icon: Image },
+      {
+        key: "broadcast-campaigns",
+        label: "Broadcast Campaigns",
+        path: "/communication/broadcasts",
+        icon: Megaphone,
+      },
     ],
   },
   {
+    key: "management",
     label: "Management",
     items: [
-      { label: "Connectors", path: "/connectors", icon: Plug },
-      { label: "Workflows", path: "/workflows", icon: Workflow, moduleKey: "workflows" },
-      { label: "Support Agent", path: "/support-agent", icon: Bot, moduleKey: "support_agent" },
+      { key: "connectors", label: "Connectors", path: "/connectors", icon: Plug },
+      { key: "workflows", label: "Workflows", path: "/workflows", icon: Workflow, moduleKey: "workflows" },
+      { key: "support-agent", label: "Support Agent", path: "/support-agent", icon: Bot, moduleKey: "support_agent" },
     ],
   },
   {
+    key: "settings",
     label: "Settings",
     items: [
       {
+        key: "custom-fields",
         label: "Custom Fields",
         path: "/settings/custom-fields",
         icon: SlidersHorizontal,
         moduleKey: "custom_fields",
       },
-      { label: "Settings", path: "/settings", icon: Settings },
+      { key: "settings", label: "Settings", path: "/settings", icon: Settings },
     ],
   },
 ];

@@ -35,6 +35,7 @@ from fusionflow.modules.predefined_automations.router import router as predefine
 from fusionflow.modules.quick_replies.router import router as quick_replies_router
 from fusionflow.modules.tenancy.router import router as tenancy_router
 from fusionflow.modules.tickets.router import router as tickets_router
+from fusionflow.modules.users.router import router as users_router
 from fusionflow.modules.workflows.engine.internal_router import router as workflows_internal_router
 from fusionflow.modules.workflows.router import router as workflows_router
 
@@ -73,5 +74,6 @@ api_router.include_router(broadcast_campaigns_router)
 api_router.include_router(inbox_router)
 api_router.include_router(media_library_router)
 api_router.include_router(quick_replies_router)
+api_router.include_router(users_router)
 
 __all__ = ["API_V1_PREFIX", "api_router"]
