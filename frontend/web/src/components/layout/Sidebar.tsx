@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
   cn,
 } from "@fusion-flow/ui";
-import { navGroups, type NavItem } from "./nav-config";
+import { navGroups, type NavGroup, type NavItem } from "./nav-config";
 import { useAuthStore } from "../../lib/auth-store";
 import { useLayoutStore } from "../../lib/layout-store";
 import { logout } from "../../lib/endpoints";
@@ -30,6 +30,14 @@ function isItemVisible(
 ): boolean {
   if (item.moduleKey && moduleAccess[item.moduleKey] !== "granted") return false;
   if (item.requiresAnyChannelConnected && !hasAnyChannelConnected) return false;
+  return true;
+}
+
+// Outer gate for an entire group (e.g. "Communication") - checked before any
+// of its items are considered, independent of each item's own `moduleKey`.
+// See the doc comment on `NavGroup.moduleKey` in nav-config.ts.
+function isGroupVisible(group: NavGroup, moduleAccess: Record<string, string>): boolean {
+  if (group.moduleKey && moduleAccess[group.moduleKey] !== "granted") return false;
   return true;
 }
 
@@ -106,6 +114,7 @@ export function Sidebar() {
 
         <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
           {navGroups
+            .filter((group) => isGroupVisible(group, moduleAccess))
             .flatMap((group) =>
               group.items.filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
             )
@@ -186,6 +195,7 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         {navGroups.map((group) => {
+          if (!isGroupVisible(group, moduleAccess)) return null;
           const visibleItems = group.items.filter((item) =>
             isItemVisible(item, moduleAccess, hasAnyChannelConnected),
           );

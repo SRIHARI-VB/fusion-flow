@@ -64,6 +64,18 @@ export interface NavItem {
 
 export interface NavGroup {
   label: string;
+  /**
+   * An OUTER gate checked before any item inside this group is considered
+   * for visibility - matches a `connector_types.key` the same way
+   * `NavItem.moduleKey` does, via `useModuleAccess()`. When set and not
+   * "granted", the entire group (and everything inside it) is hidden,
+   * regardless of any individual item's own `moduleKey`. This lets a whole
+   * feature area (e.g. "Communication") be admin-togglable as a unit,
+   * independent of which individual items/channels within it are
+   * separately enabled - a tenant needs BOTH this group-level key AND an
+   * item's own `moduleKey` granted to see that item.
+   */
+  moduleKey?: string;
   items: NavItem[];
 }
 
@@ -71,7 +83,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Main Menu",
     items: [
-      { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+      { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard, moduleKey: "dashboard" },
       { label: "Products", path: "/products", icon: Package, moduleKey: "products" },
       { label: "Services", path: "/services", icon: Wrench, moduleKey: "services" },
       { label: "Coupons", path: "/coupons", icon: Tag, moduleKey: "coupons" },
@@ -79,9 +91,16 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Customers",
+    label: "Operations",
     items: [
       { label: "Customers", path: "/customers", icon: Users, moduleKey: "customers" },
+      {
+        label: "Appointments",
+        path: "/appointments",
+        icon: CalendarClock,
+        moduleKey: "appointments",
+        requiresAnyChannelConnected: true,
+      },
       { label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
       { label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },
       { label: "Tickets", path: "/tickets", icon: LifeBuoy, moduleKey: "tickets" },
@@ -90,6 +109,7 @@ export const navGroups: NavGroup[] = [
   },
   {
     label: "Communication",
+    moduleKey: "communication",
     items: [
       { label: "WhatsApp", path: "/communication/whatsapp/automations", icon: MessageCircle, moduleKey: "whatsapp" },
       { label: "Instagram", path: "/communication/instagram/automations", icon: Instagram, moduleKey: "instagram" },
@@ -101,13 +121,6 @@ export const navGroups: NavGroup[] = [
       { label: "Quick Replies", path: "/communication/quick-replies", icon: MessageSquareText },
       { label: "Media Library", path: "/communication/media-library", icon: Image },
       { label: "Broadcast Campaigns", path: "/communication/broadcasts", icon: Megaphone },
-      {
-        label: "Appointments",
-        path: "/appointments",
-        icon: CalendarClock,
-        moduleKey: "appointments",
-        requiresAnyChannelConnected: true,
-      },
     ],
   },
   {

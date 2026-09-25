@@ -2,8 +2,9 @@
 
 Part of the "everything is a connector" unification: products, services,
 coupons, offers, customers, orders, appointments, payments, tickets, kb,
-custom_fields, workflows, and support_agent now live in the same global
-catalog table as WhatsApp/Razorpay, tagged `category=FEATURE` (no OAuth, no adapter, no
+custom_fields, workflows, support_agent, communication, and dashboard now
+live in the same global catalog table as WhatsApp/Razorpay, tagged
+`category=FEATURE` (no OAuth, no adapter, no
 `ConnectorInstance` state machine - entitlement alone gates their routes,
 see `modules.connectors.deps.require_module_access`). Kept as a separate
 script from `seed_connector_types.py` rather than merged into it: one list
@@ -45,6 +46,14 @@ FEATURE_MODULES = [
     {"key": "custom_fields", "display_name": "Custom Fields"},
     {"key": "workflows", "display_name": "Workflows"},
     {"key": "support_agent", "display_name": "Support Agent"},
+    # Group-level gate for the entire "Communication" nav section
+    # (WhatsApp/Instagram/Telegram/Facebook/Inbox/Quick Replies/Media
+    # Library/Broadcast Campaigns) - an outer gate on top of the existing
+    # per-channel keys (whatsapp/instagram/telegram/facebook), which still
+    # control each channel individually. See NavGroup.moduleKey (frontend).
+    {"key": "communication", "display_name": "Communication"},
+    # Gates the main Dashboard nav item.
+    {"key": "dashboard", "display_name": "Dashboard"},
     # Limit-only catalog keys: never checked by require_module_access,
     # only by get_resource_limit - one per custom-fields entity_type, so
     # an admin can cap Products fields differently from Services fields
