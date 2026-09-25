@@ -27,6 +27,7 @@ import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createOffer, deleteOffer, listOffers, updateOffer } from "./api";
 import { appliesToSummary, EMPTY_APPLIES_TO, ServiceProductPicker, toAppliesTo, type AppliesTo } from "./ServiceProductPicker";
+import { istLocalToUtcIso, utcIsoToIstLocal } from "./datetime-ist";
 import type { DiscountType, Offer } from "./types";
 
 interface FormValues {
@@ -54,14 +55,6 @@ function formatDiscount(discountType: DiscountType | null, discountValue: string
   return discountType === "percentage" ? `${discountValue}%` : discountValue;
 }
 
-function toDatetimeLocal(iso: string | null): string {
-  if (!iso) return "";
-  return iso.slice(0, 16);
-}
-
-function toIsoOrNull(value: string): string | null {
-  return value ? new Date(value).toISOString() : null;
-}
 
 export function OffersPage() {
   const queryClient = useQueryClient();
@@ -126,8 +119,8 @@ export function OffersPage() {
       has_discount: offer.discount_type != null,
       discount_type: offer.discount_type ?? "percentage",
       discount_value: offer.discount_value != null ? Number(offer.discount_value) : "",
-      active_from: toDatetimeLocal(offer.active_from),
-      active_to: toDatetimeLocal(offer.active_to),
+      active_from: utcIsoToIstLocal(offer.active_from),
+      active_to: utcIsoToIstLocal(offer.active_to),
       custom_fields: offer.custom_fields ?? {},
     });
     setAppliesTo(toAppliesTo(offer.applies_to));
@@ -140,8 +133,8 @@ export function OffersPage() {
       discount_type: values.has_discount ? values.discount_type : null,
       discount_value: values.has_discount && values.discount_value !== "" ? Number(values.discount_value) : null,
       applies_to: appliesTo,
-      active_from: toIsoOrNull(values.active_from),
-      active_to: toIsoOrNull(values.active_to),
+      active_from: istLocalToUtcIso(values.active_from),
+      active_to: istLocalToUtcIso(values.active_to),
       custom_fields: values.custom_fields,
     };
 
@@ -189,13 +182,13 @@ export function OffersPage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="active_from" className="text-sm font-medium">
-                  Active from
+                  Active from <span className="text-muted-foreground">(IST)</span>
                 </label>
                 <Input id="active_from" type="datetime-local" {...register("active_from")} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="active_to" className="text-sm font-medium">
-                  Active to
+                  Active to <span className="text-muted-foreground">(IST)</span>
                 </label>
                 <Input id="active_to" type="datetime-local" {...register("active_to")} />
               </div>

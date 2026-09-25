@@ -28,6 +28,7 @@ import { ResourceUsageBadge } from "../../components/ResourceUsageBadge";
 import { useResourceLimits } from "../../lib/useResourceLimits";
 import { createCoupon, deleteCoupon, listCoupons, updateCoupon } from "./api";
 import { appliesToSummary, EMPTY_APPLIES_TO, ServiceProductPicker, toAppliesTo, type AppliesTo } from "./ServiceProductPicker";
+import { istLocalToUtcIso, utcIsoToIstLocal } from "./datetime-ist";
 import type { Coupon, DiscountType } from "./types";
 
 interface FormValues {
@@ -49,15 +50,6 @@ const DEFAULT_VALUES: FormValues = {
   usage_limit: "",
   custom_fields: {},
 };
-
-function toDatetimeLocal(iso: string | null): string {
-  if (!iso) return "";
-  return iso.slice(0, 16);
-}
-
-function toIsoOrNull(value: string): string | null {
-  return value ? new Date(value).toISOString() : null;
-}
 
 export function CouponsPage() {
   const queryClient = useQueryClient();
@@ -90,8 +82,8 @@ export function CouponsPage() {
       discount_type: values.discount_type,
       discount_value: values.discount_value,
       applies_to: appliesTo,
-      valid_from: toIsoOrNull(values.valid_from),
-      valid_to: toIsoOrNull(values.valid_to),
+      valid_from: istLocalToUtcIso(values.valid_from),
+      valid_to: istLocalToUtcIso(values.valid_to),
       usage_limit: values.usage_limit === "" ? null : Number(values.usage_limit),
       custom_fields: values.custom_fields,
     };
@@ -131,8 +123,8 @@ export function CouponsPage() {
       code: coupon.code,
       discount_type: coupon.discount_type,
       discount_value: Number(coupon.discount_value),
-      valid_from: toDatetimeLocal(coupon.valid_from),
-      valid_to: toDatetimeLocal(coupon.valid_to),
+      valid_from: utcIsoToIstLocal(coupon.valid_from),
+      valid_to: utcIsoToIstLocal(coupon.valid_to),
       usage_limit: coupon.usage_limit ?? "",
       custom_fields: coupon.custom_fields ?? {},
     });
@@ -216,13 +208,13 @@ export function CouponsPage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="valid_from" className="text-sm font-medium">
-                  Valid from
+                  Valid from <span className="text-muted-foreground">(IST)</span>
                 </label>
                 <Input id="valid_from" type="datetime-local" {...register("valid_from")} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="valid_to" className="text-sm font-medium">
-                  Valid to
+                  Valid to <span className="text-muted-foreground">(IST)</span>
                 </label>
                 <Input id="valid_to" type="datetime-local" {...register("valid_to")} />
               </div>
