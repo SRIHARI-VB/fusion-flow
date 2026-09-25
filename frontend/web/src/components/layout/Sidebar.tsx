@@ -16,9 +16,21 @@ import { useAuthStore } from "../../lib/auth-store";
 import { useLayoutStore } from "../../lib/layout-store";
 import { logout } from "../../lib/endpoints";
 import { useModuleAccess } from "../../lib/useModuleAccess";
+import { useConnectorInstances } from "../../features/connectors/hooks";
 
-function isItemVisible(item: NavItem, moduleAccess: Record<string, string>): boolean {
-  return !item.moduleKey || moduleAccess[item.moduleKey] === "granted";
+// Communication-channel connector types - "at least one connected" is what
+// unlocks `requiresAnyChannelConnected` nav items (currently just
+// Appointments; see nav-config.ts's doc comment on that field).
+const CHANNEL_CONNECTOR_KEYS = new Set(["whatsapp", "instagram", "telegram", "facebook"]);
+
+function isItemVisible(
+  item: NavItem,
+  moduleAccess: Record<string, string>,
+  hasAnyChannelConnected: boolean,
+): boolean {
+  if (item.moduleKey && moduleAccess[item.moduleKey] !== "granted") return false;
+  if (item.requiresAnyChannelConnected && !hasAnyChannelConnected) return false;
+  return true;
 }
 
 export function Sidebar() {
@@ -28,6 +40,10 @@ export function Sidebar() {
   const business = useAuthStore((s) => s.business);
   const clear = useAuthStore((s) => s.clear);
   const { map: moduleAccess } = useModuleAccess();
+  const { data: connectorInstances } = useConnectorInstances();
+  const hasAnyChannelConnected = (connectorInstances ?? []).some(
+    (instance) => instance.state === "connected" && CHANNEL_CONNECTOR_KEYS.has(instance.connector_type_key),
+  );
   const collapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleCollapsed = useLayoutStore((s) => s.toggleSidebarCollapsed);
 
@@ -90,7 +106,9 @@ export function Sidebar() {
 
         <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
           {navGroups
-            .flatMap((group) => group.items.filter((item) => isItemVisible(item, moduleAccess)))
+            .flatMap((group) =>
+              group.items.filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
+            )
             // A parent-with-children (e.g. "WhatsApp") has no `path` of its
             // own and no room for an expand toggle in icon-only mode - it
             // links straight to its first child instead, using its own
@@ -168,7 +186,9 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter((item) => isItemVisible(item, moduleAccess));
+          const visibleItems = group.items.filter((item) =>
+            isItemVisible(item, moduleAccess, hasAnyChannelConnected),
+          );
           if (visibleItems.length === 0) return null;
           return (
           <div key={group.label} className="mb-5">
@@ -197,7 +217,7 @@ export function Sidebar() {
                     {isExpanded(item.label) && (
                       <div className="mt-0.5 flex flex-col gap-0.5 border-l border-sidebar-border pl-4">
                         {item.children
-                          .filter((child) => isItemVisible(child, moduleAccess))
+                          .filter((child) => isItemVisible(child, moduleAccess, hasAnyChannelConnected))
                           .map((child) => (
                             <NavLink
                               key={child.path}

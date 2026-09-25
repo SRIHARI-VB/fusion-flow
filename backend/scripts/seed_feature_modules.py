@@ -1,9 +1,9 @@
 """Seed the fixed-feature-module rows in the `connector_types` catalog.
 
 Part of the "everything is a connector" unification: products, services,
-coupons, offers, customers, orders, payments, tickets, kb, custom_fields,
-workflows, and support_agent now live in the same global catalog table as
-WhatsApp/Razorpay, tagged `category=FEATURE` (no OAuth, no adapter, no
+coupons, offers, customers, orders, appointments, payments, tickets, kb,
+custom_fields, workflows, and support_agent now live in the same global
+catalog table as WhatsApp/Razorpay, tagged `category=FEATURE` (no OAuth, no adapter, no
 `ConnectorInstance` state machine - entitlement alone gates their routes,
 see `modules.connectors.deps.require_module_access`). Kept as a separate
 script from `seed_connector_types.py` rather than merged into it: one list
@@ -32,6 +32,7 @@ FEATURE_MODULES = [
     {"key": "offers", "display_name": "Offers"},
     {"key": "customers", "display_name": "Customers"},
     {"key": "orders", "display_name": "Orders"},
+    {"key": "appointments", "display_name": "Appointments"},
     {"key": "payments", "display_name": "Payments"},
     {"key": "tickets", "display_name": "Tickets"},
     {"key": "kb", "display_name": "Knowledge Base"},

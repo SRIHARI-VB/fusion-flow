@@ -19,7 +19,6 @@ import {
   Instagram,
   Send,
   Facebook,
-  Zap,
   Inbox,
   MessageSquareText,
   Image,
@@ -51,6 +50,16 @@ export interface NavItem {
    * grandchildren.
    */
   children?: NavItem[];
+  /**
+   * Hides the item entirely (in both the expanded and collapsed sidebar)
+   * unless the tenant has at least one CONNECTED communication-channel
+   * connector instance (whatsapp/instagram/telegram/facebook). This is on
+   * top of - not instead of - the `moduleKey` gate. Appointments only
+   * exists because a connected channel's bot created them; showing the
+   * nav entry with zero channels connected would just lead to a
+   * permanently-empty, confusing page.
+   */
+  requiresAnyChannelConnected?: boolean;
 }
 
 export interface NavGroup {
@@ -73,7 +82,6 @@ export const navGroups: NavGroup[] = [
     label: "Customers",
     items: [
       { label: "Customers", path: "/customers", icon: Users, moduleKey: "customers" },
-      { label: "Appointments", path: "/appointments", icon: CalendarClock },
       { label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
       { label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },
       { label: "Tickets", path: "/tickets", icon: LifeBuoy, moduleKey: "tickets" },
@@ -83,44 +91,23 @@ export const navGroups: NavGroup[] = [
   {
     label: "Communication",
     items: [
-      {
-        label: "WhatsApp",
-        icon: MessageCircle,
-        moduleKey: "whatsapp",
-        children: [
-          { label: "Automations", path: "/communication/whatsapp/automations", icon: Zap },
-        ],
-      },
-      {
-        label: "Instagram",
-        icon: Instagram,
-        moduleKey: "instagram",
-        children: [
-          { label: "Automations", path: "/communication/instagram/automations", icon: Zap },
-        ],
-      },
-      {
-        label: "Telegram",
-        icon: Send,
-        moduleKey: "telegram",
-        children: [
-          { label: "Automations", path: "/communication/telegram/automations", icon: Zap },
-        ],
-      },
-      {
-        label: "Facebook",
-        icon: Facebook,
-        moduleKey: "facebook",
-        children: [
-          { label: "Automations", path: "/communication/facebook/automations", icon: Zap },
-        ],
-      },
+      { label: "WhatsApp", path: "/communication/whatsapp/automations", icon: MessageCircle, moduleKey: "whatsapp" },
+      { label: "Instagram", path: "/communication/instagram/automations", icon: Instagram, moduleKey: "instagram" },
+      { label: "Telegram", path: "/communication/telegram/automations", icon: Send, moduleKey: "telegram" },
+      { label: "Facebook", path: "/communication/facebook/automations", icon: Facebook, moduleKey: "facebook" },
       // Common items - channel-agnostic, sit directly under Communication
       // rather than nested in any one channel.
       { label: "Inbox", path: "/communication/inbox", icon: Inbox },
       { label: "Quick Replies", path: "/communication/quick-replies", icon: MessageSquareText },
       { label: "Media Library", path: "/communication/media-library", icon: Image },
       { label: "Broadcast Campaigns", path: "/communication/broadcasts", icon: Megaphone },
+      {
+        label: "Appointments",
+        path: "/appointments",
+        icon: CalendarClock,
+        moduleKey: "appointments",
+        requiresAnyChannelConnected: true,
+      },
     ],
   },
   {
