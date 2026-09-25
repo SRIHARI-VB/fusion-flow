@@ -1,6 +1,14 @@
 import { useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, Sparkles } from "lucide-react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  LogOut,
+  Sparkles,
+} from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -11,34 +19,39 @@ import {
   DropdownMenuTrigger,
   cn,
 } from "@fusion-flow/ui";
-import { navGroups, type NavGroup, type NavItem } from "./nav-config";
+import { navGroups, type NavItem } from "./nav-config";
+import { computeEffectiveNav } from "./sidebar-layout";
+import { isEffectiveGroupVisible, isItemVisible, useHasAnyChannelConnected } from "./nav-visibility";
 import { useAuthStore } from "../../lib/auth-store";
 import { useLayoutStore } from "../../lib/layout-store";
+import { useSidebarLayout } from "../../lib/useSidebarLayout";
 import { logout } from "../../lib/endpoints";
 import { useModuleAccess } from "../../lib/useModuleAccess";
-import { useConnectorInstances } from "../../features/connectors/hooks";
 
-// Communication-channel connector types - "at least one connected" is what
-// unlocks `requiresAnyChannelConnected` nav items (currently just
-// Appointments; see nav-config.ts's doc comment on that field).
-const CHANNEL_CONNECTOR_KEYS = new Set(["whatsapp", "instagram", "telegram", "facebook"]);
+// localStorage key for per-group expand/collapse UI state - deliberately NOT
+// part of the persisted `SidebarLayout` (backend), since this is ephemeral
+// per-browser convenience, not structural customization (reordering/
+// archiving/custom groups), which lives server-side instead.
+const COLLAPSED_GROUPS_STORAGE_KEY = "sidebar-collapsed-groups";
 
-function isItemVisible(
-  item: NavItem,
-  moduleAccess: Record<string, string>,
-  hasAnyChannelConnected: boolean,
-): boolean {
-  if (item.moduleKey && moduleAccess[item.moduleKey] !== "granted") return false;
-  if (item.requiresAnyChannelConnected && !hasAnyChannelConnected) return false;
-  return true;
+function readCollapsedGroups(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
 }
 
-// Outer gate for an entire group (e.g. "Communication") - checked before any
-// of its items are considered, independent of each item's own `moduleKey`.
-// See the doc comment on `NavGroup.moduleKey` in nav-config.ts.
-function isGroupVisible(group: NavGroup, moduleAccess: Record<string, string>): boolean {
-  if (group.moduleKey && moduleAccess[group.moduleKey] !== "granted") return false;
-  return true;
+function writeCollapsedGroups(value: Record<string, boolean>) {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Best-effort only (private browsing / storage quota) - collapse state
+    // just won't survive a reload, which is harmless.
+  }
 }
 
 export function Sidebar() {
@@ -48,12 +61,18 @@ export function Sidebar() {
   const business = useAuthStore((s) => s.business);
   const clear = useAuthStore((s) => s.clear);
   const { map: moduleAccess } = useModuleAccess();
-  const { data: connectorInstances } = useConnectorInstances();
-  const hasAnyChannelConnected = (connectorInstances ?? []).some(
-    (instance) => instance.state === "connected" && CHANNEL_CONNECTOR_KEYS.has(instance.connector_type_key),
-  );
+  const hasAnyChannelConnected = useHasAnyChannelConnected();
   const collapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleCollapsed = useLayoutStore((s) => s.toggleSidebarCollapsed);
+
+  // The user's saved sidebar customization (reordering/archiving/custom
+  // groups), merged on top of the built-in `navGroups` into the flat,
+  // ordered list actually rendered below. `layout === null` (no saved
+  // customization yet, or still loading) renders identically to the
+  // built-in `navGroups`.
+  const { layout } = useSidebarLayout();
+  const effectiveGroups = useMemo(() => computeEffectiveNav(navGroups, layout), [layout]);
+  const navGroupsByKey = useMemo(() => new Map(navGroups.map((group) => [group.key, group])), []);
 
   // Which parent-with-children items are expanded, keyed by label (unique
   // within a group, and this sidebar's nav tree is small enough that a
@@ -80,6 +99,48 @@ export function Sidebar() {
   function toggleExpanded(label: string) {
     setManuallyToggled((prev) => ({ ...prev, [label]: !isExpanded(label) }));
   }
+
+  // Per-group collapse/expand (expanded sidebar only) - purely a per-browser
+  // UI convenience, persisted to localStorage rather than the backend
+  // `SidebarLayout`. Defaults to expanded when a group has no stored
+  // preference.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
+
+  function isGroupCollapsed(groupKey: string): boolean {
+    return collapsedGroups[groupKey] ?? false;
+  }
+
+  function toggleGroupCollapsed(groupKey: string) {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [groupKey]: !(prev[groupKey] ?? false) };
+      writeCollapsedGroups(next);
+      return next;
+    });
+  }
+
+  // Whether the "Archive" entry is expanded - transient UI state, not
+  // persisted (unlike per-group collapse above).
+  const [archiveExpanded, setArchiveExpanded] = useState(false);
+
+  // Everything archived, flattened: every item belonging to an archived
+  // group, plus every individually-archived item inside a non-archived
+  // group - each still gated by the same `isItemVisible` check as anything
+  // else (an archived item a tenant no longer has access to shouldn't
+  // render, even in the Archive list), and dropped entirely if its whole
+  // group fails the group-level gate.
+  const archivedNavItems = useMemo(() => {
+    const result: NavItem[] = [];
+    for (const group of effectiveGroups) {
+      if (!isEffectiveGroupVisible(group, navGroupsByKey, moduleAccess)) continue;
+      for (const effectiveItem of group.items) {
+        if (!group.archived && !effectiveItem.archived) continue;
+        if (isItemVisible(effectiveItem.item, moduleAccess, hasAnyChannelConnected)) {
+          result.push(effectiveItem.item);
+        }
+      }
+    }
+    return result;
+  }, [effectiveGroups, navGroupsByKey, moduleAccess, hasAnyChannelConnected]);
 
   const initials = (user?.email ?? "F F")
     .split("@")[0]
@@ -113,10 +174,16 @@ export function Sidebar() {
         </button>
 
         <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
-          {navGroups
-            .filter((group) => isGroupVisible(group, moduleAccess))
+          {effectiveGroups
+            // Collapsed icon-rail has no room for a nested archive concept
+            // (or a per-group collapse toggle) - archived groups/items are
+            // simply excluded here, not shown at all when collapsed.
+            .filter((group) => !group.archived && isEffectiveGroupVisible(group, navGroupsByKey, moduleAccess))
             .flatMap((group) =>
-              group.items.filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
+              group.items
+                .filter((effectiveItem) => !effectiveItem.archived)
+                .map((effectiveItem) => effectiveItem.item)
+                .filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
             )
             // A parent-with-children (e.g. "WhatsApp") has no `path` of its
             // own and no room for an expand toggle in icon-only mode - it
@@ -194,18 +261,34 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
-        {navGroups.map((group) => {
-          if (!isGroupVisible(group, moduleAccess)) return null;
-          const visibleItems = group.items.filter((item) =>
-            isItemVisible(item, moduleAccess, hasAnyChannelConnected),
-          );
+        {effectiveGroups.map((group) => {
+          if (group.archived) return null;
+          if (!isEffectiveGroupVisible(group, navGroupsByKey, moduleAccess)) return null;
+          const visibleItems = group.items
+            .filter((effectiveItem) => !effectiveItem.archived)
+            .map((effectiveItem) => effectiveItem.item)
+            .filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected));
           if (visibleItems.length === 0) return null;
+          const groupCollapsed = isGroupCollapsed(group.key);
           return (
-          <div key={group.label} className="mb-5">
-            <div className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {group.label}
-            </div>
-            <div className="flex flex-col gap-0.5">
+          <div key={group.key} className="mb-5">
+            <button
+              type="button"
+              onClick={() => toggleGroupCollapsed(group.key)}
+              className="mb-2 flex w-full items-center gap-1 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              aria-expanded={!groupCollapsed}
+            >
+              <ChevronDown
+                className={cn("h-3 w-3 shrink-0 transition-transform", groupCollapsed && "-rotate-90")}
+              />
+              <span className="flex-1 text-left">{group.label}</span>
+            </button>
+            <div
+              className={cn(
+                "flex flex-col gap-0.5 overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out",
+                groupCollapsed ? "max-h-0 opacity-0" : "max-h-[1000px] opacity-100",
+              )}
+            >
               {visibleItems.map((item) =>
                 item.children && item.children.length > 0 ? (
                   <div key={item.label}>
@@ -270,6 +353,45 @@ export function Sidebar() {
           </div>
           );
         })}
+
+        {archivedNavItems.length > 0 && (
+          <div className="mt-1 border-t border-sidebar-border pt-3">
+            <button
+              type="button"
+              onClick={() => setArchiveExpanded((prev) => !prev)}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-muted"
+              aria-expanded={archiveExpanded}
+            >
+              <Archive className="h-4 w-4" />
+              <span className="flex-1 text-left">Archive</span>
+              <ChevronDown
+                className={cn("h-3.5 w-3.5 shrink-0 transition-transform", archiveExpanded && "rotate-180")}
+              />
+            </button>
+            <div
+              className={cn(
+                "flex flex-col gap-0.5 overflow-hidden transition-[max-height,opacity] duration-200 ease-in-out",
+                archiveExpanded ? "mt-0.5 max-h-[1000px] opacity-100" : "max-h-0 opacity-0",
+              )}
+            >
+              {archivedNavItems.map((item) => (
+                <NavLink
+                  key={item.key}
+                  to={item.path ?? "#"}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      isActive ? "bg-sidebar-active text-accent" : "text-sidebar-foreground hover:bg-muted",
+                    )
+                  }
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          </div>
+        )}
       </nav>
 
       <DropdownMenu>

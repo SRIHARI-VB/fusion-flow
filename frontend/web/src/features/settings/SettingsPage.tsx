@@ -23,6 +23,7 @@ import {
 import { useAuthStore } from "../../lib/auth-store";
 import { listBusinessTemplates } from "../onboarding/business-templates-api";
 import { ClinicSchedulingCard } from "./components/ClinicSchedulingCard";
+import { SidebarCustomizationCard } from "./components/SidebarCustomizationCard";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { fetchMembers, updateBusinessSettings } from "./api";
 
@@ -327,6 +328,9 @@ export function SettingsPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Sidebar customization */}
+      <SidebarCustomizationCard />
 
       {/* Danger zone */}
       <Card className="border-destructive/40">

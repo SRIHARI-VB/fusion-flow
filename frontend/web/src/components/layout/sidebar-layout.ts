@@ -22,7 +22,12 @@ export interface SidebarLayoutGroup {
   kind: "builtin" | "custom";
   /** Set (and equal to `id`) when `kind === "builtin"`; omitted for custom groups. */
   builtinKey?: string;
-  /** User-chosen display name - only meaningful (and only set) for custom groups. */
+  /**
+   * User-chosen display name. Always set for custom groups (their only
+   * label). Optional for built-in groups - when present it overrides that
+   * group's default `NavGroup.label` (a rename); when absent the built-in
+   * group keeps its default label.
+   */
   label?: string;
   order: number;
   archived: boolean;
@@ -117,7 +122,7 @@ export function computeEffectiveNav(
     const groupOverride = overrideGroupById.get(group.key);
     buckets.set(group.key, {
       key: group.key,
-      label: group.label,
+      label: groupOverride?.label ?? group.label,
       order: groupOverride?.order ?? index,
       archived: groupOverride?.archived ?? false,
       items: [],
