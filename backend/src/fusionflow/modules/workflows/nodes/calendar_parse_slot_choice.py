@@ -35,6 +35,7 @@ _OUTPUT_SCHEMA = {
         "end_iso": {"type": ["string", "null"]},
         "label": {"type": ["string", "null"]},
         "context": {"type": ["string", "null"]},
+        "date": {"type": ["string", "null"], "description": "YYYY-MM-DD (date part of start_iso) - a 'date'-typed custom field rejects a full datetime string with a non-midnight time."},
     },
 }
 
@@ -52,6 +53,7 @@ _NOT_FOUND: dict[str, Any] = {
     "end_iso": None,
     "label": None,
     "context": None,
+    "date": None,
 }  # type: ignore[name-defined]
 
 
@@ -98,6 +100,7 @@ class ParseSlotChoiceExecutor(NodeExecutor):
                 "end_iso": end_str,
                 "label": label,
                 "context": context_str,
+                "date": start_dt.date().isoformat(),
             }
         )
 

@@ -777,6 +777,68 @@ class InstagramAdapter(base.ConnectorAdapter):
                 pass
             raise ValueError(f"Meta rejected the button template send: {detail}") from exc
 
+    async def send_quick_replies(
+        self,
+        *,
+        instance: ConnectorInstance,
+        session: AsyncSession,
+        recipient_id: str,
+        text: str,
+        replies: list[dict[str, str]],
+    ) -> None:
+        """Send a Quick Replies message: a text prompt with up to 13
+        tappable options (Meta's real cap - the Button Template's 3-button
+        limit above is a *different*, stricter message type) - use this
+        instead of `send_button_template` whenever a workflow may have more
+        than 3 genuinely distinct options to offer in one message (e.g.
+        `instagram.ask_calendar_slot`'s available time slots). Each reply
+        is `{"title": ..., "payload": ...}`; a tap arrives through the
+        Messaging webhook as an ordinary `postback` event, identical to a
+        button-template tap, so existing postback-routing chains need no
+        changes to consume either.
+        """
+        secret = await connector_service.get_credential_secret(session, instance=instance)
+        if secret is None:
+            raise RuntimeError(f"no credential stored for connector instance {instance.id}")
+
+        instagram_account_id = (instance.provider_ref_ids or {}).get("instagram_account_id")
+        if not instagram_account_id:
+            raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
+
+        try:
+            async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
+                response = await client.post(
+                    f"/{instagram_account_id}/messages",
+                    headers={"Authorization": f"Bearer {secret['access_token']}"},
+                    json={
+                        "recipient": {"id": recipient_id},
+                        "message": {
+                            "text": text,
+                            "quick_replies": [
+                                {"content_type": "text", "title": r["title"], "payload": r["payload"]}
+                                for r in replies
+                            ],
+                        },
+                    },
+                )
+                response.raise_for_status()
+        except _NETWORK_UNREACHABLE_ERRORS as exc:
+            logger.warning(
+                "[instagram] could not reach %s (%s) - stub mode: skipping this quick-replies send so "
+                "the workflow action stays testable offline (instance=%s, recipient_id=%s).",
+                settings.INSTAGRAM_GRAPH_API_BASE_URL,
+                exc,
+                instance.id,
+                recipient_id,
+            )
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text
+            try:
+                detail = exc.response.json().get("error", {}).get("message", detail)
+            except ValueError:
+                pass
+            raise ValueError(f"Meta rejected the quick replies send: {detail}") from exc
+
     async def set_ice_breakers(
         self, *, instance: ConnectorInstance, session: AsyncSession, questions: list[dict[str, str]]
     ) -> None:
@@ -1041,6 +1103,16 @@ class InstagramAdapter(base.ConnectorAdapter):
                 instance=instance, session=session, recipient_id=recipient_id, text=text, buttons=buttons
             )
             return {"recipient_id": recipient_id}
+        if action == "send_quick_replies":
+            recipient_id = params.get("recipient_id")
+            text = params.get("text")
+            replies = params.get("replies")
+            if not recipient_id or not text or not replies:
+                raise ValueError("send_quick_replies requires non-empty 'recipient_id', 'text', and 'replies' params")
+            await self.send_quick_replies(
+                instance=instance, session=session, recipient_id=recipient_id, text=text, replies=replies
+            )
+            return {"recipient_id": recipient_id}
         if action == "get_user_profile":
             user_id = params.get("user_id")
             if not user_id:
@@ -1176,6 +1248,16 @@ class InstagramAdapter(base.ConnectorAdapter):
         Also skips a story reply (`message.reply_to.story` set) - that
         routes to `_extract_story_reply`/`instagram.story_reply_received`
         instead, so it doesn't ALSO fire as a plain DM.
+
+        Also skips a Quick Replies tap (`message.quick_reply` set) - Meta
+        delivers that as an ordinary message webhook entry too
+        (`message.text` is the tapped option's own title, alongside a
+        `message.quick_reply.payload` field this method never looks at),
+        not a separate event type the way a button-template tap gets its
+        own `messaging[].postback` - see `_extract_postback`, which is
+        where this routes instead, so a slot/option tap doesn't ALSO fire
+        as a plain DM with no `payload` a postback-routing chain could
+        branch on.
         """
         entries = body.get("entry") or []
         for entry in entries:
@@ -1184,6 +1266,8 @@ class InstagramAdapter(base.ConnectorAdapter):
                 if not message or message.get("is_echo"):
                     continue
                 if (message.get("reply_to") or {}).get("story"):
+                    continue
+                if message.get("quick_reply"):
                     continue
                 return {
                     "from": (messaging.get("sender") or {}).get("id"),
@@ -1234,19 +1318,40 @@ class InstagramAdapter(base.ConnectorAdapter):
         of this method assumed no stable id existed here and left it
         undeduplicated, which meant every one of Meta's retries fired its
         own workflow run - a single button tap producing several replies.
+
+        Also recognizes a Quick Replies tap - a *different* wire shape
+        (`messaging[].message = {"mid": ..., "text": <title>,
+        "quick_reply": {"payload": ...}}`, not a `.postback` field at
+        all), but the exact same trigger-side event conceptually (a tap
+        that must carry a `payload` a routing chain can branch on) - so
+        this normalizes both into one `{from, payload, title, mid}` shape
+        and fires as `instagram.postback_received` either way. This is
+        deliberately NOT split into a separate trigger type: every
+        existing/future postback-routing chain in this codebase branches
+        on `trigger.payload` prefixes, and neither the graph author nor
+        the customer cares which Meta message type happened to render the
+        options, only which one they tapped.
         """
         entries = body.get("entry") or []
         for entry in entries:
             for messaging in entry.get("messaging") or []:
                 postback = messaging.get("postback")
-                if not postback:
-                    continue
-                return {
-                    "from": (messaging.get("sender") or {}).get("id"),
-                    "payload": postback.get("payload"),
-                    "title": postback.get("title"),
-                    "mid": postback.get("mid"),
-                }
+                if postback:
+                    return {
+                        "from": (messaging.get("sender") or {}).get("id"),
+                        "payload": postback.get("payload"),
+                        "title": postback.get("title"),
+                        "mid": postback.get("mid"),
+                    }
+                message = messaging.get("message")
+                quick_reply = (message or {}).get("quick_reply")
+                if message and quick_reply and not message.get("is_echo"):
+                    return {
+                        "from": (messaging.get("sender") or {}).get("id"),
+                        "payload": quick_reply.get("payload"),
+                        "title": message.get("text"),
+                        "mid": message.get("mid"),
+                    }
         return None
 
     @staticmethod
