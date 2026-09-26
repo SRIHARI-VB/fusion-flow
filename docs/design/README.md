@@ -11,7 +11,7 @@ Two dashboard screenshots (light + dark) and one workflow-builder screenshot wer
 - **Trend panel** (large, ~2/3 width): title + info icon + overflow menu (`...`), a legend-style total figure, colored dot legend toggles (e.g. "New user" / "Existing user"), a period-toggle button group (Weekly/Monthly/Yearly), a bar chart with hover tooltip card showing a breakdown for the hovered period.
 - **Breakdown panel** (~1/3 width): title + subtitle, total figure, a date-range dropdown, a highlighted "Get AI insight" callout row (icon + text + arrow), and a secondary bar chart below.
 - **Data table** ("Recent Transactions" or similar): header row with checkbox-select-all, sortable column headers (small up/down caret icons), a search input, a solid accent "+ Add" button, and row-level actions.
-- **Color system**: light mode = white/near-white surfaces, dark near-black text; dark mode = dark slate/near-black surfaces (~`#111214`), same layout and spacing, same accent. Single accent: warm orange (~`#F97316`) used for primary buttons, active nav pill, active toggle states, and the dominant chart series. Positive deltas in green. Implement as CSS variables / Tailwind `dark:` variants driven by shadcn/ui theme tokens — one component tree, token swap only.
+- **Color system**: light mode = off-white/white surfaces, charcoal text; dark mode = deep forest-charcoal surfaces (~`#10201A`), same layout and spacing, same accent. Single accent: pine green (~`#165B4C`, `#2A8F6C` in dark mode) used for primary buttons, active nav pill, active toggle states, and the dominant chart series. Positive deltas in green. Implement as CSS variables / Tailwind `dark:` variants driven by shadcn/ui theme tokens — one component tree, token swap only.
 
 ## Workflow builder
 
@@ -21,10 +21,23 @@ Two dashboard screenshots (light + dark) and one workflow-builder screenshot wer
 - **Top bar**: workflow name + back icon on the left, `Static Variables` / `Global Variables` toggles, `Autosave` toggle, undo/redo icons, a solid accent "Save" button with icon on the right.
 - **Mapping to our node taxonomy**: reference categories map to our own node groups — `Messages`→messaging actions (send WhatsApp message, etc.), `Choices`→condition/branch nodes, `Inputs`→trigger/data-capture nodes, `Payments`→payment connector actions, `Ecommerce`→order/product actions. Card visual style (icon+title header, body preview, colored ports) is adopted directly for our `@xyflow/react` custom node components.
 
-## Palette tokens (starting point, adjust in `frontend/packages/ui`)
+## Palette tokens (`frontend/packages/ui/src/theme.css` is the live source; this mirrors it)
 
-- `--accent`: `#F97316` (orange-500)
+Forest-green/sage palette:
+
+- Deep Forest / Pine Green: `#0F4C3A` → `#165B4C` — brand accent (`--accent`, `--ring`)
+- Soft Sage / Mint Tint: `#EAF4EE` → `#F0F7F3` — muted/secondary surfaces, accent-soft, active sidebar pill
+- Clean Off-White: `#FBFBF9` → `#FFFFFF` — page background → card/sidebar surfaces
+- Charcoal Slate: `#1A2421` — primary text (`--foreground`)
+- Muted Sage Gray: `#5A6E67` → `#70807B` — secondary/muted text, inactive sidebar labels
+
+- `--accent`: `#165B4C` (dark mode: `#2A8F6C`)
 - `--accent-foreground`: `#FFFFFF`
-- `--success`: `#16A34A` (green-600, deltas)
-- Light surfaces: `#FFFFFF` / `#F8FAFC` (page bg) / `#0F172A` (primary text)
-- Dark surfaces: `#111214` (page bg) / `#1A1B1E` (card bg) / `#F1F5F9` (primary text)
+- `--success`: `#1F9D55` (dark mode: `#34C286`) — deliberately a different green than the brand accent so deltas stay visually distinct
+- `--destructive`: `#DC2626` (dark mode: `#EF4444`) — kept red regardless of theme, not part of the brand palette
+- Light surfaces: `#FFFFFF` / `#FBFBF9` (page bg) / `#1A2421` (primary text)
+- Dark surfaces: `#10201A` (page bg) / `#17281F` (card bg) / `#EAF4EE` (primary text)
+
+## Typography
+
+- Font: **Outfit** (Google Font), loaded via `<link>` in both apps' `index.html`, set as `fontFamily.sans` in the shared Tailwind preset and as the `body` font-family in `theme.css`. Falls back to the system sans stack if the Google Fonts request fails.

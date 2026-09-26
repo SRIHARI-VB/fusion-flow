@@ -11,6 +11,17 @@ const preset: Partial<Config> = {
   darkMode: "class",
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          "Outfit",
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "Segoe UI",
+          "Roboto",
+          "sans-serif",
+        ],
+      },
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",

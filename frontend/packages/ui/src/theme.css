@@ -1,78 +1,91 @@
 /**
  * fusion-flow design tokens (light + dark).
  * Source of truth: docs/design/README.md "Palette tokens" section.
- * Accent/success/surface values are exact; secondary/muted/border/destructive
- * tokens are additions needed to build coherent real components.
+ * Forest-green/sage palette (accent, muted/secondary, surfaces, sidebar) is
+ * the exact 5-color spec given; border/ring/dark-mode/success values are
+ * derived to stay in the same hue family. `destructive` is deliberately
+ * kept red regardless of theme - it's a semantic warning color, not brand.
  */
 
 :root {
   /* surfaces */
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: #fbfbf9;
+  --foreground: #1a2421;
   --card: #ffffff;
-  --card-foreground: #0f172a;
+  --card-foreground: #1a2421;
 
   /* structure */
-  --border: #e2e8f0;
-  --input: #e2e8f0;
-  --ring: #f97316;
+  --border: #dce6e0;
+  --input: #dce6e0;
+  --ring: #165b4c;
 
   /* muted / secondary */
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #0f172a;
+  --muted: #f0f7f3;
+  --muted-foreground: #5a6e67;
+  --secondary: #eaf4ee;
+  --secondary-foreground: #1a2421;
 
   /* accent (brand) */
-  --accent: #f97316;
+  --accent: #165b4c;
   --accent-foreground: #ffffff;
-  --accent-soft: #ffedd5;
+  --accent-soft: #eaf4ee;
 
   /* semantic */
-  --success: #16a34a;
+  --success: #1f9d55;
   --success-foreground: #ffffff;
-  --success-soft: #dcfce7;
+  --success-soft: #e3f5ea;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
 
   /* sidebar / chrome */
   --sidebar: #ffffff;
-  --sidebar-border: #e2e8f0;
-  --sidebar-foreground: #334155;
-  --sidebar-active: #fff2e8;
+  --sidebar-border: #dce6e0;
+  --sidebar-foreground: #5a6e67;
+  --sidebar-active: #eaf4ee;
 
   --radius: 0.625rem;
 }
 
 .dark {
-  --background: #111214;
-  --foreground: #f1f5f9;
-  --card: #1a1b1e;
-  --card-foreground: #f1f5f9;
+  --background: #10201a;
+  --foreground: #eaf4ee;
+  --card: #17281f;
+  --card-foreground: #eaf4ee;
 
-  --border: #2a2b2f;
-  --input: #2a2b2f;
-  --ring: #f97316;
+  --border: #24382f;
+  --input: #24382f;
+  --ring: #2f9e76;
 
-  --muted: #1f2023;
-  --muted-foreground: #9aa3af;
-  --secondary: #1f2023;
-  --secondary-foreground: #f1f5f9;
+  --muted: #1c2e26;
+  --muted-foreground: #8fa79d;
+  --secondary: #1c2e26;
+  --secondary-foreground: #eaf4ee;
 
-  --accent: #f97316;
+  --accent: #2a8f6c;
   --accent-foreground: #ffffff;
-  --accent-soft: #3a2412;
+  --accent-soft: #1f3a2e;
 
-  --success: #16a34a;
+  --success: #34c286;
   --success-foreground: #ffffff;
-  --success-soft: #103b1f;
+  --success-soft: #163527;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  --sidebar: #1a1b1e;
-  --sidebar-border: #2a2b2f;
-  --sidebar-foreground: #cbd5e1;
-  --sidebar-active: #3a2412;
+  --sidebar: #17281f;
+  --sidebar-border: #24382f;
+  --sidebar-foreground: #b9c9c1;
+  --sidebar-active: #1f3a2e;
+}
+
+body {
+  font-family:
+    "Outfit",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
 }
 
 /*
