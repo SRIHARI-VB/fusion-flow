@@ -11,12 +11,17 @@ a template (`{{node.slots.0.label}}` doesn't resolve), so nothing else in
 this engine could actually turn a plain "here are the slots" output into
 buttons without this node doing the rendering itself.
 
-Each button's payload is `"SLOT:<start_iso>|<end_iso>"` (pipe, not colon,
-as the inner separator - an ISO datetime string already contains colons
-itself, e.g. `2026-09-26T10:00:00+05:30`, so colon-splitting the two
-halves back apart would be ambiguous) - fully self-contained (no DB
+Each button's payload is `"SLOT:<context>|<start_iso>|<end_iso>"` (pipe,
+not colon, as the separator - an ISO datetime string already contains
+colons itself, e.g. `2026-09-26T10:00:00+05:30`, so colon-splitting the
+parts back apart would be ambiguous) - fully self-contained (no DB
 lookup needed to resolve it later), parsed back apart by the paired
-`calendar.parse_slot_choice` node.
+`calendar.parse_slot_choice` node. `context` is an opaque, caller-chosen
+passthrough string (e.g. which of several parallel day/concern chains
+led here) - this node never inspects it, it exists purely so a workflow
+author can recover "what was this a slot for" once the tap that picked a
+slot starts a brand-new run (postback taps always do in this engine) and
+the original chain's variables are gone.
 
 More than 3 available slots in a period is a graph-authoring pattern
 (chain two instances with offset=0,3, exactly like `instagram.ask_choice`
@@ -60,6 +65,14 @@ class AskCalendarSlotConfig(BaseModel):
     slot_minutes: int = Field(default=30, ge=5, le=180)
     limit: int = Field(default=3, ge=1, le=_MAX_BUTTONS)
     offset: int = Field(default=0, ge=0)
+    context: str = Field(
+        default="",
+        description=(
+            "Templated, opaque passthrough embedded in each button's payload and echoed back by "
+            "calendar.parse_slot_choice - use it to carry state (e.g. which concern/day chain this "
+            "was) across the run boundary a postback tap always creates. Must not contain '|'."
+        ),
+    )
 
     @field_validator("timezone")
     @classmethod
@@ -126,6 +139,7 @@ class AskCalendarSlotExecutor(NodeExecutor):
         period_start_str = interpolate(config.period_start, context.variables)
         period_end_str = interpolate(config.period_end, context.variables)
         tz_name = interpolate(config.timezone, context.variables)
+        context_str = interpolate(config.context, context.variables).replace("|", "")
 
         ig_instance = await _resolve_instance(context, config.instagram_connector_instance_id)
         if isinstance(ig_instance, Failure):
@@ -192,7 +206,7 @@ class AskCalendarSlotExecutor(NodeExecutor):
         buttons = []
         for slot_start, slot_end in window:
             label = f"{_format_12h(slot_start)} - {_format_12h(slot_end)}"[:_MAX_TITLE_LENGTH]
-            payload = f"SLOT:{slot_start.isoformat()}|{slot_end.isoformat()}"
+            payload = f"SLOT:{context_str}|{slot_start.isoformat()}|{slot_end.isoformat()}"
             buttons.append({"type": "postback", "title": label, "payload": payload})
 
         try:

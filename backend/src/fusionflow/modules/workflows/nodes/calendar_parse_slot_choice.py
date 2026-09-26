@@ -1,6 +1,6 @@
 """`calendar.parse_slot_choice` — the safe consumer half of
-`instagram.ask_calendar_slot`'s `"SLOT:<start_iso>|<end_iso>"` postback
-payload.
+`instagram.ask_calendar_slot`'s `"SLOT:<context>|<start_iso>|<end_iso>"`
+postback payload.
 
 Same "no-match-is-not-an-error" convention as
 `module.get_from_choice_payload`: a malformed/missing/unparseable payload
@@ -34,6 +34,7 @@ _OUTPUT_SCHEMA = {
         "start_iso": {"type": ["string", "null"]},
         "end_iso": {"type": ["string", "null"]},
         "label": {"type": ["string", "null"]},
+        "context": {"type": ["string", "null"]},
     },
 }
 
@@ -45,7 +46,13 @@ def _format_12h(dt: datetime) -> str:
     even be locally tested otherwise). `%I` + manual lstrip is portable."""
     return dt.strftime("%I:%M %p").lstrip("0")
 
-_NOT_FOUND: dict[str, Any] = {"found": False, "start_iso": None, "end_iso": None, "label": None}  # type: ignore[name-defined]
+_NOT_FOUND: dict[str, Any] = {
+    "found": False,
+    "start_iso": None,
+    "end_iso": None,
+    "label": None,
+    "context": None,
+}  # type: ignore[name-defined]
 
 
 class ParseSlotChoiceConfig(BaseModel):
@@ -70,8 +77,11 @@ class ParseSlotChoiceExecutor(NodeExecutor):
             return Success(output=dict(_NOT_FOUND))
 
         body = raw[len(_PREFIX) :]
-        start_str, sep, end_str = body.partition("|")
-        if not sep or not start_str or not end_str:
+        parts = body.split("|")
+        if len(parts) != 3:
+            return Success(output=dict(_NOT_FOUND))
+        context_str, start_str, end_str = parts
+        if not start_str or not end_str:
             return Success(output=dict(_NOT_FOUND))
 
         try:
@@ -81,7 +91,15 @@ class ParseSlotChoiceExecutor(NodeExecutor):
             return Success(output=dict(_NOT_FOUND))
 
         label = f"{_format_12h(start_dt)} - {_format_12h(end_dt)}"
-        return Success(output={"found": True, "start_iso": start_str, "end_iso": end_str, "label": label})
+        return Success(
+            output={
+                "found": True,
+                "start_iso": start_str,
+                "end_iso": end_str,
+                "label": label,
+                "context": context_str,
+            }
+        )
 
 
 node_executor_registry.register(ParseSlotChoiceExecutor())
