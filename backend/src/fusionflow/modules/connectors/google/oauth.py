@@ -211,9 +211,26 @@ async def revoke_token(*, token: str) -> None:
         logger.warning("[google-oauth] best-effort token revoke failed: %s", exc)
 
 
+_NO_IDENTITY: dict[str, Any] = {"email": None, "name": None, "sub": None}
+
+
 async def fetch_userinfo(*, access_token: str) -> tuple[bool, dict[str, Any]]:
     """`(is_stub, {"email": str, "name": str, "sub": str})` - the safe-field
-    allowlist every Google adapter puts into `connected_identity`."""
+    allowlist every Google adapter puts into `connected_identity`.
+
+    A 401/403 here is an EXPECTED outcome, not a real error: every adapter
+    requests the narrowest scope that still covers what it actually does
+    (calendar.events / meetings.space.created - see each adapter's own
+    module docstring on least-privilege scoping), and Google's userinfo
+    endpoint requires an identity scope (openid/email/profile) that none
+    of them request on purpose. A previous version raised `ValueError`
+    here, which - since `handle_oauth_callback` calls this BEFORE
+    persisting the real access/refresh tokens via `upsert_credential` -
+    threw away an otherwise fully successful OAuth grant just because the
+    cosmetic "connected as <email>" label couldn't be filled in. Degrade
+    to no-identity instead: the tokens are still valid for what the
+    connector actually needs, this only affects the display label.
+    """
     if access_token.startswith("stub-access-token-"):
         return True, {"email": "dev-sandbox@example.com", "name": "fusion-flow Dev Sandbox", "sub": "stub-user"}
     try:
@@ -222,7 +239,12 @@ async def fetch_userinfo(*, access_token: str) -> tuple[bool, dict[str, Any]]:
                 settings.GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"}
             )
         if response.status_code in (401, 403):
-            raise ValueError("Google rejected this access token when fetching userinfo")
+            logger.info(
+                "[google-oauth] userinfo rejected (%s) - likely no identity scope requested "
+                "(least-privilege by design). Connection still proceeds without a display identity.",
+                response.status_code,
+            )
+            return False, dict(_NO_IDENTITY)
         response.raise_for_status()
         data = response.json()
         return False, {"email": data.get("email"), "name": data.get("name"), "sub": data.get("id")}
