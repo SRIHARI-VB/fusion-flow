@@ -44,6 +44,7 @@ _OUTPUT_SCHEMA = {
         "start_iso": {"type": ["string", "null"]},
         "end_iso": {"type": ["string", "null"]},
         "label": {"type": ["string", "null"]},
+        "date": {"type": ["string", "null"], "description": "YYYY-MM-DD (date part of start_iso) - a 'date'-typed custom field rejects a full datetime string with a non-midnight time."},
     },
 }
 
@@ -54,6 +55,7 @@ _NOT_FOUND: dict[str, Any] = {
     "start_iso": None,
     "end_iso": None,
     "label": None,
+    "date": None,
 }  # type: ignore[name-defined]
 
 
@@ -87,7 +89,7 @@ class ParseModeChoiceExecutor(NodeExecutor):
             return Success(output=dict(_NOT_FOUND))
 
         try:
-            datetime.fromisoformat(start_str)
+            start_dt = datetime.fromisoformat(start_str)
             datetime.fromisoformat(end_str)
         except ValueError:
             return Success(output=dict(_NOT_FOUND))
@@ -100,6 +102,7 @@ class ParseModeChoiceExecutor(NodeExecutor):
                 "start_iso": start_str,
                 "end_iso": end_str,
                 "label": label_str or None,
+                "date": start_dt.date().isoformat(),
             }
         )
 
