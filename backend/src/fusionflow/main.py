@@ -29,6 +29,10 @@ from fusionflow.modules.workflows.engine.schedule_poller import (
     register_schedule_poller,
     start_schedule_poller,
 )
+from fusionflow.modules.workflows.engine.feedback_poller import (
+    register_feedback_poller,
+    start_feedback_poller,
+)
 
 # Imported for its side effect: registers every ORM class with the
 # SQLAlchemy registry so string-based relationships resolve. Do not remove.
@@ -81,6 +85,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # pluggable-JobQueue shape as the outbox poller above.
         register_schedule_poller(app.state.jobs)
         await start_schedule_poller(app.state.jobs)
+
+        # Post-visit feedback asks becoming due a day after an appointment -
+        # same pluggable-JobQueue shape as the two pollers above, and same
+        # is_serverless caveat: on Vercel this is dead code, the real trigger
+        # there is internal_router.py's cron-hit endpoint instead.
+        register_feedback_poller(app.state.jobs)
+        await start_feedback_poller(app.state.jobs)
 
     yield
     close = getattr(app.state.cache, "aclose", None)
