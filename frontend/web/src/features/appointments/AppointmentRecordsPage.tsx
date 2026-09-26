@@ -1,40 +1,24 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Card,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@fusion-flow/ui";
-import { DynamicCustomFieldsCells, DynamicCustomFieldsColumns } from "../custom-fields";
-import { fetchObjectType, getCustomersByIds, listObjectFieldDefinitions, listObjectRecords } from "./api";
-import { toDisplayFieldDefinition } from "./types";
+import { Button } from "@fusion-flow/ui";
+import { CalendarView } from "./CalendarView";
+import { UpcomingListView } from "./UpcomingListView";
+import { normalizeAppointment } from "./appointmentHelpers";
+import { getCustomersByIds, listObjectRecords } from "./api";
 
 /**
- * The business-object type `key` this page renders. Everything below reads
- * field definitions/records generically off whatever type this points at -
- * lift this component (and swap the key) to view a different tenant-defined
- * object type's records.
+ * The business-object type `key` this page renders records for (see
+ * `fusionflow.modules.business_objects`) - records are created by the
+ * clinic's booking chatbot workflow, not by hand here, so there's no
+ * create/edit/delete UI, just calendar/list views.
  */
 const OBJECT_TYPE_KEY = "appointment";
 
-/** Read-only viewer for a tenant's "appointment" business-object records
- * (see `fusionflow.modules.business_objects`) - these are created by the
- * clinic's booking chatbot workflow, not by hand here, so there's no
- * create/edit/delete UI, just a list. */
-export function AppointmentRecordsPage() {
-  const { data: objectType, isLoading: typeLoading } = useQuery({
-    queryKey: ["business-objects", "type", OBJECT_TYPE_KEY],
-    queryFn: () => fetchObjectType(OBJECT_TYPE_KEY),
-  });
+type ViewMode = "calendar" | "list";
 
-  const { data: fieldDefinitions = [], isLoading: fieldsLoading } = useQuery({
-    queryKey: ["business-objects", "fields", objectType?.id],
-    queryFn: () => listObjectFieldDefinitions(objectType!.id),
-    enabled: !!objectType,
-  });
+/** Read-only viewer for a tenant's "appointment" business-object records. */
+export function AppointmentRecordsPage() {
+  const [view, setView] = useState<ViewMode>("calendar");
 
   const { data: records = [], isLoading: recordsLoading } = useQuery({
     queryKey: ["business-objects", "records", OBJECT_TYPE_KEY],
@@ -49,10 +33,6 @@ export function AppointmentRecordsPage() {
     enabled: customerIds.length > 0,
   });
 
-  const displayFieldDefinitions = fieldDefinitions.map(toDisplayFieldDefinition);
-  const isLoading = typeLoading || fieldsLoading || recordsLoading;
-  const columnCount = displayFieldDefinitions.length + 2; // + Customer, Created
-
   function customerLabel(customerId: string | null): string {
     if (!customerId) return "—";
     const customer = customersById?.get(customerId);
@@ -61,52 +41,45 @@ export function AppointmentRecordsPage() {
     return customer.name || customerId;
   }
 
+  // Only legacy records (no `customer_name` field) ever fall through to
+  // `customerLabel`, so this only refetches/rebuilds when it can actually
+  // change something on screen.
+  const appointments = useMemo(
+    () => records.map((record) => normalizeAppointment(record, customerLabel)),
+    [records, customersById],
+  );
+
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Appointments</h1>
-        <p className="text-sm text-muted-foreground">Bookings created by your chatbot workflows.</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Appointments</h1>
+          <p className="text-sm text-muted-foreground">Bookings created by your chatbot workflows.</p>
+        </div>
+        <div className="inline-flex gap-1 rounded-md border border-border bg-card p-1">
+          <Button
+            type="button"
+            size="sm"
+            variant={view === "calendar" ? "default" : "ghost"}
+            onClick={() => setView("calendar")}
+          >
+            Calendar
+          </Button>
+          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} onClick={() => setView("list")}>
+            Upcoming
+          </Button>
+        </div>
       </div>
 
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <DynamicCustomFieldsColumns definitions={displayFieldDefinitions} />
-              <TableHead>Customer</TableHead>
-              <TableHead>Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading && (
-              <TableRow>
-                <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
-                  Loading...
-                </TableCell>
-              </TableRow>
-            )}
-            {!isLoading && records.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
-                  No appointments yet.
-                </TableCell>
-              </TableRow>
-            )}
-            {!isLoading &&
-              records.map((record) => (
-                <TableRow key={record.id}>
-                  <DynamicCustomFieldsCells definitions={displayFieldDefinitions} values={record.payload} />
-                  <TableCell className="text-sm text-muted-foreground">
-                    {customerLabel(record.customer_id)}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {new Date(record.created_at).toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-      </Card>
+      {recordsLoading ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+          Loading…
+        </div>
+      ) : view === "calendar" ? (
+        <CalendarView appointments={appointments} />
+      ) : (
+        <UpcomingListView appointments={appointments} />
+      )}
     </div>
   );
 }

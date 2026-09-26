@@ -34,6 +34,29 @@ export interface ObjectRecord {
   updated_at: string;
 }
 
+export type AppointmentMode = "online" | "offline";
+
+/**
+ * Loose, documentation-only shape of the "appointment" object type's
+ * `payload`. Every field is optional because `ObjectRecord.payload` is a
+ * freeform `Record<string, unknown>` at the type level (it's whatever the
+ * tenant's field definitions happen to be), and because older records
+ * predate the `customer_name`/`appointment_date`/`time_slot`/
+ * `appointment_mode`/`meet_link` fields - see `appointmentHelpers.ts`'s
+ * `normalizeAppointment`, which reads this defensively and treats any record
+ * missing a parseable `appointment_date` as a legacy booking.
+ */
+export interface AppointmentPayload {
+  customer_name?: string;
+  appointment_date?: string;
+  time_slot?: string;
+  appointment_mode?: AppointmentMode | string;
+  meet_link?: string | null;
+  service?: string;
+  preferred_time?: string;
+  status?: string;
+}
+
 /**
  * Adapts a business-object field definition to the `FieldDefinition` shape
  * `DynamicCustomFieldsColumns`/`DynamicCustomFieldsCells` (from
