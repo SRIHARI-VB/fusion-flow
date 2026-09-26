@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { AxiosError } from "axios";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
 import { login } from "../lib/endpoints";
@@ -18,7 +18,12 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const setSession = useAuthStore((s) => s.setSession);
+  // Set by RequireAuth when it bounced an unauthenticated visit here (e.g.
+  // a reload, or the Google OAuth connect flow's return URL) - falls back
+  // to /dashboard for a normal, unprompted visit to /login.
+  const from = (location.state as { from?: string } | null)?.from;
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -36,8 +41,9 @@ export function LoginPage() {
       setSession(session);
 
       // A "pre-tenant" token (multi-membership user) omits tenant_id — route to business select
-      // instead of assuming every login lands on /dashboard.
-      navigate(session.requires_business_selection ? "/select-business" : "/dashboard");
+      // instead of assuming every login lands on /dashboard/the return page (a business
+      // must be chosen first regardless of where they were headed).
+      navigate(session.requires_business_selection ? "/select-business" : from ?? "/dashboard");
     } catch (err) {
       const axiosErr = err as AxiosError<{ detail?: string }>;
       setServerError(

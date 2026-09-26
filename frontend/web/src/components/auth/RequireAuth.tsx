@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useAuthStore } from "../../lib/auth-store";
 import { refreshAccessToken } from "../../lib/api-client";
@@ -22,6 +22,7 @@ import { refreshAccessToken } from "../../lib/api-client";
 export function RequireAuth({ children }: { children: ReactNode }) {
   const accessToken = useAuthStore((s) => s.accessToken);
   const [checkedSession, setCheckedSession] = useState(!!accessToken);
+  const location = useLocation();
 
   useEffect(() => {
     if (accessToken) {
@@ -53,6 +54,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   // `setSession`) and this component's own re-render from `checkedSession`
   // flipping true land together, so this reflects whichever the refresh
   // actually produced.
-  if (!accessToken) return <Navigate to="/login" replace />;
+  // Preserves where the user was trying to go (including the full path +
+  // query string, e.g. the Google OAuth connect-flow's return URL) so
+  // Login.tsx can send them back there instead of always to /dashboard.
+  if (!accessToken) {
+    return <Navigate to="/login" state={{ from: `${location.pathname}${location.search}` }} replace />;
+  }
   return <>{children}</>;
 }

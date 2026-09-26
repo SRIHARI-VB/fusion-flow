@@ -31,7 +31,19 @@ def set_refresh_cookie(response: Response, raw_token: str) -> None:
         # Secure is relaxed in dev only, so the cookie still works over
         # plain http://localhost; every other environment gets Secure.
         secure=not settings.is_development,
-        samesite="strict",
+        # "strict" in dev (frontend/backend are both on `localhost`, just
+        # different ports - same-site, so strict costs nothing there).
+        # "none" in every other environment: frontend and backend are
+        # deployed as two separate `*.vercel.app` projects, which the
+        # browser treats as different SITES (vercel.app is on the Public
+        # Suffix List) - a "strict" (or even "lax") cookie is silently
+        # withheld on every cross-site fetch/XHR AND on a top-level
+        # navigation returning from a third party (e.g. Google's OAuth
+        # consent redirect back to the frontend), breaking session
+        # restore on reload and stranding the OAuth-connect flow at
+        # /login. "none" requires Secure=True (already true whenever
+        # this branch is reached, since is_development is false).
+        samesite="strict" if settings.is_development else "none",
         path=REFRESH_COOKIE_PATH,
     )
 
