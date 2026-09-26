@@ -13,10 +13,19 @@ _dispatch`):
 - Scheduled/recurring broadcast sends firing at their `next_run_at`
   (`schedule_poller.py`) - same story, a clock-driven event has no
   webhook to attach to.
+- Post-visit feedback asks becoming due a day after an appointment
+  (`feedback_poller.py`) - same story again; `vercel.json`'s daily cron
+  cadence is exactly what that poller's "was this yesterday" check
+  wants, so no separate cron entry was needed for it.
+- Appointment reminders due ~2 hours before a confirmed slot
+  (`appointment_reminder_poller.py`) - unlike the daily-granularity check
+  above, this one genuinely needs a tighter cadence than once a day to
+  land anywhere near "2 hours before" a specific time - see that
+  cron entry's own comment in `vercel.json`.
 
-This route runs one pass of both pollers (`outbox_poller.poll_once` also
-covers ordinary inbox dispatch and the 24h stale-reply-wait sweep, both
-otherwise redundant with the inline webhook dispatch but harmless to
+This route runs one pass of all four pollers (`outbox_poller.poll_once`
+also covers ordinary inbox dispatch and the 24h stale-reply-wait sweep,
+both otherwise redundant with the inline webhook dispatch but harmless to
 re-run) and is meant to be hit by a Vercel Cron Job (see `backend/
 vercel.json`), which sends `Authorization: Bearer <CRON_SECRET>`
 automatically once configured - `_verify_cron_secret` below checks that
@@ -30,7 +39,12 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 
 from fusionflow.config import get_settings
-from fusionflow.modules.workflows.engine import outbox_poller, schedule_poller
+from fusionflow.modules.workflows.engine import (
+    appointment_reminder_poller,
+    feedback_poller,
+    outbox_poller,
+    schedule_poller,
+)
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -55,4 +69,11 @@ async def run_scheduled_tasks(authorization: str | None = Header(default=None)) 
     _verify_cron_secret(authorization)
     inbox_processed = await outbox_poller.poll_once()
     schedules_fired = await schedule_poller.poll_once()
-    return {"inbox_processed": inbox_processed, "schedules_fired": schedules_fired}
+    feedback_asks_attempted = await feedback_poller.poll_once()
+    reminders_sent = await appointment_reminder_poller.poll_once()
+    return {
+        "inbox_processed": inbox_processed,
+        "schedules_fired": schedules_fired,
+        "feedback_asks_attempted": feedback_asks_attempted,
+        "reminders_sent": reminders_sent,
+    }
