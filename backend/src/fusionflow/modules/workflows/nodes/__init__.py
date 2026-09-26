@@ -182,12 +182,17 @@ consumer half of that payload - same "malformed/not found resolves to a
 plain result, never a `Failure`" convention as
 `module_get_from_choice_payload`. Also exposes a plain `date` (YYYY-MM-DD)
 alongside `start_iso`, since a `date`-typed custom field rejects a full
-datetime string. (A short-lived `calendar_parse_mode_choice` node once
-existed alongside this one, to carry a slot forward across the extra run
-boundary an "online or offline?" customer-facing question would have
-introduced - removed once that question was replaced with an automatic
-`connectors.is_connected("google_meet")` check made in the same run as
-the slot pick, which needs no such hand-off.)
+datetime string.
+
+`calendar_parse_mode_choice` (`calendar.parse_mode_choice`) is the same
+safe-parse convention applied to the online/offline postback sent after
+a slot is picked (payload `"MODE:<online|offline>|<context>|<start_iso>|
+<end_iso>|<label>"`) - the slot's run has already ended by the time this
+question is asked, so its own buttons carry the resolved slot forward
+rather than this node re-deriving it. Only asked at all when
+`connectors.is_connected("google_meet")` is true upstream; when it isn't,
+the booking flow skips straight to in-person off `calendar.parse_slot_choice`
+directly and this node never runs.
 
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
@@ -197,6 +202,7 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     broadcast_scheduled_send,
+    calendar_parse_mode_choice,
     calendar_parse_slot_choice,
     catalog_classify_consultation_bucket,
     catalog_get_active_discounts,
@@ -263,6 +269,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 
 __all__ = [
     "broadcast_scheduled_send",
+    "calendar_parse_mode_choice",
     "calendar_parse_slot_choice",
     "catalog_classify_consultation_bucket",
     "catalog_get_active_discounts",
