@@ -35,7 +35,7 @@ from fusionflow.modules.workflows.engine.registry import (
     Success,
     node_executor_registry,
 )
-from fusionflow.modules.workflows.engine.templating import resolve_template_value
+from fusionflow.modules.workflows.engine.templating import resolve_template_value_deep
 
 
 class ConnectorActionConfig(BaseModel):
@@ -43,15 +43,16 @@ class ConnectorActionConfig(BaseModel):
     action: str = Field(min_length=1, description="Which action to run on the connected integration, e.g. 'send_text_message'.")
     params: dict[str, Any] = Field(
         default_factory=dict,
-        description="The settings for that action. String values may use '{{dot.path}}' templating.",
+        description=(
+            "The settings for that action. String values may use '{{dot.path}}' templating - "
+            "including strings nested inside lists/dicts, e.g. a button template's "
+            "buttons[].payload."
+        ),
     )
 
 
 def _interpolate_params(params: dict[str, Any], variables: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: resolve_template_value(value, variables) if isinstance(value, str) else value
-        for key, value in params.items()
-    }
+    return {key: resolve_template_value_deep(value, variables) for key, value in params.items()}
 
 
 class ConnectorActionExecutor(NodeExecutor):

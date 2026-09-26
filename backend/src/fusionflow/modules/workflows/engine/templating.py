@@ -60,3 +60,19 @@ def resolve_template_value(template: str, variables: dict[str, Any]) -> Any:
     if whole is not None:
         return resolve_path(variables, whole.group(1))
     return interpolate(template, variables)
+
+
+def resolve_template_value_deep(value: Any, variables: dict[str, Any]) -> Any:
+    """Same as `resolve_template_value`, but recurses into dicts/lists -
+    for a config field that's a nested structure with templated strings
+    somewhere inside it (e.g. a button-template's `buttons: [{"title":
+    ..., "payload": "{{node.field}}"}, ...]`), not a single string field.
+    Only strings are ever templated; every other type (int, bool, None,
+    already-resolved dict/list) passes through unchanged."""
+    if isinstance(value, str):
+        return resolve_template_value(value, variables)
+    if isinstance(value, dict):
+        return {key: resolve_template_value_deep(v, variables) for key, v in value.items()}
+    if isinstance(value, list):
+        return [resolve_template_value_deep(item, variables) for item in value]
+    return value
