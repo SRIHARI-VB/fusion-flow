@@ -159,7 +159,13 @@ async def update_customer(
         customer.phone = payload.phone
     if payload.custom_fields is not None:
         field_defs = await list_field_definitions(session, customer.tenant_id)
-        customer.custom_fields = _validate_customer_custom_fields(field_defs, payload.custom_fields)
+        # Merge, not replace - a caller updating one custom field (e.g. a
+        # workflow node saving just "doctor_note") must not silently wipe
+        # every other custom field already on this customer. Matches
+        # ObjectRecord.update_record's identical merge-before-validate
+        # convention.
+        merged = {**customer.custom_fields, **payload.custom_fields}
+        customer.custom_fields = _validate_customer_custom_fields(field_defs, merged)
     await session.flush()
     return customer
 
