@@ -6,21 +6,22 @@ import type { NormalizedAppointment } from "./appointmentHelpers";
 
 /**
  * Chronological list of every appointment whose `appointment_date` is today
- * or later. Records with no parseable `appointment_date` (pre-dating that
- * field) are un-datable and can't be sorted/shown here - they're rendered
- * in a separate "Legacy bookings" section below instead of being dropped.
+ * or later. Ticket-flow bookings the clinic hasn't manually scheduled to a
+ * specific slot yet have no `appointment_date` at all - they're un-datable
+ * and can't be sorted/shown here, so they're rendered in a separate
+ * "Pending requests" section below instead of being dropped.
  */
 export function UpcomingListView({ appointments }: { appointments: NormalizedAppointment[] }) {
   const todayKey = toDateKey(new Date());
 
   const upcoming = appointments
-    .filter((appt): appt is NormalizedAppointment & { dateKey: string } => !appt.isLegacy && appt.dateKey !== null && appt.dateKey >= todayKey)
+    .filter((appt): appt is NormalizedAppointment & { dateKey: string } => !appt.isPending && appt.dateKey !== null && appt.dateKey >= todayKey)
     .sort((a, b) => {
       if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
       return (a.timeSlot ?? "").localeCompare(b.timeSlot ?? "");
     });
 
-  const legacy = appointments.filter((appt) => appt.isLegacy);
+  const pending = appointments.filter((appt) => appt.isPending);
 
   return (
     <div className="flex flex-col gap-6">
@@ -61,20 +62,20 @@ export function UpcomingListView({ appointments }: { appointments: NormalizedApp
         </CardContent>
       </Card>
 
-      {legacy.length > 0 && (
+      {pending.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Legacy bookings</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Pending requests</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {legacy.map((appt) => (
+            {pending.map((appt) => (
               <div key={appt.id} className="flex flex-col gap-1 rounded-md border border-dashed border-border p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-foreground">{appt.customerName}</span>
                   <StatusBadge status={appt.status} />
                 </div>
                 {appt.service && <span className="text-muted-foreground">{appt.service}</span>}
-                <span className="text-xs text-muted-foreground">{appt.legacyPreferredTime ?? "No date/time on record"}</span>
+                <span className="text-xs text-muted-foreground">{appt.preferredTime ?? "No date/time on record"}</span>
               </div>
             ))}
           </CardContent>

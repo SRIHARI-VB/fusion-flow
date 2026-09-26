@@ -11,11 +11,13 @@ import type { AppointmentMode, ObjectRecord } from "./types";
 
 export interface NormalizedAppointment {
   id: string;
-  /** True when the record predates `appointment_date` (or the value present
-   * isn't a parseable date) - i.e. it only has the old `service` /
-   * `preferred_time` / `status` fields. These can't be placed on the
-   * calendar and are shown separately as "Legacy bookings". */
-  isLegacy: boolean;
+  /** True when this booking has no `appointment_date` yet - i.e. it's a
+   * ticket-flow "requested" booking the clinic hasn't manually scheduled
+   * to a specific slot yet (`appointment_date`/`time_slot`/`appointment_mode`
+   * are all optional for exactly this reason - only a confirmed, calendar-
+   * booked appointment has them). These can't be placed on the calendar and
+   * are shown separately as "Pending requests". */
+  isPending: boolean;
   customerName: string;
   service: string | null;
   timeSlot: string | null;
@@ -23,10 +25,10 @@ export interface NormalizedAppointment {
   meetLink: string | null;
   status: string | null;
   date: Date | null;
-  /** Local `YYYY-MM-DD` key for grouping onto the calendar / comparing to "today". Null for legacy records. */
+  /** Local `YYYY-MM-DD` key for grouping onto the calendar / comparing to "today". Null while pending. */
   dateKey: string | null;
-  /** Raw `preferred_time` free-text, kept only for legacy display. */
-  legacyPreferredTime: string | null;
+  /** Raw `preferred_time` free-text - the customer's original ask, shown for pending requests since there's no confirmed slot yet. */
+  preferredTime: string | null;
   createdAt: string;
 }
 
@@ -110,8 +112,8 @@ export function formatDateKeyHuman(dateKey: string): string {
 /**
  * Adapts one raw `ObjectRecord` into the shape the calendar/list views
  * render. `resolveCustomerName` is only consulted when the record has no
- * `customer_name` payload value directly (i.e. legacy records) - it's the
- * existing customers-API-backed lookup from `AppointmentRecordsPage`.
+ * `customer_name` payload value directly - it's the existing customers-API-
+ * backed lookup from `AppointmentRecordsPage`.
  */
 export function normalizeAppointment(
   record: ObjectRecord,
@@ -127,7 +129,7 @@ export function normalizeAppointment(
 
   return {
     id: record.id,
-    isLegacy: date === null,
+    isPending: date === null,
     customerName: directCustomerName ?? resolveCustomerName(record.customer_id),
     service: nonEmptyString(payload.service),
     timeSlot: nonEmptyString(payload.time_slot),
@@ -136,7 +138,7 @@ export function normalizeAppointment(
     status: nonEmptyString(payload.status),
     date,
     dateKey: date ? toDateKey(date) : null,
-    legacyPreferredTime: nonEmptyString(payload.preferred_time),
+    preferredTime: nonEmptyString(payload.preferred_time),
     createdAt: record.created_at,
   };
 }

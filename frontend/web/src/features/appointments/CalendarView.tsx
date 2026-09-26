@@ -15,7 +15,7 @@ import { DayDetailsModal } from "./DayDetailsModal";
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MAX_CHIPS_PER_DAY = 3;
 
-/** Month-grid calendar of appointments, grouped onto `appointment_date` cells. Legacy (undated) records never appear here - see `UpcomingListView`'s "Legacy bookings" section. */
+/** Month-grid calendar of appointments, grouped onto `appointment_date` cells. Pending (undated) requests never appear here - see `UpcomingListView`'s "Pending requests" section. */
 export function CalendarView({ appointments }: { appointments: NormalizedAppointment[] }) {
   const [monthAnchor, setMonthAnchor] = useState(() => startOfMonth(new Date()));
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
@@ -23,7 +23,7 @@ export function CalendarView({ appointments }: { appointments: NormalizedAppoint
   const byDate = useMemo(() => {
     const map = new Map<string, NormalizedAppointment[]>();
     for (const appt of appointments) {
-      if (appt.isLegacy || !appt.dateKey) continue;
+      if (appt.isPending || !appt.dateKey) continue;
       const existing = map.get(appt.dateKey);
       if (existing) existing.push(appt);
       else map.set(appt.dateKey, [appt]);
