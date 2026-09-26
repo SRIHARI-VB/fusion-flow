@@ -182,6 +182,13 @@ consumer half of that payload - same "malformed/not found resolves to a
 plain result, never a `Failure`" convention as
 `module_get_from_choice_payload`.
 
+`calendar_parse_mode_choice` (`calendar.parse_mode_choice`) is the same
+safe-parse convention applied to the online/offline postback sent after
+a slot is picked (payload `"MODE:<online|offline>|<context>|<start_iso>|
+<end_iso>"`) - the slot's run has already ended by the time this
+question is asked, so its own buttons carry the resolved slot forward
+rather than this node re-deriving it.
+
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
 `engine/registry.py` as a side effect — matching `fusionflow.db.models`'s
@@ -190,6 +197,7 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     broadcast_scheduled_send,
+    calendar_parse_mode_choice,
     calendar_parse_slot_choice,
     catalog_classify_consultation_bucket,
     catalog_get_active_discounts,
@@ -256,6 +264,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 
 __all__ = [
     "broadcast_scheduled_send",
+    "calendar_parse_mode_choice",
     "calendar_parse_slot_choice",
     "catalog_classify_consultation_bucket",
     "catalog_get_active_discounts",
