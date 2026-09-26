@@ -164,6 +164,24 @@ rather than a `Failure` that would end the run, so it's safe to wire as a
 postback-routing chain's catch-all fallback even for taps this node's
 producer never generated.
 
+`schedule_is_direct_booking_day` (`schedule.is_direct_booking_day`)
+resolves "today + N days, in a timezone" to a weekday name/date and
+checks it against a tenant's configured `direct_booking_weekdays` list -
+fails closed (treats a malformed/missing list as "not a direct-booking
+day") rather than accidentally opening every day to direct booking.
+
+`instagram_ask_calendar_slot` (`instagram.ask_calendar_slot`) computes
+real available time slots within a period on a date, from a connected
+Google Calendar's actual busy events, and sends up to 3 as Instagram
+postback buttons (payload `"SLOT:<start_iso>|<end_iso>"`) - the calendar
+equivalent of `instagram.ask_choice`'s module-sourced listing, for data
+that's computed on the fly rather than read from a module.
+
+`calendar_parse_slot_choice` (`calendar.parse_slot_choice`) is the safe
+consumer half of that payload - same "malformed/not found resolves to a
+plain result, never a `Failure`" convention as
+`module_get_from_choice_payload`.
+
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
 `engine/registry.py` as a side effect — matching `fusionflow.db.models`'s
@@ -172,6 +190,7 @@ Importing this package registers all of the above with the process-wide
 
 from fusionflow.modules.workflows.nodes import (  # noqa: F401
     broadcast_scheduled_send,
+    calendar_parse_slot_choice,
     catalog_classify_consultation_bucket,
     catalog_get_active_discounts,
     catalog_get_all_active_discounts_summary,
@@ -189,6 +208,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     flow_try_catch,
     http_request,
     inbox_pause_automation,
+    instagram_ask_calendar_slot,
     instagram_ask_choice,
     instagram_collect_text,
     instagram_comment_received,
@@ -214,6 +234,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     record_get_latest,
     record_query,
     record_upsert,
+    schedule_is_direct_booking_day,
     schedule_resolve_business_hours,
     telegram_message_received,
     tickets_add_note,
@@ -235,6 +256,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
 
 __all__ = [
     "broadcast_scheduled_send",
+    "calendar_parse_slot_choice",
     "catalog_classify_consultation_bucket",
     "catalog_get_active_discounts",
     "catalog_get_all_active_discounts_summary",
@@ -252,6 +274,7 @@ __all__ = [
     "flow_try_catch",
     "http_request",
     "inbox_pause_automation",
+    "instagram_ask_calendar_slot",
     "instagram_ask_choice",
     "instagram_collect_text",
     "instagram_comment_received",
@@ -277,6 +300,7 @@ __all__ = [
     "record_get_latest",
     "record_query",
     "record_upsert",
+    "schedule_is_direct_booking_day",
     "schedule_resolve_business_hours",
     "telegram_message_received",
     "tickets_add_note",
