@@ -194,6 +194,15 @@ rather than this node re-deriving it. Only asked at all when
 the booking flow skips straight to in-person off `calendar.parse_slot_choice`
 directly and this node never runs.
 
+`instagram_ask_period_choice` (`instagram.ask_period_choice`) sends the
+morning/afternoon/evening picker but skips any period whose end time has
+already passed relative to right now - a same-day "Afternoon" option
+that's already over would otherwise dead-end into "no slots available"
+once tapped, when the real problem was offering an already-elapsed
+window at all, not a lack of Google Calendar availability. Button
+label/payload stay whatever the graph already used (unrelated to this
+fix), so no downstream postback-routing changes are needed.
+
 Importing this package registers all of the above with the process-wide
 `node_executor_registry` / `trigger_registry` singletons in
 `engine/registry.py` as a side effect — matching `fusionflow.db.models`'s
@@ -223,6 +232,7 @@ from fusionflow.modules.workflows.nodes import (  # noqa: F401
     inbox_pause_automation,
     instagram_ask_calendar_slot,
     instagram_ask_choice,
+    instagram_ask_period_choice,
     instagram_collect_text,
     instagram_comment_received,
     instagram_find_or_create_customer,
@@ -290,6 +300,7 @@ __all__ = [
     "inbox_pause_automation",
     "instagram_ask_calendar_slot",
     "instagram_ask_choice",
+    "instagram_ask_period_choice",
     "instagram_collect_text",
     "instagram_comment_received",
     "instagram_find_or_create_customer",
