@@ -31,6 +31,9 @@ export interface ClinicSettingsPayload {
   /** comma-separated "YYYY-MM-DD" one-off dates, in addition to the
    * weekday rule above. */
   direct_booking_specific_dates: string;
+  /** Minutes per bookable calendar slot on a direct-booking day (10-120,
+   * default 30) - how many time options the customer sees per period. */
+  appointment_slot_minutes: number;
 }
 
 /** `GET /api/v1/business-objects/records/{id}` response shape. */

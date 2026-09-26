@@ -53,6 +53,11 @@ const clinicSchedulingSchema = z.object({
       .filter(Boolean);
     return dates.every((d) => DATE_PATTERN.test(d));
   }, "Use comma-separated YYYY-MM-DD dates, e.g. 2026-01-01, 2026-01-15"),
+  appointment_slot_minutes: z.coerce
+    .number()
+    .int("Whole minutes only")
+    .min(10, "Minimum 10 minutes")
+    .max(120, "Maximum 2 hours"),
 });
 
 type ClinicSchedulingFormValues = z.infer<typeof clinicSchedulingSchema>;
@@ -74,6 +79,7 @@ const EMPTY_VALUES: ClinicSchedulingFormValues = {
   break_end: "",
   direct_booking_weekdays: [],
   direct_booking_specific_dates: "",
+  appointment_slot_minutes: 30,
 };
 
 function toFormValues(payload: Partial<ClinicSettingsPayload> | undefined): ClinicSchedulingFormValues {
@@ -309,6 +315,28 @@ export function ClinicSchedulingCard({ businessId }: { businessId: string | null
                 </p>
                 {errors.direct_booking_specific_dates && (
                   <p className="text-xs text-destructive">{errors.direct_booking_specific_dates.message}</p>
+                )}
+              </div>
+              <div className="flex flex-col gap-1.5 sm:max-w-xs">
+                <label htmlFor="appointment_slot_minutes" className="text-sm font-medium">
+                  Appointment slot duration (minutes)
+                </label>
+                <Input
+                  id="appointment_slot_minutes"
+                  type="number"
+                  min={10}
+                  max={120}
+                  step={5}
+                  error={!!errors.appointment_slot_minutes}
+                  {...register("appointment_slot_minutes")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  How long each bookable time slot is on a direct-booking day (10 minutes to 2
+                  hours). Customers see this many minutes' worth of real availability per time
+                  window.
+                </p>
+                {errors.appointment_slot_minutes && (
+                  <p className="text-xs text-destructive">{errors.appointment_slot_minutes.message}</p>
                 )}
               </div>
             </div>

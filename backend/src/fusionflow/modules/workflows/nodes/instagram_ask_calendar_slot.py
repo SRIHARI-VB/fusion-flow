@@ -1,7 +1,9 @@
 """`instagram.ask_calendar_slot` — computes real available time slots
 within a period (e.g. "morning") on a given date, by checking the
 tenant's connected Google Calendar's actual busy events, and sends up to
-3 of them as Instagram postback buttons.
+13 of them as an Instagram Quick Replies message (Meta's real cap for
+that message type - a plain Button Template tops out at 3, too few once
+a clinic has more than 3 openings in one period).
 
 Combines "compute the slots" and "send them" into one node rather than a
 separate compute-then-render pair, for the same reason
@@ -23,8 +25,9 @@ author can recover "what was this a slot for" once the tap that picked a
 slot starts a brand-new run (postback taps always do in this engine) and
 the original chain's variables are gone.
 
-More than 3 available slots in a period is a graph-authoring pattern
-(chain two instances with offset=0,3, exactly like `instagram.ask_choice`
+More than 13 available slots in a period (a real possibility with a
+short slot duration across a long period) is a graph-authoring pattern
+(chain two instances with offset=0,13, exactly like `instagram.ask_choice`
 already established for services/products), not something this single
 node paginates internally.
 """
@@ -49,7 +52,7 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 from fusionflow.modules.workflows.engine.templating import interpolate
 
-_MAX_BUTTONS = 3
+_MAX_OPTIONS = 13
 _MAX_TITLE_LENGTH = 20
 
 
@@ -62,8 +65,15 @@ class AskCalendarSlotConfig(BaseModel):
     period_start: str = Field(min_length=1, description="Templated 'HH:MM', e.g. from business_settings.morning_start.")
     period_end: str = Field(min_length=1, description="Templated 'HH:MM'.")
     timezone: str = Field(default="Asia/Kolkata")
-    slot_minutes: int = Field(default=30, ge=5, le=180)
-    limit: int = Field(default=3, ge=1, le=_MAX_BUTTONS)
+    slot_minutes: str = Field(
+        default="30",
+        description=(
+            "Templated int, usually '{{business-settings-pb.item.payload.appointment_slot_minutes}}' "
+            "- the tenant's configurable appointment-slot-duration setting (10-120 min). A plain "
+            "literal like '30' also works."
+        ),
+    )
+    limit: int = Field(default=_MAX_OPTIONS, ge=1, le=_MAX_OPTIONS)
     offset: int = Field(default=0, ge=0)
     context: str = Field(
         default="",
@@ -124,7 +134,7 @@ class AskCalendarSlotExecutor(NodeExecutor):
     palette_group = "Talk to Customer"
     icon = "calendar-clock"
     label = "Ask Customer to Pick a Calendar Slot (Instagram)"
-    description = "Computes real available time slots from a connected Google Calendar and sends up to 3 as buttons."
+    description = "Computes real available time slots from a connected Google Calendar and sends up to 13 as Quick Replies."
     config_model = AskCalendarSlotConfig
     output_schema = _OUTPUT_SCHEMA
     required_connector_type_key = "instagram"
@@ -152,6 +162,13 @@ class AskCalendarSlotExecutor(NodeExecutor):
         cal_adapter = connector_registry.get_or_none(cal_instance.connector_type.key)
         if ig_adapter is None or cal_adapter is None:
             return Failure("no adapter registered for one of the resolved connector instances")
+
+        slot_minutes_str = interpolate(config.slot_minutes, context.variables)
+        try:
+            slot_minutes = int(float(slot_minutes_str))
+        except ValueError:
+            return Failure(f"slot_minutes resolved to a non-numeric value: {slot_minutes_str!r}")
+        slot_minutes = max(5, min(180, slot_minutes))
 
         try:
             tz = ZoneInfo(tz_name)
@@ -187,7 +204,7 @@ class AskCalendarSlotExecutor(NodeExecutor):
             except ValueError:
                 continue
 
-        slot_delta = timedelta(minutes=config.slot_minutes)
+        slot_delta = timedelta(minutes=slot_minutes)
         now = datetime.now(tz)
         candidates: list[tuple[datetime, datetime]] = []
         cursor = period_start
@@ -203,23 +220,23 @@ class AskCalendarSlotExecutor(NodeExecutor):
         if not window:
             return Success(output={"sent_count": 0, "has_more": False})
 
-        buttons = []
+        replies = []
         for slot_start, slot_end in window:
             label = f"{_format_12h(slot_start)} - {_format_12h(slot_end)}"[:_MAX_TITLE_LENGTH]
             payload = f"SLOT:{context_str}|{slot_start.isoformat()}|{slot_end.isoformat()}"
-            buttons.append({"type": "postback", "title": label, "payload": payload})
+            replies.append({"title": label, "payload": payload})
 
         try:
             await ig_adapter.perform_action(
-                action="send_button_template",
-                params={"recipient_id": recipient_id, "text": text, "buttons": buttons},
+                action="send_quick_replies",
+                params={"recipient_id": recipient_id, "text": text, "replies": replies},
                 instance=ig_instance,
                 session=context.session,
             )
         except NotImplementedError as exc:
             return Failure(str(exc))
 
-        return Success(output={"sent_count": len(buttons), "has_more": has_more})
+        return Success(output={"sent_count": len(replies), "has_more": has_more})
 
 
 node_executor_registry.register(AskCalendarSlotExecutor())
