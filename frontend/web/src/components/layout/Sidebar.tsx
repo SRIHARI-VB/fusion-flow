@@ -7,7 +7,6 @@ import {
   ChevronRight,
   ChevronsUpDown,
   LogOut,
-  Sparkles,
 } from "lucide-react";
 import {
   Avatar,
@@ -17,6 +16,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Logo,
   cn,
 } from "@fusion-flow/ui";
 import { navGroups, type NavItem } from "./nav-config";
@@ -239,9 +239,7 @@ export function Sidebar() {
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
       <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground">
-          <Sparkles className="h-4 w-4" />
-        </div>
+        <Logo size={32} className="shrink-0" />
         <div className="flex flex-1 flex-col overflow-hidden">
           <span className="truncate text-sm font-semibold text-sidebar-foreground">
             {business?.name ?? "fusion-flow"}

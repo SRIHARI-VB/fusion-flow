@@ -45,6 +45,11 @@
   --sidebar-foreground: #7a8680;
   --sidebar-active: #eaf2e9;
 
+  /* brand logomark (3-tone, dark-to-light) */
+  --logo-1: #183f39;
+  --logo-2: #3c795d;
+  --logo-3: #55ab9a;
+
   --radius: 0.75rem;
 }
 
@@ -77,6 +82,12 @@
   --sidebar-border: #2a3f37;
   --sidebar-foreground: #a9bdb1;
   --sidebar-active: #24392f;
+
+  /* brand logomark - lightened so all 3 tones stay legible on a dark
+     sidebar (the light-mode --logo-1 is nearly invisible on #16241f) */
+  --logo-1: #55ab9a;
+  --logo-2: #6bc4a8;
+  --logo-3: #9fe0c7;
 }
 
 body {

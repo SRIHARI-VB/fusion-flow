@@ -26,6 +26,9 @@ export {
 
 export { Avatar, AvatarImage, AvatarFallback } from "./components/Avatar";
 
+export { Logo } from "./components/Logo";
+export type { LogoProps } from "./components/Logo";
+
 export {
   DropdownMenu,
   DropdownMenuTrigger,

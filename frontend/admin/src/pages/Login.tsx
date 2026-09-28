@@ -4,8 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useNavigate } from "react-router-dom";
 import { AxiosError } from "axios";
-import { Sparkles } from "lucide-react";
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Logo } from "@fusion-flow/ui";
 import { login } from "../lib/endpoints";
 import { useAuthStore } from "../lib/auth-store";
 import { decodeAccessToken } from "../lib/jwt";
@@ -59,9 +58,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-background px-4">
       <div className="flex items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent text-accent-foreground">
-          <Sparkles className="h-5 w-5" />
-        </div>
+        <Logo size={36} />
         <span className="text-lg font-semibold text-foreground">fusion-flow admin</span>
       </div>
 

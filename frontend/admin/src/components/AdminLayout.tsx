@@ -9,7 +9,6 @@ import {
   LayoutTemplate,
   LogOut,
   Plug,
-  Sparkles,
   Wallet,
   Workflow,
 } from "lucide-react";
@@ -20,6 +19,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Logo,
   ThemeToggle,
   cn,
 } from "@fusion-flow/ui";
@@ -62,9 +62,7 @@ export function AdminLayout() {
     <div className="flex h-screen overflow-hidden bg-background">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
         <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground">
-            <Sparkles className="h-4 w-4" />
-          </div>
+          <Logo size={32} className="shrink-0" />
           <span className="text-sm font-semibold text-sidebar-foreground">fusion-flow admin</span>
         </div>
         <nav className="flex-1 px-3 py-4">
