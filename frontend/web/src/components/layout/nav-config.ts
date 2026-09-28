@@ -12,13 +12,10 @@ import {
   BookOpen,
   Plug,
   Workflow,
-  Bot,
   Settings,
   SlidersHorizontal,
   MessageCircle,
   Instagram,
-  Send,
-  Facebook,
   Inbox,
   MessageSquareText,
   Image,
@@ -145,20 +142,6 @@ export const navGroups: NavGroup[] = [
         icon: Instagram,
         moduleKey: "instagram",
       },
-      {
-        key: "telegram",
-        label: "Telegram",
-        path: "/communication/telegram/automations",
-        icon: Send,
-        moduleKey: "telegram",
-      },
-      {
-        key: "facebook",
-        label: "Facebook",
-        path: "/communication/facebook/automations",
-        icon: Facebook,
-        moduleKey: "facebook",
-      },
       // Common items - channel-agnostic, sit directly under Communication
       // rather than nested in any one channel.
       { key: "inbox", label: "Inbox", path: "/communication/inbox", icon: Inbox },
@@ -178,7 +161,6 @@ export const navGroups: NavGroup[] = [
     items: [
       { key: "connectors", label: "Connectors", path: "/connectors", icon: Plug },
       { key: "workflows", label: "Workflows", path: "/workflows", icon: Workflow, moduleKey: "workflows" },
-      { key: "support-agent", label: "Support Agent", path: "/support-agent", icon: Bot, moduleKey: "support_agent" },
     ],
   },
   {

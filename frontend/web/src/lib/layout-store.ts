@@ -12,6 +12,10 @@ import { create } from "zustand";
  *   starts `false` on a fresh page load, and `WorkflowEditorPage.tsx`
  *   resets it to `false` on unmount too) so leaving the workflow editor
  *   while in full view never strands another page chrome-less.
+ * - `mobileNavOpen`: whether the sidebar's mobile overlay drawer is open
+ *   (below the `md` breakpoint, where the sidebar has no fixed-column
+ *   space of its own) — NOT persisted, same reasoning as `fullView`: it's
+ *   a transient UI state, always starts closed on a fresh page load.
  */
 
 const SIDEBAR_COLLAPSED_KEY = "fusionflow.sidebarCollapsed";
@@ -31,6 +35,9 @@ interface LayoutState {
   toggleSidebarCollapsed: () => void;
   fullView: boolean;
   setFullView: (fullView: boolean) => void;
+  mobileNavOpen: boolean;
+  toggleMobileNavOpen: () => void;
+  closeMobileNav: () => void;
 }
 
 export const useLayoutStore = create<LayoutState>((set, get) => ({
@@ -47,4 +54,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
   fullView: false,
   setFullView: (fullView) => set({ fullView }),
+  mobileNavOpen: false,
+  toggleMobileNavOpen: () => set((s) => ({ mobileNavOpen: !s.mobileNavOpen })),
+  closeMobileNav: () => set({ mobileNavOpen: false }),
 }));

@@ -13,6 +13,7 @@ import {
 } from "../hooks";
 import { CONNECTOR_HEALTH_DISPLAY, CONNECTOR_STATE_DISPLAY, formatRelativeTimestamp } from "../state-display";
 import { CONNECTOR_SETTINGS } from "../settings/registry";
+import { useSetPageTitle } from "../../../components/layout/page-title";
 
 type Tab = "activity" | "settings";
 
@@ -69,6 +70,7 @@ export function ConnectorDetailPage() {
   const [tab, setTab] = useState<Tab>("activity");
 
   const instance = instances?.find((candidate) => candidate.id === instanceId);
+  useSetPageTitle(instance?.display_name ?? null);
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading connector…</p>;

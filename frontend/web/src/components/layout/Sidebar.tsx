@@ -5,8 +5,9 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   LogOut,
+  MoreVertical,
+  X,
 } from "lucide-react";
 import {
   Avatar,
@@ -64,6 +65,8 @@ export function Sidebar() {
   const hasAnyChannelConnected = useHasAnyChannelConnected();
   const collapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleCollapsed = useLayoutStore((s) => s.toggleSidebarCollapsed);
+  const mobileNavOpen = useLayoutStore((s) => s.mobileNavOpen);
+  const closeMobileNav = useLayoutStore((s) => s.closeMobileNav);
 
   // The user's saved sidebar customization (reordering/archiving/custom
   // groups), merged on top of the built-in `navGroups` into the flat,
@@ -160,101 +163,40 @@ export function Sidebar() {
     }
   }
 
-  if (collapsed) {
-    return (
-      <aside className="hidden w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-4 md:flex">
-        <button
-          type="button"
-          aria-label="Expand sidebar"
-          title="Expand sidebar"
-          className="mb-4 flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground hover:opacity-90"
-          onClick={toggleCollapsed}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-
-        <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
-          {effectiveGroups
-            // Collapsed icon-rail has no room for a nested archive concept
-            // (or a per-group collapse toggle) - archived groups/items are
-            // simply excluded here, not shown at all when collapsed.
-            .filter((group) => !group.archived && isEffectiveGroupVisible(group, navGroupsByKey, moduleAccess))
-            .flatMap((group) =>
-              group.items
-                .filter((effectiveItem) => !effectiveItem.archived)
-                .map((effectiveItem) => effectiveItem.item)
-                .filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
-            )
-            // A parent-with-children (e.g. "WhatsApp") has no `path` of its
-            // own and no room for an expand toggle in icon-only mode - it
-            // links straight to its first child instead, using its own
-            // (channel) icon so it's still visually distinguishable.
-            .map((item) =>
-              item.children && item.children.length > 0
-                ? { path: item.children[0].path, icon: item.icon, label: item.label }
-                : item,
-            )
-            .filter((item): item is NavItem & { path: string } => Boolean(item.path))
-            .map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                title={item.label}
-                aria-label={item.label}
-                className={({ isActive }) =>
-                  cn(
-                    "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
-                    isActive ? "bg-sidebar-active text-accent" : "text-sidebar-foreground hover:bg-muted",
-                  )
-                }
-              >
-                <item.icon className="h-4 w-4" />
-              </NavLink>
-            ))}
-        </nav>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger>
-            <button
-              className="flex h-9 w-9 items-center justify-center rounded-md border-t border-sidebar-border hover:bg-muted"
-              title={user?.email ?? "guest@fusion-flow"}
-              aria-label="Account menu"
-            >
-              <Avatar>
-                <AvatarFallback className="bg-accent-soft text-accent">{initials}</AvatarFallback>
-              </Avatar>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="top" className="w-56">
-            <DropdownMenuItem onClick={() => void handleSignOut()}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </aside>
-    );
-  }
-
-  return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+  // Shared between the expanded desktop rail and the mobile overlay drawer
+  // below - identical content, just two different wrappers (a fixed-width
+  // column vs. a slide-in panel), computed once regardless of `collapsed`
+  // since the mobile drawer always shows the full nav (there's no
+  // icon-only-rail equivalent worth having on a touch screen).
+  const navContent = (
+    <>
       <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
         <Logo size={32} className="shrink-0" />
         <div className="flex flex-1 flex-col overflow-hidden">
           <span className="truncate text-sm font-semibold text-sidebar-foreground">
             {business?.name ?? "fusion-flow"}
           </span>
-          <span className="truncate text-xs text-muted-foreground">Workspace</span>
+          <span className="truncate text-xs text-muted-foreground">
+            {business?.plan_name ? `${business.plan_name} Plan` : "Workspace"}
+          </span>
         </div>
-        <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
         <button
           type="button"
           aria-label="Collapse sidebar"
           title="Collapse sidebar"
-          className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+          className="hidden rounded-md p-1 text-muted-foreground hover:bg-muted md:block"
           onClick={toggleCollapsed}
         >
           <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Close navigation"
+          title="Close navigation"
+          className="rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
+          onClick={closeMobileNav}
+        >
+          <X className="h-4 w-4" />
         </button>
       </div>
 
@@ -313,6 +255,7 @@ export function Sidebar() {
                             <NavLink
                               key={child.path}
                               to={child.path ?? "#"}
+                              onClick={closeMobileNav}
                               className={({ isActive }) =>
                                 cn(
                                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
@@ -333,6 +276,7 @@ export function Sidebar() {
                   <NavLink
                     key={item.path}
                     to={item.path ?? "#"}
+                    onClick={closeMobileNav}
                     className={({ isActive }) =>
                       cn(
                         "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
@@ -376,6 +320,7 @@ export function Sidebar() {
                 <NavLink
                   key={item.key}
                   to={item.path ?? "#"}
+                  onClick={closeMobileNav}
                   className={({ isActive }) =>
                     cn(
                       "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
@@ -408,7 +353,7 @@ export function Sidebar() {
                 </Badge>
               )}
             </div>
-            <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
+            <MoreVertical className="h-4 w-4 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" className="w-56">
@@ -418,6 +363,119 @@ export function Sidebar() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </aside>
+    </>
+  );
+
+  // Mobile overlay drawer (below the `md` breakpoint, where neither desktop
+  // variant below is rendered at all) - always the full nav content above,
+  // regardless of the desktop `collapsed` preference. Always mounted so the
+  // slide-in transition can animate; toggled purely via `mobileNavOpen`.
+  const mobileDrawer = (
+    <>
+      <div
+        className={cn(
+          "fixed inset-0 z-40 bg-black/40 transition-opacity md:hidden",
+          mobileNavOpen ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        onClick={closeMobileNav}
+        aria-hidden="true"
+      />
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-sidebar shadow-lg transition-transform duration-200 ease-in-out md:hidden",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        {navContent}
+      </aside>
+    </>
+  );
+
+  if (collapsed) {
+    return (
+      <>
+        <aside className="hidden w-14 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-4 md:flex">
+          <button
+            type="button"
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            className="mb-4 flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground hover:opacity-90"
+            onClick={toggleCollapsed}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+
+          <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
+            {effectiveGroups
+              // Collapsed icon-rail has no room for a nested archive concept
+              // (or a per-group collapse toggle) - archived groups/items are
+              // simply excluded here, not shown at all when collapsed.
+              .filter((group) => !group.archived && isEffectiveGroupVisible(group, navGroupsByKey, moduleAccess))
+              .flatMap((group) =>
+                group.items
+                  .filter((effectiveItem) => !effectiveItem.archived)
+                  .map((effectiveItem) => effectiveItem.item)
+                  .filter((item) => isItemVisible(item, moduleAccess, hasAnyChannelConnected)),
+              )
+              // A parent-with-children (e.g. "WhatsApp") has no `path` of its
+              // own and no room for an expand toggle in icon-only mode - it
+              // links straight to its first child instead, using its own
+              // (channel) icon so it's still visually distinguishable.
+              .map((item) =>
+                item.children && item.children.length > 0
+                  ? { path: item.children[0].path, icon: item.icon, label: item.label }
+                  : item,
+              )
+              .filter((item): item is NavItem & { path: string } => Boolean(item.path))
+              .map((item) => (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  title={item.label}
+                  aria-label={item.label}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
+                      isActive ? "bg-sidebar-active text-accent" : "text-sidebar-foreground hover:bg-muted",
+                    )
+                  }
+                >
+                  <item.icon className="h-4 w-4" />
+                </NavLink>
+              ))}
+          </nav>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger>
+              <button
+                className="flex h-9 w-9 items-center justify-center rounded-md border-t border-sidebar-border hover:bg-muted"
+                title={user?.email ?? "guest@fusion-flow"}
+                aria-label="Account menu"
+              >
+                <Avatar>
+                  <AvatarFallback className="bg-accent-soft text-accent">{initials}</AvatarFallback>
+                </Avatar>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="top" className="w-56">
+              <DropdownMenuItem onClick={() => void handleSignOut()}>
+                <LogOut className="mr-2 h-4 w-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </aside>
+        {mobileDrawer}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
+        {navContent}
+      </aside>
+      {mobileDrawer}
+    </>
   );
 }

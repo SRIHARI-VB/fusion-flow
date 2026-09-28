@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
+import { useSetPageTitle } from "../../components/layout/page-title";
 import { getOrder, updateOrder } from "./api";
 import type { OrderStatus } from "./types";
 
@@ -28,6 +29,7 @@ export function OrderDetailPage() {
     queryFn: () => getOrder(id as string),
     enabled: !!id,
   });
+  useSetPageTitle(order ? `Order for ${order.customer_name ?? order.customer_id}` : null);
 
   const statusMutation = useMutation({
     mutationFn: (status: OrderStatus) => updateOrder(id as string, { status }),

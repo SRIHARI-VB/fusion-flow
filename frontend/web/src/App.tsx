@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { RequireAuth } from "./components/auth/RequireAuth";
 import { RequireModule } from "./components/auth/RequireModule";
-import { PlaceholderPage } from "./pages/Placeholder";
 import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
 import { ApplicationSubmittedPage } from "./pages/ApplicationSubmitted";
@@ -112,15 +111,6 @@ export default function App() {
           element={<RequireModule moduleKey="workflows"><WorkflowRunsPage /></RequireModule>}
         />
 
-        <Route
-          path="/support-agent"
-          element={
-            <RequireModule moduleKey="support_agent">
-              <PlaceholderPage title="Support Agent" description="Coming in a later phase." />
-            </RequireModule>
-          }
-        />
-
         {/* Communication */}
         <Route
           path="/communication/whatsapp/automations"
@@ -213,25 +203,6 @@ export default function App() {
         <Route
           path="/communication/instagram/ice-breakers"
           element={<RequireModule moduleKey="instagram"><InstagramIceBreakersSettingsPage /></RequireModule>}
-        />
-        {/* Telegram/Facebook predefined-automation types aren't built yet
-            (only WhatsApp/Instagram flagships shipped this wave) - the nav
-            entry still needs somewhere to land. */}
-        <Route
-          path="/communication/telegram/automations"
-          element={
-            <RequireModule moduleKey="telegram">
-              <PlaceholderPage title="Telegram Automations" description="Coming in a later phase." />
-            </RequireModule>
-          }
-        />
-        <Route
-          path="/communication/facebook/automations"
-          element={
-            <RequireModule moduleKey="facebook">
-              <PlaceholderPage title="Facebook Automations" description="Coming in a later phase." />
-            </RequireModule>
-          }
         />
         <Route path="/communication/inbox" element={<InboxPage />} />
         <Route path="/communication/quick-replies" element={<QuickRepliesPage />} />

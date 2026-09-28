@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Send } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, cn } from "@fusion-flow/ui";
+import { useSetPageTitle } from "../../components/layout/page-title";
 import { addMessage, getTicket, listMessages, updateTicket } from "./api";
 import type { TicketMessageAuthorType, TicketStatus } from "./types";
 
@@ -27,6 +28,7 @@ export function TicketDetailPage() {
     queryFn: () => getTicket(id as string),
     enabled: !!id,
   });
+  useSetPageTitle(ticket ? `Ticket: ${ticket.subject}` : null);
 
   const { data: messages = [], isLoading: messagesLoading } = useQuery({
     queryKey: ["tickets", id, "messages"],

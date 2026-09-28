@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { useLayoutStore } from "../../lib/layout-store";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { PageTitleProvider } from "./page-title";
 
 export function AppLayout() {
   // `h-screen overflow-hidden` (not `min-h-screen`) is required, not
@@ -32,14 +33,16 @@ export function AppLayout() {
   const fullView = useLayoutStore((s) => s.fullView);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      {!fullView && <Sidebar />}
-      <div className="flex h-screen flex-1 flex-col overflow-hidden">
-        {!fullView && <Topbar />}
-        <main className={fullView ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-6"}>
-          <Outlet />
-        </main>
+    <PageTitleProvider>
+      <div className="flex h-screen overflow-hidden bg-background">
+        {!fullView && <Sidebar />}
+        <div className="flex h-screen flex-1 flex-col overflow-hidden">
+          {!fullView && <Topbar />}
+          <main className={fullView ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-6"}>
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </PageTitleProvider>
   );
 }
