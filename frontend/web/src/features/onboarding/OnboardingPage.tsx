@@ -48,7 +48,7 @@ export function OnboardingPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 py-8">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Welcome to fusion-flow</h1>
+        <h1 className="text-2xl font-semibold text-foreground">Welcome to Stilltyping</h1>
         <p className="text-sm text-muted-foreground">A couple more steps and you're set up.</p>
       </div>
 

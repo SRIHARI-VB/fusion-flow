@@ -63,7 +63,7 @@ export function AdminLayout() {
       <aside className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar md:flex">
         <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
           <Logo size={32} className="shrink-0" />
-          <span className="text-sm font-semibold text-sidebar-foreground">fusion-flow admin</span>
+          <span className="text-sm font-semibold text-sidebar-foreground">Stilltyping admin</span>
         </div>
         <nav className="flex-1 px-3 py-4">
           <div className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">

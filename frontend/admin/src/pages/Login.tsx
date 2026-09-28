@@ -59,7 +59,7 @@ export function LoginPage() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-background px-4">
       <div className="flex items-center gap-2">
         <Logo size={36} />
-        <span className="text-lg font-semibold text-foreground">fusion-flow admin</span>
+        <span className="text-lg font-semibold text-foreground">Stilltyping admin</span>
       </div>
 
       <Card className="w-full max-w-md">
@@ -77,7 +77,7 @@ export function LoginPage() {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="admin@fusion-flow.com"
+                placeholder="admin@stilltyping.com"
                 error={!!errors.email}
                 {...register("email")}
               />

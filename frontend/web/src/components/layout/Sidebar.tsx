@@ -174,7 +174,7 @@ export function Sidebar() {
         <Logo size={32} className="shrink-0" />
         <div className="flex flex-1 flex-col overflow-hidden">
           <span className="truncate text-sm font-semibold text-sidebar-foreground">
-            {business?.name ?? "fusion-flow"}
+            {business?.name ?? "Stilltyping"}
           </span>
           <span className="truncate text-xs text-muted-foreground">
             {business?.plan_name ? `${business.plan_name} Plan` : "Workspace"}
@@ -345,7 +345,7 @@ export function Sidebar() {
             </Avatar>
             <div className="flex flex-1 flex-col overflow-hidden">
               <span className="truncate text-sm font-medium text-sidebar-foreground">
-                {user?.email ?? "guest@fusion-flow"}
+                {user?.email ?? "guest@stilltyping.com"}
               </span>
               {business?.plan_name && (
                 <Badge variant="default" className="mt-0.5 w-fit">
@@ -449,7 +449,7 @@ export function Sidebar() {
             <DropdownMenuTrigger>
               <button
                 className="flex h-9 w-9 items-center justify-center rounded-md border-t border-sidebar-border hover:bg-muted"
-                title={user?.email ?? "guest@fusion-flow"}
+                title={user?.email ?? "guest@stilltyping.com"}
                 aria-label="Account menu"
               >
                 <Avatar>
