@@ -39,6 +39,11 @@ class BusinessMembershipOut(BaseModel):
     # when the tenant has no plan assigned. Read-only; a tenant never
     # sets this itself (see plan.py's admin-only assignment endpoint).
     plan_name: str | None = None
+    # From `Membership.is_doctor` - the frontend reads this (via whichever
+    # of `TokenResponse.businesses`/`MeResponse.memberships` it already
+    # has in hand) to gate the clinic-queue module's step-up-auth prompt,
+    # with no separate endpoint needed.
+    is_doctor: bool = False
 
 
 class BusinessUpdateRequest(BaseModel):

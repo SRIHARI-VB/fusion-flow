@@ -119,6 +119,12 @@ class Membership(Base):
     )
     # NULL until the invitee accepts. Self-serve signup sets this immediately.
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A job-function flag, deliberately separate from `role` (a permission
+    # tier - Owner/Admin/Member/Viewer) - marks this member as assignable
+    # in the clinic-queue module's doctor picker AND as needing step-up
+    # auth before accessing that module (see `modules/clinic_queue`).
+    # Settable by any Owner/Admin, orthogonal to `role`.
+    is_doctor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     business: Mapped[Business] = relationship(back_populates="memberships")
     user: Mapped["User"] = relationship(back_populates="memberships")  # noqa: F821

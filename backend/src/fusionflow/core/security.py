@@ -84,3 +84,39 @@ def hash_refresh_token(raw_token: str) -> str:
 
 def refresh_token_expiry() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TTL_DAYS)
+
+
+STEP_UP_TTL_MINUTES = 45
+
+
+def create_step_up_token(*, sub: uuid.UUID) -> tuple[str, datetime]:
+    """A short-lived, self-contained "I re-entered my password just now"
+    proof - deliberately NOT a DB-backed session row: this only ever needs
+    to answer "is this still fresh enough," which a signed, short-TTL JWT
+    (reusing the same `JWT_SECRET`/algorithm the main access token already
+    uses, no new secret to manage) answers without a round trip. Distinct
+    claim shape from `create_access_token` (no tenant/role claims at all)
+    so it can never be mistaken for, or substituted as, a real access
+    token by anything that decodes it - `decode_step_up_token` also
+    explicitly checks the `step_up` marker claim for the same reason.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=STEP_UP_TTL_MINUTES)
+    payload: dict[str, Any] = {
+        "sub": str(sub),
+        "step_up": True,
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    token = jwt.encode(payload, settings.JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return token, expires_at
+
+
+def decode_step_up_token(token: str) -> uuid.UUID:
+    """Raises `jwt.PyJWTError` (expired/malformed/bad signature) or
+    `ValueError` (well-formed JWT, but not actually a step-up token) -
+    callers should treat both as "no valid step-up," not distinguish them."""
+    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    if payload.get("step_up") is not True:
+        raise ValueError("token is not a step-up token")
+    return uuid.UUID(str(payload["sub"]))

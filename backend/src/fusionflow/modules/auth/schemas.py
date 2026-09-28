@@ -87,3 +87,12 @@ class MeResponse(BaseModel):
     role: str | None = None
     platform_admin: bool = False
     memberships: list[BusinessMembershipOut] = Field(default_factory=list)
+
+
+class StepUpRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class StepUpResponse(BaseModel):
+    step_up_token: str
+    expires_at: datetime

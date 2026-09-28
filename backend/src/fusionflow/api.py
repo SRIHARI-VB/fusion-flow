@@ -19,6 +19,7 @@ from fusionflow.modules.catalog.router import (
     products_router,
     services_router,
 )
+from fusionflow.modules.clinic_queue.router import router as clinic_queue_router
 from fusionflow.modules.connectors.router import router as connectors_router
 from fusionflow.modules.connectors.webhooks import router as connector_webhooks_router
 from fusionflow.modules.connectors.instagram.router import router as instagram_settings_router
@@ -62,6 +63,7 @@ api_router.include_router(customers_router)
 api_router.include_router(orders_router)
 api_router.include_router(payments_router)
 api_router.include_router(tickets_router)
+api_router.include_router(clinic_queue_router)
 api_router.include_router(kb_router)
 api_router.include_router(connectors_router)
 api_router.include_router(whatsapp_router)

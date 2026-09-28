@@ -67,6 +67,7 @@ from fusionflow.modules.inbox.models import Conversation, Message, MessageDirect
 from fusionflow.modules.kb.models import KbArticle, KbArticleStatus
 from fusionflow.modules.media_library.models import MediaAsset
 from fusionflow.modules.orders.models import Order, OrderStatus
+from fusionflow.modules.clinic_queue.models import PatientVisit, PatientVisitStage, PaymentMode as ClinicQueuePaymentMode
 from fusionflow.modules.payments.models import Payment, PaymentStatus
 from fusionflow.modules.predefined_automations.models import PredefinedAutomation
 from fusionflow.modules.quick_replies.models import QuickReply
@@ -104,6 +105,7 @@ __all__ = [
     "BusinessStatus",
     "BusinessTemplate",
     "BusinessTemplateConnectorType",
+    "ClinicQueuePaymentMode",
     "ConnectorAccessOverride",
     "ConnectorAccessRequest",
     "ConnectorAccessRequestStatus",
@@ -142,6 +144,8 @@ __all__ = [
     "Offer",
     "Order",
     "OrderStatus",
+    "PatientVisit",
+    "PatientVisitStage",
     "Payment",
     "PaymentStatus",
     "Plan",

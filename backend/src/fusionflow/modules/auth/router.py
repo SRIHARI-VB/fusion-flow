@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Cookie, HTTPException, Response, status
 
 from fusionflow.core.deps import CurrentUserDep, SessionDep, TokenPayloadDep
+from fusionflow.core.security import create_step_up_token, verify_password
 from fusionflow.modules.auth import service as auth_service
 from fusionflow.modules.auth.http import (
     REFRESH_COOKIE_NAME,
@@ -21,6 +22,8 @@ from fusionflow.modules.auth.schemas import (
     SelectBusinessRequest,
     SignupRequest,
     SignupResult,
+    StepUpRequest,
+    StepUpResponse,
     TokenResponse,
     UserOut,
 )
@@ -131,3 +134,16 @@ async def me(payload: TokenPayloadDep, user: CurrentUserDep, session: SessionDep
         platform_admin=bool(payload.get("platform_admin")),
         memberships=await tenancy_service.list_business_memberships(session, user.id),
     )
+
+
+@router.post("/step-up", response_model=StepUpResponse)
+async def step_up(payload: StepUpRequest, user: CurrentUserDep) -> StepUpResponse:
+    """Re-confirms the CURRENT user's own password (not a fresh login -
+    the existing access token already proves identity) and issues a
+    short-lived proof a sensitive module (e.g. clinic-queue doctor views)
+    can require before rendering. See `core.security.create_step_up_token`
+    for why this is a signed token rather than a DB-backed session row."""
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
+    token, expires_at = create_step_up_token(sub=user.id)
+    return StepUpResponse(step_up_token=token, expires_at=expires_at)

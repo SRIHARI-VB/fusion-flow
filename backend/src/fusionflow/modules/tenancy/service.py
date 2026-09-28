@@ -139,6 +139,7 @@ def to_business_membership_out(
         messaging_paused=business.messaging_paused,
         onboarding_completed_at=business.onboarding_completed_at,
         plan_name=plan_name,
+        is_doctor=membership.is_doctor,
     )
 
 
