@@ -96,7 +96,10 @@ export default function App() {
           path="/clinic-queue"
           element={
             <RequireModule moduleKey="clinic_queue">
-              <RequireStepUp>
+              <RequireStepUp
+                when={(b) => !!b?.is_doctor}
+                reason="The Patient Flow board includes consultation notes only doctors can see - please re-enter your password to continue."
+              >
                 <ClinicQueuePage />
               </RequireStepUp>
             </RequireModule>
@@ -106,7 +109,10 @@ export default function App() {
           path="/clinic-queue/history"
           element={
             <RequireModule moduleKey="clinic_queue">
-              <RequireStepUp>
+              <RequireStepUp
+                when={(b) => !!b?.is_doctor}
+                reason="The Patient Flow board includes consultation notes only doctors can see - please re-enter your password to continue."
+              >
                 <ClinicQueueHistoryPage />
               </RequireStepUp>
             </RequireModule>
@@ -237,7 +243,17 @@ export default function App() {
           path="/settings/custom-fields"
           element={<RequireModule moduleKey="custom_fields"><CustomFieldsSettingsPage /></RequireModule>}
         />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route
+          path="/settings"
+          element={
+            <RequireStepUp
+              when={(b) => b?.role === "owner"}
+              reason="You're signed in as this business's owner - please re-enter your password to open Settings."
+            >
+              <SettingsPage />
+            </RequireStepUp>
+          }
+        />
 
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Route>

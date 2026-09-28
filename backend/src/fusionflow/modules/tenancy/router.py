@@ -6,7 +6,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContext, TenantContextDep, require_role
+from fusionflow.core.deps import (
+    CurrentUserDep,
+    SessionDep,
+    TenantContext,
+    TenantContextDep,
+    require_role,
+    require_step_up,
+)
 from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.auth.http import set_refresh_cookie, to_token_response
 from fusionflow.modules.auth.models import User
@@ -51,6 +58,16 @@ _RESOURCE_COUNT_FNS = {
 }
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
+
+# Business-profile edits and team-member management are Owner/Admin actions
+# per `require_role` below, but specifically the OWNER additionally needs a
+# fresh step-up token - proof they re-entered their password just now, not
+# just that their session happens to carry an owner-role claim. An Admin
+# calling the exact same endpoint needs no such proof (see the user's own
+# framing: only the account that created the tenant needs this extra
+# assurance). Mirrors `modules/clinic_queue/router.py`'s doctor-only
+# step-up check via the shared `core.deps.require_step_up` factory.
+_require_step_up_if_owner = require_step_up(lambda c: c.role == MembershipRole.OWNER)
 
 
 @router.get("/mine", response_model=list[BusinessMembershipOut])
@@ -152,6 +169,7 @@ async def update_business(
     payload: BusinessUpdateRequest,
     session: SessionDep,
     context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+    _step_up: TenantContext = Depends(_require_step_up_if_owner),
 ) -> BusinessOut:
     """Update the *active* business profile. Owner/admin only.
 
@@ -182,6 +200,7 @@ async def create_business_member(
     payload: MemberCreateRequest,
     session: SessionDep,
     context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+    _step_up: TenantContext = Depends(_require_step_up_if_owner),
 ) -> MemberOut:
     """Add a new team member to the *active* business. Owner/admin only,
     same cross-tenant guard as this router's other business-scoped routes.
@@ -234,6 +253,7 @@ async def list_business_members(
     business_id: uuid.UUID,
     session: SessionDep,
     context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+    _step_up: TenantContext = Depends(_require_step_up_if_owner),
 ) -> list[MemberOut]:
     """Team members of the *active* business. Owner/admin only.
 
@@ -267,6 +287,7 @@ async def update_business_member(
     payload: MemberUpdateRequest,
     session: SessionDep,
     context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+    _step_up: TenantContext = Depends(_require_step_up_if_owner),
 ) -> MemberOut:
     """Update a team member's doctor flag. Owner/admin only - same
     cross-tenant guard as the other `{business_id}`-scoped routes in this

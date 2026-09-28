@@ -18,12 +18,12 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Awaitable
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fusionflow.core.security import decode_access_token
+from fusionflow.core.security import decode_access_token, decode_step_up_token
 from fusionflow.db.session import get_db_session, set_tenant_context
 from fusionflow.modules.auth.models import User
 from fusionflow.modules.tenancy.models import MembershipRole
@@ -161,6 +161,53 @@ def require_role(
                     "Insufficient role: requires one of "
                     f"{', '.join(sorted(r.value for r in allowed))}"
                 ),
+            )
+        return context
+
+    return _dependency
+
+
+def require_step_up(
+    condition: Callable[[TenantContext], bool],
+) -> Callable[[TenantContext, str | None], Awaitable[TenantContext]]:
+    """Dependency factory: tenant context + a fresh `X-Step-Up-Token` header
+    (minted by `POST /auth/step-up`), but only for callers `condition`
+    returns true for - everyone else passes through with no extra check.
+
+    Generalizes the clinic-queue module's original doctor-only step-up
+    check (which predates this factory - see `modules/clinic_queue/
+    router.py`'s own comment for why doctors specifically need this: an
+    unexpired token proves "I re-entered my password just now", which is
+    the same proof an Owner needs before touching business-level settings,
+    just gated on a different condition (`context.role == OWNER` instead
+    of a doctor flag). One factory, reused wherever a role/flag - not the
+    tenant-membership check `require_role` already does - needs this
+    extra freshness proof.
+
+    Usage: `ctx: TenantContext = Depends(require_step_up(lambda c: c.role
+    == MembershipRole.OWNER))`.
+    """
+
+    async def _dependency(
+        context: TenantContextDep,
+        x_step_up_token: Annotated[str | None, Header()] = None,
+    ) -> TenantContext:
+        if not condition(context):
+            return context
+        if not x_step_up_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Step-up authentication required",
+            )
+        try:
+            step_up_user_id = decode_step_up_token(x_step_up_token)
+        except Exception as exc:  # noqa: BLE001 - jwt.PyJWTError subclasses + ValueError, both mean "invalid"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Step-up token invalid or expired"
+            ) from exc
+        if step_up_user_id != context.user.id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Step-up token does not match the current user"
             )
         return context
 

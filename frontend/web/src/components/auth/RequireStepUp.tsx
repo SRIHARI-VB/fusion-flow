@@ -1,33 +1,50 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from "@fusion-flow/ui";
+import type { Business } from "@fusion-flow/ts-types";
 import { useAuthStore } from "../../lib/auth-store";
 import { useStepUpAuth } from "../../lib/step-up-auth-store";
 
+export interface RequireStepUpProps {
+  children: ReactNode;
+  /** Whether THIS logged-in membership needs to step up at all - e.g.
+   * `(b) => !!b?.is_doctor` for the clinic-queue gate, `(b) => b?.role ===
+   * "owner"` for the Settings gate. Anyone this returns false for passes
+   * straight through with no prompt, every render (not just once) - the
+   * gate is authoritative, not a one-time check. */
+  when: (business: Business | null) => boolean;
+  /** Shown on the password-confirmation card - explains WHY this specific
+   * user is being asked, since the same generic gate now serves more than
+   * one reason. */
+  reason: string;
+}
+
 /**
- * Guards the clinic-queue module's doctor-only actions behind a fresh
- * password confirmation, mirroring `RequireModule`'s "wrap children, render
- * a gate screen instead" shape. Only applies to a doctor-flagged membership
- * (`business.is_doctor`) - receptionist/owner access falls straight through
- * with no extra prompt, since this gate exists to protect what a DOCTOR sees
- * (consultation notes), not the module as a whole. The backend also enforces
- * notes-visibility server-side independent of this - this component is a
+ * Guards a sensitive area behind a fresh password confirmation, mirroring
+ * `RequireModule`'s "wrap children, render a gate screen instead" shape.
+ * Generic over WHO needs to step up (`when`) and WHY (`reason`) - e.g. a
+ * doctor-flagged membership opening the clinic-queue board (protects
+ * consultation notes), or an Owner opening Settings (confirms they're
+ * genuinely the account that created this tenant, not just someone who
+ * happens to know the login). Everyone `when` returns false for passes
+ * straight through with no extra prompt. The backend independently
+ * enforces its own equivalent checks server-side - this component is a
  * convenience gate, not the actual security boundary.
  */
-export function RequireStepUp({ children }: { children: ReactNode }) {
+export function RequireStepUp({ children, when, reason }: RequireStepUpProps) {
   const business = useAuthStore((s) => s.business);
   const isValid = useStepUpAuth((s) => s.isValid);
 
-  if (!business?.is_doctor) {
+  if (!when(business)) {
     return <>{children}</>;
   }
   if (isValid()) {
     return <>{children}</>;
   }
-  return <StepUpPasswordGate />;
+  return <StepUpPasswordGate reason={reason} />;
 }
 
-function StepUpPasswordGate() {
+function StepUpPasswordGate({ reason }: { reason: string }) {
   const [password, setPassword] = useState("");
   const confirmPassword = useStepUpAuth((s) => s.confirmPassword);
   const isConfirming = useStepUpAuth((s) => s.isConfirming);
@@ -50,10 +67,7 @@ function StepUpPasswordGate() {
             <ShieldCheck className="h-5 w-5" />
           </div>
           <CardTitle>Confirm your password to continue</CardTitle>
-          <CardDescription>
-            The Patient Flow board includes consultation notes only doctors can see - please
-            re-enter your password to continue.
-          </CardDescription>
+          <CardDescription>{reason}</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="flex flex-col gap-4" onSubmit={handleSubmit} noValidate>
