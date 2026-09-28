@@ -75,6 +75,19 @@ class MemberOut(BaseModel):
     is_doctor: bool = False
 
 
+class MemberCreateRequest(BaseModel):
+    """Add a new team member to the active business. There is no
+    email-invite-link flow in this app (no transactional email sending
+    exists anywhere) - the caller (owner/admin) sets the new member's
+    password directly and communicates it out-of-band; the account is
+    immediately active, no separate acceptance step."""
+
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+    role: MembershipRole = MembershipRole.MEMBER
+    is_doctor: bool = False
+
+
 class MemberUpdateRequest(BaseModel):
     """Owner/admin-editable fields on a team member. Currently just the
     doctor flag - `role` editing isn't built yet (still read-only, same as

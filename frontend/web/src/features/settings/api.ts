@@ -1,4 +1,4 @@
-import type { Business } from "@fusion-flow/ts-types";
+import type { Business, MembershipRole } from "@fusion-flow/ts-types";
 import { apiClient } from "../../lib/api-client";
 import type { Member } from "./types";
 
@@ -20,6 +20,22 @@ export async function updateBusinessSettings(
 /** `GET /api/v1/businesses/{id}/members` — owner/admin only, must match the active tenant. */
 export async function fetchMembers(businessId: string): Promise<Member[]> {
   const { data } = await apiClient.get<Member[]>(`/api/v1/businesses/${businessId}/members`);
+  return data;
+}
+
+export interface CreateMemberInput {
+  email: string;
+  password: string;
+  role: MembershipRole;
+  is_doctor: boolean;
+}
+
+/** `POST /api/v1/businesses/{id}/members` — owner/admin only. There's no
+ * email-invite-link flow (no transactional email sending exists anywhere
+ * in this app) - the password set here must be shared with the new
+ * member out-of-band; the account is immediately active. */
+export async function createMember(businessId: string, payload: CreateMemberInput): Promise<Member> {
+  const { data } = await apiClient.post<Member>(`/api/v1/businesses/${businessId}/members`, payload);
   return data;
 }
 

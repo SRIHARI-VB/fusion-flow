@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { AlertTriangle, MessageSquareOff, ShieldAlert, Users } from "lucide-react";
+import { AlertTriangle, MessageSquareOff, Plus, ShieldAlert, Users } from "lucide-react";
 import {
   Badge,
   Button,
@@ -25,7 +25,7 @@ import { listBusinessTemplates } from "../onboarding/business-templates-api";
 import { ClinicSchedulingCard } from "./components/ClinicSchedulingCard";
 import { SidebarCustomizationCard } from "./components/SidebarCustomizationCard";
 import { ConfirmDialog } from "./components/ConfirmDialog";
-import { fetchMembers, updateBusinessSettings, updateMemberIsDoctor } from "./api";
+import { createMember, fetchMembers, updateBusinessSettings, updateMemberIsDoctor } from "./api";
 import type { Member } from "./types";
 
 function titleCase(value: string): string {
@@ -38,11 +38,20 @@ const profileSchema = z.object({
 });
 type ProfileFormValues = z.infer<typeof profileSchema>;
 
+const addMemberSchema = z.object({
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(8, "At least 8 characters"),
+  role: z.enum(["admin", "member", "viewer"]),
+  is_doctor: z.boolean(),
+});
+type AddMemberFormValues = z.infer<typeof addMemberSchema>;
+
 /**
- * `/settings` — business profile, messaging kill switch, read-only team
- * members, and a danger-zone placeholder. See the plan's "Next
- * Implementation Phase" item 4: invite-flow and business deletion are
- * deliberately out of scope here.
+ * `/settings` — business profile, messaging kill switch, team members
+ * (add/edit), and a danger-zone placeholder. Adding a member sets their
+ * password directly (there's no transactional-email infrastructure in
+ * this app for a real invite-link flow) - the caller shares it with the
+ * new member out-of-band. Business deletion is still out of scope here.
  */
 export function SettingsPage() {
   const claims = useAuthStore((s) => s.claims);
@@ -67,6 +76,31 @@ export function SettingsPage() {
   });
 
   const [confirmPauseOpen, setConfirmPauseOpen] = useState(false);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+
+  const {
+    register: registerAddMember,
+    handleSubmit: handleSubmitAddMember,
+    reset: resetAddMember,
+    formState: { errors: addMemberErrors },
+  } = useForm<AddMemberFormValues>({
+    resolver: zodResolver(addMemberSchema),
+    defaultValues: { email: "", password: "", role: "member", is_doctor: false },
+  });
+
+  const createMemberMutation = useMutation({
+    mutationFn: (values: AddMemberFormValues) => {
+      if (!businessId) throw new Error("No active business on this session");
+      return createMember(businessId, values);
+    },
+    onSuccess: (created) => {
+      queryClient.setQueryData<Member[]>(["settings", "members", businessId], (prev) =>
+        prev ? [...prev, created] : [created],
+      );
+      resetAddMember();
+      setAddMemberOpen(false);
+    },
+  });
 
   // Derived from the real, admin-extensible BusinessTemplate catalog
   // (the same one onboarding's "pick a starter kit" step already reads)
@@ -287,17 +321,118 @@ export function SettingsPage() {
       {/* Team members */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Team members
-          </CardTitle>
-          <CardDescription>
-            Everyone with access to this business. Mark a member as a doctor to let reception
-            assign them patients in Patient Flow - doctors also need to confirm their password
-            once per session before opening that module.
-          </CardDescription>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Users className="h-5 w-5" />
+                Team members
+              </CardTitle>
+              <CardDescription className="mt-1.5">
+                Everyone with access to this business. Mark a member as a doctor to let reception
+                assign them patients in Patient Flow - doctors also need to confirm their password
+                once per session before opening that module.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setAddMemberOpen((prev) => !prev)}
+              disabled={!businessId}
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              Add team member
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
+          {addMemberOpen && (
+            <form
+              className="mb-6 flex flex-col gap-4 rounded-md border border-border p-4"
+              onSubmit={handleSubmitAddMember((values) => createMemberMutation.mutate(values))}
+              noValidate
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="new-member-email" className="text-sm font-medium">
+                    Email
+                  </label>
+                  <Input
+                    id="new-member-email"
+                    type="email"
+                    autoComplete="off"
+                    error={!!addMemberErrors.email}
+                    {...registerAddMember("email")}
+                  />
+                  {addMemberErrors.email && (
+                    <p className="text-xs text-destructive">{addMemberErrors.email.message}</p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="new-member-password" className="text-sm font-medium">
+                    Temporary password
+                  </label>
+                  <Input
+                    id="new-member-password"
+                    type="text"
+                    autoComplete="off"
+                    error={!!addMemberErrors.password}
+                    {...registerAddMember("password")}
+                  />
+                  {addMemberErrors.password && (
+                    <p className="text-xs text-destructive">{addMemberErrors.password.message}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Share this with them yourself - there's no invite email.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="new-member-role" className="text-sm font-medium">
+                    Role
+                  </label>
+                  <select
+                    id="new-member-role"
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                    {...registerAddMember("role")}
+                  >
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+                <div className="flex items-end gap-2 pb-1.5">
+                  <input
+                    id="new-member-is-doctor"
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input accent-accent"
+                    {...registerAddMember("is_doctor")}
+                  />
+                  <label htmlFor="new-member-is-doctor" className="text-sm font-medium">
+                    This person is a doctor
+                  </label>
+                </div>
+              </div>
+              {createMemberMutation.isError && (
+                <p className="text-sm text-destructive">
+                  Could not add that team member - the email may already be registered.
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button type="submit" disabled={createMemberMutation.isPending}>
+                  {createMemberMutation.isPending ? "Adding..." : "Add member"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    resetAddMember();
+                    setAddMemberOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
           <Table>
             <TableHeader>
               <TableRow>

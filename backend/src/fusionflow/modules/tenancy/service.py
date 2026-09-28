@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fusionflow.core.security import hash_password
 from fusionflow.modules.admin.models import Plan
 from fusionflow.modules.auth.models import User
 from fusionflow.modules.tenancy.models import Business, BusinessStatus, Membership, MembershipRole
@@ -85,6 +86,59 @@ async def create_business_with_owner(
     session.add(membership)
     await session.flush()
     return business, membership
+
+
+async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
+    return (
+        await session.execute(select(User).where(User.email == email.strip().lower()))
+    ).scalar_one_or_none()
+
+
+async def create_member(
+    session: AsyncSession,
+    *,
+    business_id: uuid.UUID,
+    email: str,
+    password: str,
+    role: MembershipRole,
+    is_doctor: bool = False,
+) -> tuple[User, Membership]:
+    """Create a brand-new user + an immediately-accepted membership on an
+    EXISTING business. Does not commit; does not check for a duplicate
+    email - callers must do that first (see `auth.service.signup`'s
+    identical duplicate-email check, which this mirrors rather than
+    reuses, since that one commits as part of the signup transaction and
+    this one is a separate write path).
+
+    Unlike `create_business_with_owner` (which only ever assigns
+    `OWNER`), this is the path for an owner/admin adding a colleague to
+    their OWN existing business - there is no email-based invite-link
+    flow in this app (no transactional email sending exists anywhere in
+    this codebase), so the new member's password is set directly by
+    whoever adds them and must be communicated out-of-band. `accepted_at`
+    is set immediately (no separate "pending invite" acceptance step),
+    matching the self-serve signup owner's own immediate acceptance.
+    """
+    now = datetime.now(timezone.utc)
+    user = User(
+        id=uuid.uuid4(),
+        email=email.strip().lower(),
+        password_hash=hash_password(password),
+    )
+    session.add(user)
+    await session.flush()
+
+    membership = Membership(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        business_id=business_id,
+        role=role,
+        is_doctor=is_doctor,
+        accepted_at=now,
+    )
+    session.add(membership)
+    await session.flush()
+    return user, membership
 
 
 async def list_memberships_for_user(

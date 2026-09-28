@@ -25,6 +25,7 @@ from fusionflow.modules.tenancy.schemas import (
     BusinessMembershipOut,
     BusinessOut,
     BusinessUpdateRequest,
+    MemberCreateRequest,
     MemberOut,
     MemberUpdateRequest,
 )
@@ -173,6 +174,59 @@ async def update_business(
     await session.commit()
     await session.refresh(business)
     return BusinessOut.model_validate(business)
+
+
+@router.post("/{business_id}/members", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
+async def create_business_member(
+    business_id: uuid.UUID,
+    payload: MemberCreateRequest,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+) -> MemberOut:
+    """Add a new team member to the *active* business. Owner/admin only,
+    same cross-tenant guard as this router's other business-scoped routes.
+
+    There is no email-invite-link flow in this app - the new member's
+    password is set directly here by the caller and must be communicated
+    out-of-band (no transactional email sending exists anywhere in this
+    codebase). The account is immediately active.
+    """
+    if business_id != context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Switch to that business before adding members to it",
+        )
+    if payload.role == MembershipRole.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot grant Owner through this endpoint",
+        )
+
+    existing = await tenancy_service.get_user_by_email(session, payload.email)
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with that email already exists",
+        )
+
+    _user, membership = await tenancy_service.create_member(
+        session,
+        business_id=business_id,
+        email=payload.email,
+        password=payload.password,
+        role=payload.role,
+        is_doctor=payload.is_doctor,
+    )
+    await session.commit()
+
+    return MemberOut(
+        id=membership.id,
+        email=_user.email,
+        role=membership.role,
+        invited_at=membership.invited_at,
+        accepted_at=membership.accepted_at,
+        is_doctor=membership.is_doctor,
+    )
 
 
 @router.get("/{business_id}/members", response_model=list[MemberOut])
