@@ -13,7 +13,7 @@ const preset: Partial<Config> = {
     extend: {
       fontFamily: {
         sans: [
-          "Outfit",
+          "Inter",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",
@@ -67,7 +67,9 @@ const preset: Partial<Config> = {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        card: "0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06)",
+        // Tinted toward the foreground color rather than neutral black,
+        // matching the reference site's colored-shadow style.
+        card: "0 1px 2px 0 rgb(38 62 55 / 0.05), 0 1px 3px 0 rgb(38 62 55 / 0.08)",
       },
     },
   },

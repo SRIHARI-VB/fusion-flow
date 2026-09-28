@@ -11,7 +11,7 @@ Two dashboard screenshots (light + dark) and one workflow-builder screenshot wer
 - **Trend panel** (large, ~2/3 width): title + info icon + overflow menu (`...`), a legend-style total figure, colored dot legend toggles (e.g. "New user" / "Existing user"), a period-toggle button group (Weekly/Monthly/Yearly), a bar chart with hover tooltip card showing a breakdown for the hovered period.
 - **Breakdown panel** (~1/3 width): title + subtitle, total figure, a date-range dropdown, a highlighted "Get AI insight" callout row (icon + text + arrow), and a secondary bar chart below.
 - **Data table** ("Recent Transactions" or similar): header row with checkbox-select-all, sortable column headers (small up/down caret icons), a search input, a solid accent "+ Add" button, and row-level actions.
-- **Color system**: light mode = off-white/white surfaces, charcoal text; dark mode = deep forest-charcoal surfaces (~`#10201A`), same layout and spacing, same accent. Single accent: pine green (~`#165B4C`, `#2A8F6C` in dark mode) used for primary buttons, active nav pill, active toggle states, and the dominant chart series. Positive deltas in green. Implement as CSS variables / Tailwind `dark:` variants driven by shadcn/ui theme tokens — one component tree, token swap only.
+- **Color system**: light mode = off-white/white surfaces, dark-teal text; dark mode = deep teal-charcoal surfaces (~`#16241F`, no reference for this half - derived to match), same layout and spacing, same accent. Single accent: muted teal-green (~`#3C795D`, `#4A9C78` in dark mode) used for primary buttons, active nav pill, active toggle states, and the dominant chart series. Positive deltas in green. Implement as CSS variables / Tailwind `dark:` variants driven by shadcn/ui theme tokens — one component tree, token swap only.
 
 ## Workflow builder
 
@@ -23,21 +23,26 @@ Two dashboard screenshots (light + dark) and one workflow-builder screenshot wer
 
 ## Palette tokens (`frontend/packages/ui/src/theme.css` is the live source; this mirrors it)
 
-Forest-green/sage palette:
+Light-mode values taken directly from a reference site's shipped CSS (its
+logged-in workspace palette, not its marketing-page one - closer analog to
+this app). Dark mode has no reference from that site (it ships light-only)
+and was derived to stay in the same teal/sage hue family.
 
-- Deep Forest / Pine Green: `#0F4C3A` → `#165B4C` — brand accent (`--accent`, `--ring`)
-- Soft Sage / Mint Tint: `#EAF4EE` → `#F0F7F3` — muted/secondary surfaces, accent-soft, active sidebar pill
-- Clean Off-White: `#FBFBF9` → `#FFFFFF` — page background → card/sidebar surfaces
-- Charcoal Slate: `#1A2421` — primary text (`--foreground`)
-- Muted Sage Gray: `#5A6E67` → `#70807B` — secondary/muted text, inactive sidebar labels
-
-- `--accent`: `#165B4C` (dark mode: `#2A8F6C`)
+- `--background`: `#F7F8F5` (dark: `#16241F`)
+- `--foreground`: `#263E37` (dark: `#EAF2E9`)
+- `--card`: `#FFFFFF` (dark: `#1D2F28`)
+- `--border`/`--input`: `#E5EAE4` (dark: `#2A3F37`)
+- `--ring`: `#55AB9A` (dark: `#6BC4A8`)
+- `--muted`: `#EEF2E9` (dark: `#22362E`) / `--muted-foreground`: `#79867F` (dark: `#9DB3A8`)
+- `--secondary`/`--accent-soft`/`--sidebar-active`: `#EAF2E9` (dark: `#22362E`/`#24392F`)
+- `--accent`: `#3C795D` (dark: `#4A9C78`) — the reference site's primary-button color
 - `--accent-foreground`: `#FFFFFF`
-- `--success`: `#1F9D55` (dark mode: `#34C286`) — deliberately a different green than the brand accent so deltas stay visually distinct
-- `--destructive`: `#DC2626` (dark mode: `#EF4444`) — kept red regardless of theme, not part of the brand palette
-- Light surfaces: `#FFFFFF` / `#FBFBF9` (page bg) / `#1A2421` (primary text)
-- Dark surfaces: `#10201A` (page bg) / `#17281F` (card bg) / `#EAF4EE` (primary text)
+- `--success`: `#598362` (dark: `#5FB37F`) — deliberately a different green than the brand accent so deltas stay visually distinct
+- `--destructive`: `#DC2626` (dark: `#EF4444`) — kept red regardless of theme, not part of the brand palette
+- `--sidebar-foreground`: `#7A8680` (dark: `#A9BDB1`) — inactive nav label color
+- `--radius`: `0.75rem` (12px, matches the reference site's card radius)
+- Card shadow tinted toward the foreground color (`rgb(38 62 55 / …)`) rather than neutral black, matching the reference site's colored-shadow style.
 
 ## Typography
 
-- Font: **Outfit** (Google Font), loaded via `<link>` in both apps' `index.html`, set as `fontFamily.sans` in the shared Tailwind preset and as the `body` font-family in `theme.css`. Falls back to the system sans stack if the Google Fonts request fails.
+- Font: **Inter** (Google Font, matches the reference site's self-hosted Inter), loaded via `<link>` in both apps' `index.html`, set as `fontFamily.sans` in the shared Tailwind preset and as the `body` font-family in `theme.css`. Falls back to the system sans stack if the Google Fonts request fails.

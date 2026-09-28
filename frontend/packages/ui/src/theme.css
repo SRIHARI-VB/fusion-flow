@@ -1,85 +1,87 @@
 /**
  * fusion-flow design tokens (light + dark).
  * Source of truth: docs/design/README.md "Palette tokens" section.
- * Forest-green/sage palette (accent, muted/secondary, surfaces, sidebar) is
- * the exact 5-color spec given; border/ring/dark-mode/success values are
- * derived to stay in the same hue family. `destructive` is deliberately
- * kept red regardless of theme - it's a semantic warning color, not brand.
+ * Light-mode values are taken directly from a reference site's actual
+ * shipped CSS (its logged-in workspace palette specifically, since that's
+ * the closer analog to this app - a dashboard, not a marketing site).
+ * Dark mode has no reference (the source site has none) - derived to stay
+ * in the same teal/sage hue family. `destructive` is deliberately kept red
+ * regardless of theme - it's a semantic warning color, not brand.
  */
 
 :root {
   /* surfaces */
-  --background: #fbfbf9;
-  --foreground: #1a2421;
+  --background: #f7f8f5;
+  --foreground: #263e37;
   --card: #ffffff;
-  --card-foreground: #1a2421;
+  --card-foreground: #263e37;
 
   /* structure */
-  --border: #dce6e0;
-  --input: #dce6e0;
-  --ring: #165b4c;
+  --border: #e5eae4;
+  --input: #e5eae4;
+  --ring: #55ab9a;
 
   /* muted / secondary */
-  --muted: #f0f7f3;
-  --muted-foreground: #5a6e67;
-  --secondary: #eaf4ee;
-  --secondary-foreground: #1a2421;
+  --muted: #eef2e9;
+  --muted-foreground: #79867f;
+  --secondary: #eaf2e9;
+  --secondary-foreground: #263e37;
 
   /* accent (brand) */
-  --accent: #165b4c;
+  --accent: #3c795d;
   --accent-foreground: #ffffff;
-  --accent-soft: #eaf4ee;
+  --accent-soft: #eaf2e9;
 
   /* semantic */
-  --success: #1f9d55;
+  --success: #598362;
   --success-foreground: #ffffff;
-  --success-soft: #e3f5ea;
+  --success-soft: #e9f2e5;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
 
   /* sidebar / chrome */
   --sidebar: #ffffff;
-  --sidebar-border: #dce6e0;
-  --sidebar-foreground: #5a6e67;
-  --sidebar-active: #eaf4ee;
+  --sidebar-border: #e5eae4;
+  --sidebar-foreground: #7a8680;
+  --sidebar-active: #eaf2e9;
 
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 }
 
 .dark {
-  --background: #10201a;
-  --foreground: #eaf4ee;
-  --card: #17281f;
-  --card-foreground: #eaf4ee;
+  --background: #16241f;
+  --foreground: #eaf2e9;
+  --card: #1d2f28;
+  --card-foreground: #eaf2e9;
 
-  --border: #24382f;
-  --input: #24382f;
-  --ring: #2f9e76;
+  --border: #2a3f37;
+  --input: #2a3f37;
+  --ring: #6bc4a8;
 
-  --muted: #1c2e26;
-  --muted-foreground: #8fa79d;
-  --secondary: #1c2e26;
-  --secondary-foreground: #eaf4ee;
+  --muted: #22362e;
+  --muted-foreground: #9db3a8;
+  --secondary: #22362e;
+  --secondary-foreground: #eaf2e9;
 
-  --accent: #2a8f6c;
+  --accent: #4a9c78;
   --accent-foreground: #ffffff;
-  --accent-soft: #1f3a2e;
+  --accent-soft: #24392f;
 
-  --success: #34c286;
+  --success: #5fb37f;
   --success-foreground: #ffffff;
-  --success-soft: #163527;
+  --success-soft: #1c3327;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
 
-  --sidebar: #17281f;
-  --sidebar-border: #24382f;
-  --sidebar-foreground: #b9c9c1;
-  --sidebar-active: #1f3a2e;
+  --sidebar: #1d2f28;
+  --sidebar-border: #2a3f37;
+  --sidebar-foreground: #a9bdb1;
+  --sidebar-active: #24392f;
 }
 
 body {
   font-family:
-    "Outfit",
+    "Inter",
     ui-sans-serif,
     system-ui,
     -apple-system,
