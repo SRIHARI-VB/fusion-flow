@@ -27,7 +27,7 @@ function ModuleAccessRequiredPage({
   status,
 }: {
   moduleKey: string;
-  status: "pending" | "denied" | "not_requested";
+  status: "pending" | "denied" | "restricted" | "not_requested";
 }) {
   const requestAccessMutation = useRequestConnectorAccess();
 
@@ -42,6 +42,8 @@ function ModuleAccessRequiredPage({
           <CardDescription>
             {status === "pending" && "Your request for this module is pending admin approval."}
             {status === "denied" && "Access to this module was denied by an administrator."}
+            {status === "restricted" &&
+              "Your role does not have access to this module. Ask an owner or admin to enable it for your role."}
             {status === "not_requested" &&
               "Your business does not have access to this module yet. Request it from an administrator."}
           </CardDescription>

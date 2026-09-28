@@ -41,9 +41,10 @@ from fusionflow.modules.connectors.models import (
     ConnectorState,
     ConnectorType,
     HealthStatus,
+    RoleModuleRestriction,
 )
 from fusionflow.modules.connectors.schemas import ConnectorAccessRequestOut, ConnectorInstanceOut, ConnectorTypeOut
-from fusionflow.modules.tenancy.models import Business
+from fusionflow.modules.tenancy.models import Business, MembershipRole
 
 settings = get_connector_settings()
 
@@ -202,6 +203,105 @@ async def get_connector_access_map(
         else:
             result[connector_type_id] = "denied"
     return result
+
+
+async def get_role_restricted_connector_type_ids(
+    session: AsyncSession, *, tenant_id: uuid.UUID, role: MembershipRole
+) -> set[uuid.UUID]:
+    rows = await session.execute(
+        select(RoleModuleRestriction.connector_type_id).where(
+            RoleModuleRestriction.tenant_id == tenant_id,
+            RoleModuleRestriction.role == role,
+        )
+    )
+    return set(rows.scalars().all())
+
+
+async def get_connector_access_map_for_role(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    connector_type_ids: list[uuid.UUID],
+    role: MembershipRole,
+) -> dict[uuid.UUID, str]:
+    """`get_connector_access_map`, then overlaid with this ONE caller's
+    role-based restriction - a fifth status, "restricted", alongside the
+    other four. OWNER/ADMIN are never restrictable (see
+    `RoleModuleRestriction`'s docstring), so they get the unmodified map
+    back with no extra query. Only ever turns "granted" into "restricted"
+    - a module the tenant was never granted in the first place is still
+    "pending"/"denied"/"not_requested" regardless of role, since a
+    restriction row only makes sense on top of access the tenant already
+    has.
+    """
+    access_map = await get_connector_access_map(
+        session, tenant_id=tenant_id, connector_type_ids=connector_type_ids
+    )
+    if role in (MembershipRole.OWNER, MembershipRole.ADMIN):
+        return access_map
+    restricted_ids = await get_role_restricted_connector_type_ids(session, tenant_id=tenant_id, role=role)
+    return {
+        type_id: ("restricted" if type_id in restricted_ids and status == "granted" else status)
+        for type_id, status in access_map.items()
+    }
+
+
+async def list_module_role_access(
+    session: AsyncSession, *, tenant_id: uuid.UUID
+) -> list[tuple[ConnectorType, bool, bool]]:
+    """FEATURE-category modules this tenant actually has, each paired with
+    whether MEMBER/VIEWER are currently restricted from it - the data the
+    Settings "Team Permissions" tab renders as a table of toggles. Modules
+    the tenant doesn't have (pending/denied/not_requested) are omitted -
+    there's nothing to restrict yet."""
+    types = await list_connector_types(session)
+    feature_types = [t for t in types if t.category == ConnectorCategory.FEATURE]
+    access_map = await get_connector_access_map(
+        session, tenant_id=tenant_id, connector_type_ids=[t.id for t in feature_types]
+    )
+    granted_types = [t for t in feature_types if access_map.get(t.id) == "granted"]
+
+    rows = await session.execute(
+        select(RoleModuleRestriction).where(RoleModuleRestriction.tenant_id == tenant_id)
+    )
+    restricted_pairs = {(r.connector_type_id, r.role) for r in rows.scalars().all()}
+
+    return [
+        (
+            t,
+            (t.id, MembershipRole.MEMBER) in restricted_pairs,
+            (t.id, MembershipRole.VIEWER) in restricted_pairs,
+        )
+        for t in granted_types
+    ]
+
+
+async def set_role_module_restriction(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    connector_type_id: uuid.UUID,
+    role: MembershipRole,
+    restricted: bool,
+) -> None:
+    existing = (
+        await session.execute(
+            select(RoleModuleRestriction).where(
+                RoleModuleRestriction.tenant_id == tenant_id,
+                RoleModuleRestriction.connector_type_id == connector_type_id,
+                RoleModuleRestriction.role == role,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if restricted and existing is None:
+        session.add(
+            RoleModuleRestriction(
+                id=uuid.uuid4(), tenant_id=tenant_id, connector_type_id=connector_type_id, role=role
+            )
+        )
+    elif not restricted and existing is not None:
+        await session.delete(existing)
 
 
 async def _tenant_has_connector_access(

@@ -22,6 +22,7 @@ from fusionflow.modules.connectors.models import (
     ConnectorState,
     HealthStatus,
 )
+from fusionflow.modules.tenancy.models import MembershipRole
 
 
 class ConnectorTypeOut(BaseModel):
@@ -36,9 +37,11 @@ class ConnectorTypeOut(BaseModel):
     is_enabled_globally: bool
     # One of "granted" (in the tenant's business_template bundle, or an
     # approved access request), "pending" (access request awaiting admin
-    # review), "denied", or "not_requested". Computed per-tenant by
-    # `service.get_connector_access_map` - never `from_attributes`'d
-    # straight off the ORM row, see `service.to_type_out`.
+    # review), "denied", "restricted" (tenant has it, but an Owner/Admin
+    # blocked the CALLER's role from it), or "not_requested". Computed
+    # per-tenant-and-role by `service.get_connector_access_map_for_role` -
+    # never `from_attributes`'d straight off the ORM row, see
+    # `service.to_type_out`.
     access_status: str = "granted"
     # Static, tenant-independent webhook setup instructions (see
     # `base.ConnectorAdapter.webhook_setup_hint`) - null for a provider
@@ -122,3 +125,17 @@ class ConnectorAccessRequestOut(BaseModel):
     reviewed_by: uuid.UUID | None = None
     reviewed_at: datetime | None = None
     created_at: datetime
+
+
+class ModuleRoleAccessOut(BaseModel):
+    connector_type_id: uuid.UUID
+    key: str
+    display_name: str
+    member_restricted: bool
+    viewer_restricted: bool
+
+
+class SetRoleRestrictionRequest(BaseModel):
+    connector_type_id: uuid.UUID
+    role: MembershipRole
+    restricted: bool

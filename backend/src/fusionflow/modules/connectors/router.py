@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse
 
-from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.core.deps import SessionDep, TenantContext, TenantContextDep, require_role
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.config import get_connector_settings
@@ -35,9 +35,12 @@ from fusionflow.modules.connectors.schemas import (
     ConnectRequest,
     ConnectResponse,
     MediaUploadOut,
+    ModuleRoleAccessOut,
+    SetRoleRestrictionRequest,
 )
 from fusionflow.modules.connectors.service import ConnectorError
 from fusionflow.modules.media_library import service as media_library_service
+from fusionflow.modules.tenancy.models import MembershipRole
 
 # Imported for their registration side effect - see module docstring.
 from fusionflow.modules.connectors.cloudflare_r2 import adapter as _cloudflare_r2_adapter  # noqa: F401
@@ -67,13 +70,60 @@ def _http(exc: ConnectorError) -> HTTPException:
 @router.get("/types", response_model=list[ConnectorTypeOut])
 async def list_connector_types(context: TenantContextDep, session: SessionDep) -> list[ConnectorTypeOut]:
     """The full provider catalog, plus this tenant's per-type `access_status`
-    ("granted"/"pending"/"denied"/"not_requested") so the frontend can render
-    Connect vs Request-access vs Pending-approval without a second call."""
+    ("granted"/"pending"/"denied"/"restricted"/"not_requested") so the
+    frontend can render Connect vs Request-access vs Pending-approval vs
+    role-restricted without a second call. Resolved for the CALLER's own
+    role, not just the tenant - see `get_connector_access_map_for_role`."""
     types = await connector_service.list_connector_types(session)
-    access_map = await connector_service.get_connector_access_map(
-        session, tenant_id=context.tenant_id, connector_type_ids=[t.id for t in types]
+    access_map = await connector_service.get_connector_access_map_for_role(
+        session, tenant_id=context.tenant_id, connector_type_ids=[t.id for t in types], role=context.role
     )
     return [connector_service.to_type_out(t, access_map.get(t.id, "not_requested")) for t in types]
+
+
+@router.get("/role-restrictions", response_model=list[ModuleRoleAccessOut])
+async def list_role_restrictions(
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+) -> list[ModuleRoleAccessOut]:
+    """FEATURE modules this tenant has, each with whether Member/Viewer are
+    currently restricted from it. Owner/Admin only - powers the Settings
+    "Team Permissions" tab."""
+    rows = await connector_service.list_module_role_access(session, tenant_id=context.tenant_id)
+    return [
+        ModuleRoleAccessOut(
+            connector_type_id=t.id,
+            key=t.key,
+            display_name=t.display_name,
+            member_restricted=member_restricted,
+            viewer_restricted=viewer_restricted,
+        )
+        for t, member_restricted, viewer_restricted in rows
+    ]
+
+
+@router.put("/role-restrictions", status_code=204)
+async def set_role_restriction(
+    payload: SetRoleRestrictionRequest,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+) -> None:
+    """Restrict (or un-restrict) one module for one role, tenant-scoped.
+    Owner/Admin only, and only Member/Viewer can ever be the target role -
+    Owner/Admin are never restrictable (see `RoleModuleRestriction`'s
+    docstring)."""
+    if payload.role not in (MembershipRole.MEMBER, MembershipRole.VIEWER):
+        raise HTTPException(
+            status_code=400, detail="Only the member or viewer role can be restricted"
+        )
+    await connector_service.set_role_module_restriction(
+        session,
+        tenant_id=context.tenant_id,
+        connector_type_id=payload.connector_type_id,
+        role=payload.role,
+        restricted=payload.restricted,
+    )
+    await commit_and_keep_tenant_context(session)
 
 
 @router.get("", response_model=list[ConnectorInstanceOut])

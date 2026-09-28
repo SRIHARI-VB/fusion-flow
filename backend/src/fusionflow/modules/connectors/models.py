@@ -41,6 +41,7 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from fusionflow.db.base import Base, TenantScopedMixin, TimestampMixin
+from fusionflow.modules.tenancy.models import MembershipRole
 
 
 class ConnectorCategory(str, enum.Enum):
@@ -326,5 +327,44 @@ class ConnectorAccessOverride(Base, TenantScopedMixin, TimestampMixin):
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RoleModuleRestriction(Base, TenantScopedMixin, TimestampMixin):
+    """Owner/Admin's explicit block of ONE module for ONE non-privileged
+    role (Member or Viewer) within this tenant.
+
+    Presence of a row means "this role cannot see/use this module";
+    absence means allowed - so a module the platform grants a tenant
+    tomorrow is visible to every existing role immediately, with zero
+    extra rows, matching the product ask that new grants default to
+    visible for everyone except an explicit restriction. Never applies
+    to OWNER/ADMIN - enforced at the service layer
+    (`connectors.service.get_connector_access_map_for_role`), not at the
+    schema level, mirroring `ConnectorAccessOverride`'s "checked first"
+    shape but scoped to MEMBER/VIEWER only.
+
+    Only ever created for FEATURE-category `connector_type`s (see
+    `service.list_module_role_access`, the only writer of this table's
+    UI-facing list) - restricting a raw integration connector
+    (WhatsApp/Instagram credentials) per-role isn't part of this ask and
+    those types never appear in the management UI, so this table simply
+    never gets a row for them in practice.
+    """
+
+    __tablename__ = "role_module_restrictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "connector_type_id", "role", name="uq_role_module_restriction_tenant_type_role"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    connector_type_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("connector_types.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[MembershipRole] = mapped_column(
+        Enum(MembershipRole, name="membership_role", values_callable=lambda e: [m.value for m in e]),
+        nullable=False,
+    )
 
     connector_type: Mapped["ConnectorType"] = relationship()

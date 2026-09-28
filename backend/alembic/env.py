@@ -63,7 +63,13 @@ async def run_async_migrations() -> None:
     # reading the ini section - the escaped (%%) form stored there by
     # set_main_option above is for display only and would connect with the
     # wrong (literally doubled-percent) password if used here.
-    connectable = create_async_engine(settings.DATABASE_URL, poolclass=pool.NullPool)
+    # statement_cache_size=0: same asyncpg-vs-pgbouncer-transaction-pooler
+    # requirement as `db/session.py`'s engines - without it, asyncpg's
+    # prepared-statement cache collides across pooled connections
+    # ("DuplicatePreparedStatementError").
+    connectable = create_async_engine(
+        settings.DATABASE_URL, poolclass=pool.NullPool, connect_args={"statement_cache_size": 0}
+    )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

@@ -24,6 +24,7 @@ import { useAuthStore } from "../../lib/auth-store";
 import { listBusinessTemplates } from "../onboarding/business-templates-api";
 import { ClinicSchedulingCard } from "./components/ClinicSchedulingCard";
 import { SidebarCustomizationCard } from "./components/SidebarCustomizationCard";
+import { TeamPermissionsCard } from "./components/TeamPermissionsCard";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { createMember, fetchMembers, updateBusinessSettings, updateMemberIsDoctor } from "./api";
 import type { Member } from "./types";
@@ -515,6 +516,9 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Team permissions */}
+      <TeamPermissionsCard />
 
       {/* Sidebar customization */}
       <SidebarCustomizationCard />

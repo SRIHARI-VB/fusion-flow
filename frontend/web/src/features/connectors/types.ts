@@ -34,13 +34,14 @@ export type ConnectorHealthStatus = "healthy" | "degraded" | "down";
 export type ConnectorEventType = "webhook_received" | "sync" | "oauth_callback" | "error";
 
 /**
- * Per-tenant entitlement for one connector type - "granted" (in the
- * tenant's business-template bundle, or an approved access request),
- * "pending" (access request awaiting admin review), "denied", or
- * "not_requested". Computed server-side in `GET /connectors/types` -
- * see `backend/.../connectors/service.py::get_connector_access_map`.
+ * Per-tenant-and-role entitlement for one connector type - "granted" (in
+ * the tenant's business-template bundle, or an approved access request),
+ * "pending" (access request awaiting admin review), "denied", "restricted"
+ * (the tenant has it, but an Owner/Admin blocked THIS caller's role from
+ * it), or "not_requested". Computed server-side in `GET /connectors/types`
+ * - see `backend/.../connectors/service.py::get_connector_access_map_for_role`.
  */
-export type ConnectorAccessStatus = "granted" | "pending" | "denied" | "not_requested";
+export type ConnectorAccessStatus = "granted" | "pending" | "denied" | "restricted" | "not_requested";
 
 export interface ConnectorType {
   id: string;
@@ -110,4 +111,22 @@ export interface ConnectRequest {
 export interface ConnectResponse {
   instance: ConnectorInstance;
   redirect_url: string | null;
+}
+
+/** One row of the Settings "Team Permissions" table - a FEATURE module
+ * this tenant has, with whether Member/Viewer are currently restricted. */
+export interface ModuleRoleAccess {
+  connector_type_id: string;
+  key: string;
+  display_name: string;
+  member_restricted: boolean;
+  viewer_restricted: boolean;
+}
+
+export type RestrictableRole = "member" | "viewer";
+
+export interface SetRoleRestrictionRequest {
+  connector_type_id: string;
+  role: RestrictableRole;
+  restricted: boolean;
 }

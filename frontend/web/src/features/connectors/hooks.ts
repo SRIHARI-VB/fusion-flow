@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as connectorsApi from "./api";
-import type { ConnectRequest } from "./types";
+import type { ConnectRequest, SetRoleRestrictionRequest } from "./types";
 
 export const connectorKeys = {
   types: ["connector-types"] as const,
   instances: ["connector-instances"] as const,
   events: (instanceId: string) => ["connector-events", instanceId] as const,
+  roleAccess: ["module-role-access"] as const,
 };
 
 export function useConnectorTypes() {
@@ -68,6 +69,23 @@ export function useRequestConnectorAccess() {
       connectorsApi.requestConnectorAccess(typeKey, reason),
     onSuccess: () => {
       // Re-fetch /connectors/types so the card flips to "Pending admin approval".
+      void queryClient.invalidateQueries({ queryKey: connectorKeys.types });
+    },
+  });
+}
+
+export function useModuleRoleAccess() {
+  return useQuery({ queryKey: connectorKeys.roleAccess, queryFn: connectorsApi.fetchModuleRoleAccess });
+}
+
+export function useSetRoleRestriction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SetRoleRestrictionRequest) => connectorsApi.setRoleRestriction(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: connectorKeys.roleAccess });
+      // A restricted-for-Member/Viewer module affects nav/RequireModule for
+      // whoever is logged in as that role right now.
       void queryClient.invalidateQueries({ queryKey: connectorKeys.types });
     },
   });

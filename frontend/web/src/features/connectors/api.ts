@@ -6,6 +6,8 @@ import type {
   ConnectorEvent,
   ConnectRequest,
   ConnectResponse,
+  ModuleRoleAccess,
+  SetRoleRestrictionRequest,
 } from "./types";
 
 /**
@@ -58,4 +60,16 @@ export async function requestConnectorAccess(
     { reason },
   );
   return data;
+}
+
+/**
+ * Owner/Admin only - powers the Settings "Team Permissions" tab.
+ */
+export async function fetchModuleRoleAccess(): Promise<ModuleRoleAccess[]> {
+  const { data } = await apiClient.get<ModuleRoleAccess[]>("/api/v1/connectors/role-restrictions");
+  return data;
+}
+
+export async function setRoleRestriction(payload: SetRoleRestrictionRequest): Promise<void> {
+  await apiClient.put("/api/v1/connectors/role-restrictions", payload);
 }

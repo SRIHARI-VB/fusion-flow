@@ -51,8 +51,8 @@ def require_module_access(module_key: str):
                 detail=f"Module '{module_key}' is not registered in the catalog",
             )
 
-        access_map = await connector_service.get_connector_access_map(
-            session, tenant_id=context.tenant_id, connector_type_ids=[connector_type.id]
+        access_map = await connector_service.get_connector_access_map_for_role(
+            session, tenant_id=context.tenant_id, connector_type_ids=[connector_type.id], role=context.role
         )
         access_status = access_map.get(connector_type.id, "not_requested")
         if access_status == "granted":
@@ -65,6 +65,14 @@ def require_module_access(module_key: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your business does not have access to this module.",
+            )
+        if access_status == "restricted":
+            # Tenant has the module; an Owner/Admin explicitly restricted
+            # THIS caller's role from it (RoleModuleRestriction) - same
+            # "never rescued by grandfathering" guarantee as "denied" above.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your role does not have access to this module. Ask an administrator.",
             )
 
         # COMPAT: pre-template-system tenants (business_template_id never
