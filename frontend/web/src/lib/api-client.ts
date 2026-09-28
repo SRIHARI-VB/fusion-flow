@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import type { AuthTokens } from "@fusion-flow/ts-types";
 import { getAuthState } from "./auth-store";
+import { getStepUpAuthState } from "./step-up-auth-store";
 
 export const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
@@ -11,6 +12,14 @@ apiClient.interceptors.request.use((config) => {
   const { accessToken } = getAuthState();
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`;
+  }
+  // Clinic-queue routes require this header for doctor-flagged callers
+  // (see backend/src/fusionflow/modules/clinic_queue/router.py) - harmless
+  // to attach whenever a valid step-up session exists, since every other
+  // route simply ignores it.
+  const { token: stepUpToken, isValid } = getStepUpAuthState();
+  if (stepUpToken && isValid()) {
+    config.headers["X-Step-Up-Token"] = stepUpToken;
   }
   return config;
 });

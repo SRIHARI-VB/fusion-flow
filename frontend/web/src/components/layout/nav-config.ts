@@ -21,6 +21,8 @@ import {
   Image,
   Megaphone,
   CalendarClock,
+  Stethoscope,
+  History,
 } from "lucide-react";
 
 export interface NavItem {
@@ -116,6 +118,20 @@ export const navGroups: NavGroup[] = [
         icon: CalendarClock,
         moduleKey: "appointments",
         requiresAnyChannelConnected: true,
+      },
+      {
+        key: "clinic-queue",
+        label: "Patient Flow",
+        path: "/clinic-queue",
+        icon: Stethoscope,
+        moduleKey: "clinic_queue",
+      },
+      {
+        key: "clinic-queue-history",
+        label: "Visit History",
+        path: "/clinic-queue/history",
+        icon: History,
+        moduleKey: "clinic_queue",
       },
       { key: "orders", label: "Orders", path: "/orders", icon: ShoppingCart, moduleKey: "orders" },
       { key: "payments", label: "Payments", path: "/payments", icon: CreditCard, moduleKey: "payments" },

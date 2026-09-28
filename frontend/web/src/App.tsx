@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { RequireAuth } from "./components/auth/RequireAuth";
 import { RequireModule } from "./components/auth/RequireModule";
+import { RequireStepUp } from "./components/auth/RequireStepUp";
 import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
 import { ApplicationSubmittedPage } from "./pages/ApplicationSubmitted";
@@ -16,6 +17,7 @@ import { AppointmentRecordsPage } from "./features/appointments";
 import { OrdersListPage, OrderDetailPage } from "./features/orders";
 import { PaymentsPage } from "./features/payments";
 import { TicketsListPage, TicketDetailPage } from "./features/tickets";
+import { ClinicQueuePage, HistoryPage as ClinicQueueHistoryPage } from "./features/clinic-queue";
 import { KbPage } from "./features/kb";
 import {
   ConnectorsGridPage,
@@ -89,6 +91,27 @@ export default function App() {
         <Route path="/tickets" element={<RequireModule moduleKey="tickets"><TicketsListPage /></RequireModule>} />
         <Route path="/tickets/:id" element={<RequireModule moduleKey="tickets"><TicketDetailPage /></RequireModule>} />
         <Route path="/kb" element={<RequireModule moduleKey="kb"><KbPage /></RequireModule>} />
+
+        <Route
+          path="/clinic-queue"
+          element={
+            <RequireModule moduleKey="clinic_queue">
+              <RequireStepUp>
+                <ClinicQueuePage />
+              </RequireStepUp>
+            </RequireModule>
+          }
+        />
+        <Route
+          path="/clinic-queue/history"
+          element={
+            <RequireModule moduleKey="clinic_queue">
+              <RequireStepUp>
+                <ClinicQueueHistoryPage />
+              </RequireStepUp>
+            </RequireModule>
+          }
+        />
 
         <Route path="/connectors" element={<ConnectorsGridPage />} />
         <Route path="/connectors/whatsapp/connect" element={<WhatsAppConnectPage />} />

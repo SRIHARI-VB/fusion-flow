@@ -43,3 +43,9 @@ export const useStepUpAuth = create<StepUpAuthState>((set, get) => ({
   },
   clear: () => set({ token: null, expiresAt: null, error: null }),
 }));
+
+/** Non-hook accessor for use outside React (e.g. the axios interceptor
+ * that attaches `X-Step-Up-Token` - see `api-client.ts`). */
+export function getStepUpAuthState() {
+  return useStepUpAuth.getState();
+}
