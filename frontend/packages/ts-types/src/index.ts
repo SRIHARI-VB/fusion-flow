@@ -32,6 +32,16 @@ export interface Business {
   created_at?: string;
   role?: MembershipRole;
   /**
+   * Whether the CURRENT user's membership in this business is flagged as a
+   * doctor (clinic-queue module) - present on the same `BusinessMembershipOut`
+   * responses `role` is (`GET /businesses/mine`, every auth response's
+   * `businesses` list), absent on `BusinessOut`. Drives `RequireStepUp`'s
+   * gate and whether consultation notes are visible - the backend also
+   * enforces the notes-visibility half server-side, this flag is only for
+   * frontend UI/gating decisions, never a security boundary by itself.
+   */
+  is_doctor?: boolean;
+  /**
    * The tenant's plan name (e.g. "Pro"), if one is assigned - see
    * `Plan`/`Business.plan_id` in `modules.admin.models`/`modules.tenancy.models`.
    * Optional and nullable: not every response that returns a `Business`

@@ -32,6 +32,18 @@ export async function fetchMyBusinesses(): Promise<Business[]> {
   return data;
 }
 
+export interface StepUpResult {
+  step_up_token: string;
+  expires_at: string;
+}
+
+/** Doctor-only re-authentication for the clinic-queue module - see
+ * `useStepUpAuth`/`RequireStepUp`. Rejects with a 401 on the wrong password. */
+export async function confirmStepUpPassword(password: string): Promise<StepUpResult> {
+  const { data } = await apiClient.post<StepUpResult>("/api/v1/auth/step-up", { password });
+  return data;
+}
+
 export interface ResourceUsageEntry {
   limit: number | null;
   current: number;
