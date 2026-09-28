@@ -178,3 +178,44 @@ export const navGroups: NavGroup[] = [
     ],
   },
 ];
+
+export interface BreadcrumbMatch {
+  groupLabel: string;
+  itemLabel: string;
+}
+
+/**
+ * Maps the current URL to its sidebar group + item label (e.g. "Main Menu"
+ * + "Services"), so `Topbar` can show "Main Menu > Services" instead of
+ * just "Services" - the group a page lives under is real navigational
+ * context, not just decoration. A detail route (e.g. `/tickets/abc123`)
+ * matches its list page's item (`/tickets`) via prefix, same convention
+ * `Sidebar.tsx` already uses for auto-expanding a parent on a child route.
+ * Picks the LONGEST matching path when more than one item's path is a
+ * prefix (e.g. `/settings/custom-fields` over the bare `/settings`), so a
+ * more specific item always wins over a shorter, coincidentally-matching
+ * one. Returns `null` for any route with no sidebar entry at all (e.g.
+ * `/select-business`), leaving the caller's own fallback to handle it.
+ */
+export function findBreadcrumbForPath(pathname: string): BreadcrumbMatch | null {
+  let best: BreadcrumbMatch | null = null;
+  let bestPathLength = -1;
+
+  for (const group of navGroups) {
+    for (const item of group.items) {
+      // A parent-with-children (e.g. "WhatsApp") has no `path` of its own -
+      // only its children are ever navigable, so only they can match.
+      const candidates = item.children && item.children.length > 0 ? item.children : [item];
+      for (const candidate of candidates) {
+        if (!candidate.path) continue;
+        const isMatch = pathname === candidate.path || pathname.startsWith(`${candidate.path}/`);
+        if (isMatch && candidate.path.length > bestPathLength) {
+          bestPathLength = candidate.path.length;
+          best = { groupLabel: group.label, itemLabel: candidate.label };
+        }
+      }
+    }
+  }
+
+  return best;
+}

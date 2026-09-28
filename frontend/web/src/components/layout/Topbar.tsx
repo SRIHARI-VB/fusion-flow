@@ -1,8 +1,8 @@
 import { Menu } from "lucide-react";
 import { useLocation } from "react-router-dom";
-import { Avatar, AvatarFallback, Button, ThemeToggle } from "@fusion-flow/ui";
-import { useAuthStore } from "../../lib/auth-store";
+import { Button, ThemeToggle } from "@fusion-flow/ui";
 import { useLayoutStore } from "../../lib/layout-store";
+import { findBreadcrumbForPath } from "./nav-config";
 import { usePageTitle } from "./page-title";
 
 function segmentLabel(path: string): string {
@@ -15,8 +15,6 @@ function segmentLabel(path: string): string {
 
 export function Topbar() {
   const location = useLocation();
-  const user = useAuthStore((s) => s.user);
-  const initials = (user?.email ?? "F F").split("@")[0].slice(0, 2).toUpperCase();
   const toggleMobileNav = useLayoutStore((s) => s.toggleMobileNavOpen);
 
   const segment = location.pathname.split("/").filter(Boolean)[0] ?? "dashboard";
@@ -24,6 +22,12 @@ export function Topbar() {
   // precise title via `usePageTitle` - falling back to the generic
   // section name (derived from the route slug) when it hasn't.
   const pageTitle = usePageTitle();
+  const breadcrumb = findBreadcrumbForPath(location.pathname);
+  const currentLabel = pageTitle ?? breadcrumb?.itemLabel ?? segmentLabel(segment);
+  // Skip the group prefix when it's identical to the item label (e.g.
+  // "/settings" is both the "Settings" group and its own "Settings" item -
+  // "Settings > Settings" would just look like a typo, not real context.
+  const showGroupPrefix = breadcrumb && breadcrumb.groupLabel !== currentLabel;
 
   return (
     <header className="flex h-16 items-center gap-4 border-b border-border bg-card px-6">
@@ -37,14 +41,18 @@ export function Topbar() {
         <Menu className="h-5 w-5" />
       </Button>
 
-      <span className="text-sm font-medium text-foreground">{pageTitle ?? segmentLabel(segment)}</span>
+      <div className="flex items-center gap-1 text-sm">
+        {showGroupPrefix && (
+          <>
+            <span className="text-muted-foreground">{breadcrumb.groupLabel}</span>
+            <span className="text-muted-foreground">/</span>
+          </>
+        )}
+        <span className="font-medium text-foreground">{currentLabel}</span>
+      </div>
 
       <div className="ml-auto flex items-center gap-3">
         <ThemeToggle />
-
-        <Avatar>
-          <AvatarFallback className="bg-accent-soft text-accent">{initials}</AvatarFallback>
-        </Avatar>
       </div>
     </header>
   );
