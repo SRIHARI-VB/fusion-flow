@@ -61,11 +61,23 @@ class BusinessUpdateRequest(BaseModel):
 
 
 class MemberOut(BaseModel):
-    """One row of a business's team-members list. Read-only for phase 1."""
+    """One row of a business's team-members list."""
 
     model_config = ConfigDict(from_attributes=True)
 
+    id: uuid.UUID
     email: str
     role: MembershipRole
     invited_at: datetime
     accepted_at: datetime | None = None
+    # A job-function flag (clinic-queue's doctor designation) - see
+    # `Membership.is_doctor`'s own docstring for why it's separate from `role`.
+    is_doctor: bool = False
+
+
+class MemberUpdateRequest(BaseModel):
+    """Owner/admin-editable fields on a team member. Currently just the
+    doctor flag - `role` editing isn't built yet (still read-only, same as
+    before this schema existed)."""
+
+    is_doctor: bool

@@ -22,3 +22,17 @@ export async function fetchMembers(businessId: string): Promise<Member[]> {
   const { data } = await apiClient.get<Member[]>(`/api/v1/businesses/${businessId}/members`);
   return data;
 }
+
+/** `PATCH /api/v1/businesses/{id}/members/{membershipId}` — owner/admin only,
+ * currently just the doctor flag (see `Member.is_doctor`). */
+export async function updateMemberIsDoctor(
+  businessId: string,
+  membershipId: string,
+  isDoctor: boolean,
+): Promise<Member> {
+  const { data } = await apiClient.patch<Member>(
+    `/api/v1/businesses/${businessId}/members/${membershipId}`,
+    { is_doctor: isDoctor },
+  );
+  return data;
+}

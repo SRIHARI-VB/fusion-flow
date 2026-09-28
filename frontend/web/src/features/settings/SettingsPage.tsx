@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -25,7 +25,8 @@ import { listBusinessTemplates } from "../onboarding/business-templates-api";
 import { ClinicSchedulingCard } from "./components/ClinicSchedulingCard";
 import { SidebarCustomizationCard } from "./components/SidebarCustomizationCard";
 import { ConfirmDialog } from "./components/ConfirmDialog";
-import { fetchMembers, updateBusinessSettings } from "./api";
+import { fetchMembers, updateBusinessSettings, updateMemberIsDoctor } from "./api";
+import type { Member } from "./types";
 
 function titleCase(value: string): string {
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -48,6 +49,22 @@ export function SettingsPage() {
   const business = useAuthStore((s) => s.business);
   const setBusiness = useAuthStore((s) => s.setBusiness);
   const businessId = claims?.tenant_id ?? null;
+  const queryClient = useQueryClient();
+  // Both the members list AND this update route are owner/admin-only on the
+  // backend - a non-owner/admin viewer's `members` query would already have
+  // failed (see `membersError` below) before this toggle could ever render,
+  // so no separate frontend role check is needed to decide whether to show it.
+  const isDoctorMutation = useMutation({
+    mutationFn: ({ membershipId, isDoctor }: { membershipId: string; isDoctor: boolean }) => {
+      if (!businessId) throw new Error("No active business on this session");
+      return updateMemberIsDoctor(businessId, membershipId, isDoctor);
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Member[]>(["settings", "members", businessId], (prev) =>
+        prev?.map((m) => (m.id === updated.id ? updated : m)),
+      );
+    },
+  });
 
   const [confirmPauseOpen, setConfirmPauseOpen] = useState(false);
 
@@ -274,7 +291,11 @@ export function SettingsPage() {
             <Users className="h-5 w-5" />
             Team members
           </CardTitle>
-          <CardDescription>Everyone with access to this business. Read-only for now.</CardDescription>
+          <CardDescription>
+            Everyone with access to this business. Mark a member as a doctor to let reception
+            assign them patients in Patient Flow - doctors also need to confirm their password
+            once per session before opening that module.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -284,48 +305,79 @@ export function SettingsPage() {
                 <TableHead>Role</TableHead>
                 <TableHead>Invited</TableHead>
                 <TableHead>Accepted</TableHead>
+                <TableHead>Doctor</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {membersLoading && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">
                     Loading...
                   </TableCell>
                 </TableRow>
               )}
               {membersError && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-destructive">
+                  <TableCell colSpan={5} className="text-center text-destructive">
                     Could not load team members.
                   </TableCell>
                 </TableRow>
               )}
               {!membersLoading && !membersError && members.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center text-muted-foreground">
                     No team members yet.
                   </TableCell>
                 </TableRow>
               )}
-              {members.map((member) => (
-                <TableRow key={member.email}>
-                  <TableCell className="font-medium text-foreground">{member.email}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{member.role}</Badge>
-                  </TableCell>
-                  <TableCell>{new Date(member.invited_at).toLocaleDateString()}</TableCell>
-                  <TableCell>
-                    {member.accepted_at ? (
-                      new Date(member.accepted_at).toLocaleDateString()
-                    ) : (
-                      <span className="text-muted-foreground">Pending</span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {members.map((member) => {
+                const pending =
+                  isDoctorMutation.isPending && isDoctorMutation.variables?.membershipId === member.id;
+                return (
+                  <TableRow key={member.id}>
+                    <TableCell className="font-medium text-foreground">{member.email}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{member.role}</Badge>
+                    </TableCell>
+                    <TableCell>{new Date(member.invited_at).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      {member.accepted_at ? (
+                        new Date(member.accepted_at).toLocaleDateString()
+                      ) : (
+                        <span className="text-muted-foreground">Pending</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={member.is_doctor}
+                        aria-label={`Mark ${member.email} as a doctor`}
+                        disabled={pending}
+                        onClick={() =>
+                          isDoctorMutation.mutate({ membershipId: member.id, isDoctor: !member.is_doctor })
+                        }
+                        className={
+                          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 " +
+                          (member.is_doctor ? "bg-accent" : "bg-border")
+                        }
+                      >
+                        <span
+                          className={
+                            "inline-block h-5 w-5 translate-x-0.5 transform rounded-full bg-white transition-transform " +
+                            (member.is_doctor ? "translate-x-5" : "translate-x-0.5")
+                          }
+                        />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
+          {isDoctorMutation.isError && (
+            <p className="mt-2 text-sm text-destructive">Could not update that member. Please try again.</p>
+          )}
         </CardContent>
       </Card>
 

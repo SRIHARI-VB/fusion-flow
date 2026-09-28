@@ -195,6 +195,29 @@ async def list_members_of_business(
     return [(m, u) for m, u in rows.all()]
 
 
+async def get_membership_by_id(
+    session: AsyncSession, *, business_id: uuid.UUID, membership_id: uuid.UUID
+) -> Membership | None:
+    return (
+        await session.execute(
+            select(Membership).where(
+                Membership.id == membership_id, Membership.business_id == business_id
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def update_membership_is_doctor(
+    session: AsyncSession, membership: Membership, *, is_doctor: bool
+) -> Membership:
+    """Apply the doctor-flag update. Does not commit - matches
+    `update_business`'s convention, the router owns the transaction
+    boundary."""
+    membership.is_doctor = is_doctor
+    await session.flush()
+    return membership
+
+
 async def count_memberships(session: AsyncSession, user_id: uuid.UUID) -> int:
     return int(
         (

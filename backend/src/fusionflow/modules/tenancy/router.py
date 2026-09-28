@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fusionflow.core.deps import CurrentUserDep, SessionDep, TenantContext, TenantContextDep, require_role
 from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.auth.http import set_refresh_cookie, to_token_response
+from fusionflow.modules.auth.models import User
 from fusionflow.modules.auth.schemas import TokenResponse
 from fusionflow.modules.auth.service import AuthError
 from fusionflow.modules.auth.service import select_business as select_business_service
@@ -25,6 +26,7 @@ from fusionflow.modules.tenancy.schemas import (
     BusinessOut,
     BusinessUpdateRequest,
     MemberOut,
+    MemberUpdateRequest,
 )
 from fusionflow.modules.workflows import service as workflows_service
 
@@ -193,10 +195,50 @@ async def list_business_members(
 
     return [
         MemberOut(
+            id=membership.id,
             email=user.email,
             role=membership.role,
             invited_at=membership.invited_at,
             accepted_at=membership.accepted_at,
+            is_doctor=membership.is_doctor,
         )
         for membership, user in await tenancy_service.list_members_of_business(session, business_id)
     ]
+
+
+@router.patch("/{business_id}/members/{membership_id}", response_model=MemberOut)
+async def update_business_member(
+    business_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    payload: MemberUpdateRequest,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
+) -> MemberOut:
+    """Update a team member's doctor flag. Owner/admin only - same
+    cross-tenant guard as the other `{business_id}`-scoped routes in this
+    router."""
+    if business_id != context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Switch to that business before editing its members",
+        )
+
+    membership = await tenancy_service.get_membership_by_id(
+        session, business_id=business_id, membership_id=membership_id
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+
+    await tenancy_service.update_membership_is_doctor(session, membership, is_doctor=payload.is_doctor)
+    await session.commit()
+    await session.refresh(membership)
+
+    user = await session.get(User, membership.user_id)
+    return MemberOut(
+        id=membership.id,
+        email=user.email if user else "",
+        role=membership.role,
+        invited_at=membership.invited_at,
+        accepted_at=membership.accepted_at,
+        is_doctor=membership.is_doctor,
+    )
