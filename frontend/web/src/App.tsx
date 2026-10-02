@@ -44,6 +44,7 @@ import {
   InstagramReferralAutomationWizardPage,
   InstagramReactionAutomationWizardPage,
   InstagramHandoffAutomationWizardPage,
+  InstagramCommentMenuAutomationWizardPage,
   InstagramIceBreakersSettingsPage,
 } from "./features/communication/instagram";
 import { InboxPage } from "./features/communication/inbox";
@@ -204,6 +205,14 @@ export default function App() {
         <Route
           path="/communication/instagram/button-menu-automations/:id/edit"
           element={<RequireModule moduleKey="instagram"><InstagramButtonMenuAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/comment-menu-automations/new"
+          element={<RequireModule moduleKey="instagram"><InstagramCommentMenuAutomationWizardPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/instagram/comment-menu-automations/:id/edit"
+          element={<RequireModule moduleKey="instagram"><InstagramCommentMenuAutomationWizardPage /></RequireModule>}
         />
         <Route
           path="/communication/instagram/referral-automations/new"

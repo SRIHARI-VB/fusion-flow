@@ -43,7 +43,7 @@ ReactionEmoji = Literal["love", "like", "laugh", "wow", "sad", "angry"]
 
 _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
     "exact": "eq",
-    "contains": "contains",
+    "contains": "icontains",
     "starts_with": "starts_with",
     "ends_with": "ends_with",
 }

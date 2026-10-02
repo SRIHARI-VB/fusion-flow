@@ -8,4 +8,5 @@ export { InstagramButtonMenuAutomationWizardPage } from "./pages/InstagramButton
 export { InstagramReferralAutomationWizardPage } from "./pages/InstagramReferralAutomationWizardPage";
 export { InstagramReactionAutomationWizardPage } from "./pages/InstagramReactionAutomationWizardPage";
 export { InstagramHandoffAutomationWizardPage } from "./pages/InstagramHandoffAutomationWizardPage";
+export { InstagramCommentMenuAutomationWizardPage } from "./pages/InstagramCommentMenuAutomationWizardPage";
 export { InstagramIceBreakersSettingsPage } from "./pages/InstagramIceBreakersSettingsPage";

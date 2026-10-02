@@ -105,6 +105,33 @@ export interface InstagramStoryReplyAutomationConfig {
   reply_delay_minutes: number | null;
 }
 
+/** A single plain-text/media reply option for
+ * `InstagramCommentMenuAutomationConfig` - mirrors the backend's
+ * `MenuOption` Pydantic model (`instagram_comment_menu_automation.py`). */
+export interface InstagramCommentMenuOption {
+  keyword: string;
+  reply_text: string;
+  media_url: string | null;
+  media_type: string | null;
+}
+
+/** `config` for `automation_type: "instagram.comment_menu_automation"` - a
+ * comment-triggered Private Reply (text-only, reaches a first-time
+ * commenter) that hands off to a DM-triggered keyword menu; one menu
+ * option creates a support ticket instead of replying with text. */
+export interface InstagramCommentMenuAutomationConfig {
+  trigger_keywords: string[];
+  matching_method: InstagramMatchingMethod;
+  media_ids: string[];
+  reply_comment_text: string | null;
+  private_reply_text: string;
+  menu_matching_method: InstagramMatchingMethod;
+  menu_options: InstagramCommentMenuOption[];
+  ticket_keyword: string;
+  ticket_subject: string;
+  ticket_confirmation_text: string;
+}
+
 export type InstagramAutomationConfig =
   | InstagramCommentAutomationConfig
   | InstagramDmAutomationConfig
@@ -114,7 +141,8 @@ export type InstagramAutomationConfig =
   | InstagramCommentModerationConfig
   | InstagramReferralAutomationConfig
   | InstagramMentionAutomationConfig
-  | InstagramStoryReplyAutomationConfig;
+  | InstagramStoryReplyAutomationConfig
+  | InstagramCommentMenuAutomationConfig;
 
 export interface PredefinedAutomation {
   id: string;

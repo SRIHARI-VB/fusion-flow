@@ -8,6 +8,7 @@ Importing this package registers all of the above with the process-wide
 from fusionflow.modules.predefined_automations.types import (  # noqa: F401
     instagram_button_menu_automation,
     instagram_comment_automation,
+    instagram_comment_menu_automation,
     instagram_comment_moderation,
     instagram_dm_automation,
     instagram_handoff_automation,
@@ -21,6 +22,7 @@ from fusionflow.modules.predefined_automations.types import (  # noqa: F401
 __all__ = [
     "instagram_button_menu_automation",
     "instagram_comment_automation",
+    "instagram_comment_menu_automation",
     "instagram_comment_moderation",
     "instagram_dm_automation",
     "instagram_handoff_automation",

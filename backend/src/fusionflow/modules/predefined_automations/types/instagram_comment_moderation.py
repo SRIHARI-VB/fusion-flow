@@ -54,7 +54,7 @@ MatchingMethod = Literal["exact", "contains", "starts_with", "ends_with"]
 
 _METHOD_TO_OPERATOR: dict[MatchingMethod, str] = {
     "exact": "eq",
-    "contains": "contains",
+    "contains": "icontains",
     "starts_with": "starts_with",
     "ends_with": "ends_with",
 }

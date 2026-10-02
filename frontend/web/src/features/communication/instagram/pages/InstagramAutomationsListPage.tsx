@@ -13,6 +13,7 @@ import {
   Plus,
   Settings,
   ShieldAlert,
+  Ticket,
   Trash2,
   UserCog,
 } from "lucide-react";
@@ -151,6 +152,14 @@ const AUTOMATION_TYPE_META: Record<string, AutomationTypeMeta> = {
     summary: keywordSummary,
     matchingMethod: matchingMethodLabel,
   },
+  "instagram.comment_menu_automation": {
+    label: "Comment-to-DM Menu",
+    icon: Ticket,
+    newPath: "/communication/instagram/comment-menu-automations/new",
+    editPath: (id) => `/communication/instagram/comment-menu-automations/${id}/edit`,
+    summary: keywordSummary,
+    matchingMethod: matchingMethodLabel,
+  },
 };
 
 const NEW_AUTOMATION_GROUPS: { label: string; types: string[] }[] = [
@@ -166,7 +175,12 @@ const NEW_AUTOMATION_GROUPS: { label: string; types: string[] }[] = [
   { label: "Moderate", types: ["instagram.comment_moderation"] },
   {
     label: "Marketing & Menus",
-    types: ["instagram.button_menu_automation", "instagram.referral_automation", "instagram.reaction_automation"],
+    types: [
+      "instagram.button_menu_automation",
+      "instagram.referral_automation",
+      "instagram.reaction_automation",
+      "instagram.comment_menu_automation",
+    ],
   },
   { label: "Support", types: ["instagram.handoff_automation"] },
 ];
