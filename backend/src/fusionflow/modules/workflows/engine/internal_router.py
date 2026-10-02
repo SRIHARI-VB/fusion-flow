@@ -14,22 +14,25 @@ _dispatch`):
   (`schedule_poller.py`) - same story, a clock-driven event has no
   webhook to attach to.
 - Post-visit feedback asks becoming due a day after an appointment
-  (`feedback_poller.py`) - same story again; `vercel.json`'s daily cron
-  cadence is exactly what that poller's "was this yesterday" check
-  wants, so no separate cron entry was needed for it.
+  (`feedback_poller.py`) - a once-daily cadence is plenty for this one's
+  "was this yesterday" check.
 - Appointment reminders due ~2 hours before a confirmed slot
   (`appointment_reminder_poller.py`) - unlike the daily-granularity check
   above, this one genuinely needs a tighter cadence than once a day to
-  land anywhere near "2 hours before" a specific time - see that
-  cron entry's own comment in `vercel.json`.
+  land anywhere near "2 hours before" a specific time.
 
-This route runs one pass of all four pollers (`outbox_poller.poll_once`
-also covers ordinary inbox dispatch and the 24h stale-reply-wait sweep,
-both otherwise redundant with the inline webhook dispatch but harmless to
-re-run) and is meant to be hit by a Vercel Cron Job (see `backend/
-vercel.json`), which sends `Authorization: Bearer <CRON_SECRET>`
-automatically once configured - `_verify_cron_secret` below checks that
-header against `Settings.CRON_SECRET`.
+Two schedulers hit this route, not one, because Vercel's Hobby plan
+caps its own Cron Jobs feature at once a day (a tighter schedule gets the
+*entire deployment* rejected at build time - the cause of a real incident
+where backend deploys silently stopped picking up new commits for a long
+stretch): `backend/vercel.json`'s cron fires once daily as a baseline
+safety net, and `.github/workflows/scheduled-tasks-cron.yml` fires every
+15 minutes via GitHub Actions (not subject to Vercel's limit at all,
+since it's an ordinary external HTTP caller) to give
+`appointment_reminder_poller`/`flow.delay`/`schedule_poller` the tight
+cadence they actually need. Both send `Authorization: Bearer
+<CRON_SECRET>` - `_verify_cron_secret` below checks that header against
+`Settings.CRON_SECRET` regardless of which scheduler called it.
 """
 
 from __future__ import annotations

@@ -1,0 +1,34 @@
+name: Scheduled tasks cron
+
+# Drives `POST /api/v1/internal/scheduled-tasks` every 15 minutes - see
+# `backend/src/fusionflow/modules/workflows/engine/internal_router.py`'s
+# module docstring for why this exists alongside (not instead of)
+# `backend/vercel.json`'s own once-daily cron: Vercel's Hobby plan caps
+# its native Cron Jobs feature at once a day, and a tighter schedule
+# there gets the *entire deployment* rejected at build time. GitHub
+# Actions isn't subject to that limit, so it covers the pollers that
+# genuinely need a tighter cadence (appointment reminders ~2h before a
+# slot, flow.delay resumption, scheduled broadcast sends).
+#
+# Requires two repo secrets (Settings -> Secrets and variables ->
+# Actions):
+#   BACKEND_SCHEDULED_TASKS_URL - the deployed backend's full URL to this
+#     route, e.g. https://your-backend.vercel.app/api/v1/internal/scheduled-tasks
+#   CRON_SECRET - must match the backend's own CRON_SECRET env var
+#     (Settings.CRON_SECRET) or every run gets a 401.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  call-scheduled-tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/v1/internal/scheduled-tasks
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.BACKEND_SCHEDULED_TASKS_URL }}"
