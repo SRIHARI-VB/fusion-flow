@@ -105,29 +105,33 @@ export interface InstagramStoryReplyAutomationConfig {
   reply_delay_minutes: number | null;
 }
 
-/** A single plain-text/media reply option for
- * `InstagramCommentMenuAutomationConfig` - mirrors the backend's
- * `MenuOption` Pydantic model (`instagram_comment_menu_automation.py`). */
-export interface InstagramCommentMenuOption {
-  keyword: string;
-  reply_text: string;
+/** A single tappable button for `InstagramCommentMenuAutomationConfig` -
+ * mirrors the backend's `MenuButton` Pydantic model
+ * (`instagram_comment_menu_automation.py`). Exactly one button across the
+ * list must have `is_ticket_button: true`; that one creates a support
+ * ticket instead of replying with `reply_text` when tapped. */
+export interface InstagramCommentMenuButton {
+  title: string;
+  reply_text: string | null;
   media_url: string | null;
   media_type: string | null;
+  is_ticket_button: boolean;
 }
 
 /** `config` for `automation_type: "instagram.comment_menu_automation"` - a
- * comment-triggered Private Reply (text-only, reaches a first-time
- * commenter) that hands off to a DM-triggered keyword menu; one menu
- * option creates a support ticket instead of replying with text. */
+ * comment-triggered Private Reply (text-only, the one message Meta allows
+ * to a first-time commenter) that, once the commenter replies with
+ * anything at all, sends a REAL tappable button-template menu (not a
+ * "type a word" prompt) - one button creates a support ticket instead of
+ * replying with text. */
 export interface InstagramCommentMenuAutomationConfig {
   trigger_keywords: string[];
   matching_method: InstagramMatchingMethod;
   media_ids: string[];
   reply_comment_text: string | null;
   private_reply_text: string;
-  menu_matching_method: InstagramMatchingMethod;
-  menu_options: InstagramCommentMenuOption[];
-  ticket_keyword: string;
+  menu_text: string;
+  buttons: InstagramCommentMenuButton[];
   ticket_subject: string;
   ticket_confirmation_text: string;
 }
