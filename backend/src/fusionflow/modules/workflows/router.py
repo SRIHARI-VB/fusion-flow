@@ -116,6 +116,17 @@ async def get_starter_templates(
 # already applied for `/starter-templates` above.
 
 
+@router.get("/trigger-overlaps", response_model=list[schemas.TriggerOverlapOut])
+async def get_trigger_overlaps(context: TenantContextDep, session: SessionDep) -> list[schemas.TriggerOverlapOut]:
+    """Groups of 2+ published workflows that would both fire on the same
+    inbound event - see `service.get_trigger_overlaps`'s own docstring for
+    why this is a real collision risk. Surfaced in the UI as a warning,
+    not auto-resolved - which workflow should "win" is a product
+    decision, not something this endpoint can safely guess."""
+    overlaps = await service.get_trigger_overlaps(session, tenant_id=context.tenant_id)
+    return [schemas.TriggerOverlapOut.model_validate(o) for o in overlaps]
+
+
 @router.get("/components", response_model=list[schemas.WorkflowComponentOut])
 async def get_components(context: TenantContextDep, session: SessionDep) -> list[schemas.WorkflowComponentOut]:
     """Every insertable fragment this tenant can use: the admin-curated

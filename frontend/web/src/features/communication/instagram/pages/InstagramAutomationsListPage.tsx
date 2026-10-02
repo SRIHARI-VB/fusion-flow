@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   AtSign,
   ChevronDown,
   Heart,
@@ -40,6 +42,7 @@ import {
 } from "@fusion-flow/ui";
 import { Switch } from "../../wizard";
 import { ConfirmDialog } from "../../../connectors/components/ConfirmDialog";
+import { fetchTriggerOverlaps } from "../../../workflows/api";
 import { useDeleteInstagramAutomation, useInstagramAutomations, useSetInstagramAutomationActive } from "../hooks";
 import { MATCHING_METHOD_LABELS } from "../constants";
 import type { InstagramMatchingMethod, PredefinedAutomation } from "../types";
@@ -213,6 +216,17 @@ export function InstagramAutomationsListPage() {
   const deleteMutation = useDeleteInstagramAutomation();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
+  // Collision warning: 2+ published workflows both reacting to the same
+  // kind of Instagram event (comments, DMs, button taps). Meta allows
+  // only one Private Reply per comment, so when this overlaps, whichever
+  // workflow's reply reaches Meta first "wins" and the other's gets
+  // silently rejected - see the backend's `get_trigger_overlaps` docstring.
+  const { data: triggerOverlaps } = useQuery({
+    queryKey: ["workflow-trigger-overlaps"],
+    queryFn: fetchTriggerOverlaps,
+  });
+  const instagramOverlaps = (triggerOverlaps ?? []).filter((overlap) => overlap.trigger_type.startsWith("instagram."));
+
   const pendingAutomation = automations?.find((automation) => automation.id === pendingDeleteId);
 
   return (
@@ -258,6 +272,34 @@ export function InstagramAutomationsListPage() {
           </DropdownMenu>
         </div>
       </div>
+
+      {instagramOverlaps.length > 0 && (
+        <Card className="border-destructive/40 bg-destructive/5">
+          <CardContent className="flex items-start gap-3 pt-6">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium text-foreground">
+                Multiple automations react to the same event here
+              </p>
+              {instagramOverlaps.map((overlap) => (
+                <p key={`${overlap.trigger_type}-${overlap.connector_instance_id ?? "any"}`} className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{overlap.workflow_names.join(", ")}</span> all react
+                  to{" "}
+                  {overlap.trigger_type === "instagram.comment_received"
+                    ? "comments"
+                    : overlap.trigger_type === "instagram.message_received"
+                      ? "direct messages"
+                      : overlap.trigger_type === "instagram.postback_received"
+                        ? "button taps"
+                        : overlap.trigger_type}
+                  . If their triggers overlap, only one reply may get through - Meta allows just one Private Reply
+                  per comment, and a similar single-message window for DMs.
+                </p>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading automations…</p>

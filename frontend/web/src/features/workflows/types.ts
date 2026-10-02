@@ -68,6 +68,13 @@ export interface WorkflowComponent {
   setup_notes?: string | null;
 }
 
+/** A module this workflow's graph uses but the tenant can't currently access. */
+export interface BlockedModule {
+  key: string;
+  display_name: string;
+  reason: "denied" | "not_requested" | "pending";
+}
+
 export interface Workflow {
   id: string;
   name: string;
@@ -80,6 +87,8 @@ export interface Workflow {
    * graph's trigger node type - purely informational. */
   channel_connector_type_key: string | null;
   current_published_version_id: string | null;
+  /** Modules used by the graph that the tenant lacks access to - such a workflow won't run until access is restored. */
+  blocked_modules?: BlockedModule[];
   created_at: string;
   updated_at: string;
 }
@@ -332,3 +341,14 @@ export const VALIDATION_RULES: Array<{ rule: string; label: string }> = [
   { rule: "unsafe_loops", label: "Loop safety" },
   { rule: "containment_validity", label: "Container structure" },
 ];
+
+/** 2+ published workflows that would both start a run for the same
+ * inbound event - see the backend's `workflows/service.py::
+ * get_trigger_overlaps` docstring for why this is a real collision risk
+ * (e.g. Instagram allows only one Private Reply per comment, so if two
+ * workflows both react to the same comment, only one's reply lands). */
+export interface TriggerOverlap {
+  trigger_type: string;
+  connector_instance_id: string | null;
+  workflow_names: string[];
+}

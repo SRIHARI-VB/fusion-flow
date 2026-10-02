@@ -957,3 +957,55 @@ async def update_schedule(
 
 async def delete_schedule(session: AsyncSession, schedule: WorkflowSchedule) -> None:
     await session.delete(schedule)
+
+
+async def get_trigger_overlaps(session: AsyncSession, *, tenant_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Groups of 2+ PUBLISHED workflows that would both start a run for
+    the exact same inbound event - a real collision risk, not just a
+    theoretical one: `outbox_poller.py::_process_tenant_inbox` dispatches
+    to EVERY `WorkflowTrigger` row matching an inbox event's
+    `(trigger_type, connector_instance_id)`, unconditionally, so two
+    workflows sharing both of those will both fire on every matching
+    event. For a channel with a "reply once" semantic (e.g. Instagram's
+    Private Reply, capped at one per comment by Meta), only one of those
+    runs' replies can actually land - whichever workflow's reply request
+    reaches the provider first "wins", the other's gets rejected.
+
+    `connector_instance_id` is nullable on `WorkflowTrigger` (`None` means
+    "matches any instance of this connector type for this tenant" - see
+    the same file's matching query) - grouped as its own bucket here
+    rather than coalesced with a real instance id, matching that exact
+    semantic.
+
+    Archived/draft workflows are excluded (`Workflow.status ==
+    PUBLISHED`) - a `WorkflowTrigger` row is only ever deleted when its
+    owning workflow is deleted outright or republished (see
+    `_rebuild_triggers`), not when it's merely archived, so without this
+    filter an archived workflow's stale trigger row would show up here as
+    a false positive even though it can no longer actually dispatch
+    (Workflow.status gates nothing at the dispatch layer directly, but a
+    workflow has no `current_published_version_id` once un-published,
+    which `_start_run_for_trigger` already checks and skips).
+    """
+    rows = (
+        await session.execute(
+            select(WorkflowTrigger.trigger_type, WorkflowTrigger.connector_instance_id, Workflow.name)
+            .join(Workflow, WorkflowTrigger.workflow_id == Workflow.id)
+            .where(WorkflowTrigger.tenant_id == tenant_id, Workflow.status == WorkflowStatus.PUBLISHED)
+        )
+    ).all()
+
+    groups: dict[tuple[str, uuid.UUID | None], set[str]] = {}
+    for trigger_type, connector_instance_id, workflow_name in rows:
+        key = (trigger_type, connector_instance_id)
+        groups.setdefault(key, set()).add(workflow_name)
+
+    return [
+        {
+            "trigger_type": trigger_type,
+            "connector_instance_id": connector_instance_id,
+            "workflow_names": sorted(names),
+        }
+        for (trigger_type, connector_instance_id), names in groups.items()
+        if len(names) > 1
+    ]

@@ -368,3 +368,13 @@ class WorkflowScheduleOut(BaseModel):
     last_run_status: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class TriggerOverlapOut(BaseModel):
+    """2+ published workflows that would both start a run for the same
+    inbound event - see `service.get_trigger_overlaps`'s own docstring for
+    why this is a real collision risk, not just a theoretical one."""
+
+    trigger_type: str
+    connector_instance_id: uuid.UUID | None
+    workflow_names: list[str]

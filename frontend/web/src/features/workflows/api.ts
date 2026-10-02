@@ -3,6 +3,7 @@ import type {
   ModuleCatalogEntry,
   NodeType,
   PublishResponse,
+  TriggerOverlap,
   Workflow,
   WorkflowComponent,
   WorkflowGraphJson,
@@ -230,5 +231,10 @@ export async function uploadMedia(instanceId: string, file: File): Promise<{ url
     `/api/v1/connectors/${instanceId}/media`,
     formData,
   );
+  return data;
+}
+
+export async function fetchTriggerOverlaps(): Promise<TriggerOverlap[]> {
+  const { data } = await apiClient.get<TriggerOverlap[]>(`${BASE}/trigger-overlaps`);
   return data;
 }
