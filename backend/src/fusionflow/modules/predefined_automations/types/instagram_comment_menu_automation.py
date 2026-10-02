@@ -164,7 +164,57 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
     ]
     edges: list[dict[str, Any]] = []
 
+    # Every run's frontier is seeded from EVERY trigger node in the graph,
+    # not just the one matching the inbox event that caused it (see
+    # `run_loop.py::execute_run` - it calls `graph.trigger_nodes()`
+    # unconditionally). `instagram_button_menu_automation.py`'s two chains
+    # stay safe from this by accident: a postback event has no `text`
+    # field, so its "send menu" chain's keyword condition just evaluates
+    # false; a DM/comment event has no `payload` field, so its postback
+    # branch's `eq` comparisons do the same. This automation's chain B has
+    # no such accidental gate (it deliberately has no keyword condition at
+    # all - any reply should show the menu), so it needs an explicit guard
+    # - same "guard-comment"-style node the hand-built Instagram Assistant
+    # workflow already uses for exactly this reason.
+    #
+    # `trigger.comment_id` only exists on a real comment event
+    # (`instagram.comment_received`'s own output schema) - message and
+    # postback events both lack it. `trigger.payload` only exists on a
+    # real postback event - comment and message events both lack it.
+    # Together: comment_id present -> real comment; comment_id absent AND
+    # payload absent -> real plain DM; payload present -> real button tap.
+
     # --- Chain A: comment match -> (optional public reply) -> Private Reply ---
+    nodes.append(
+        {
+            "id": "guard-comment",
+            "type": "condition",
+            "position": {"x": 180, "y": -80},
+            "data": {
+                "nodeType": "condition.field_compare",
+                "label": "Is Comment Event",
+                "config": {"field_path": "trigger.comment_id", "operator": "neq", "value": None},
+            },
+        }
+    )
+    nodes.append(
+        {
+            "id": "guard-comment-noop",
+            "type": "action",
+            "position": {"x": 180, "y": 120},
+            "data": {"nodeType": "log.noop", "label": "Not a Comment Event", "config": {}},
+        }
+    )
+    edges.append({"id": "e-trigger-comment-guard-comment", "source": "trigger-comment", "target": "guard-comment"})
+    edges.append(
+        {
+            "id": "e-guard-comment-false",
+            "source": "guard-comment",
+            "target": "guard-comment-noop",
+            "sourceHandle": "false",
+        }
+    )
+
     chain_a_actions: list[dict[str, Any]] = []
     if parsed.reply_comment_text:
         chain_a_actions.append(
@@ -223,6 +273,22 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         scope_id_prefix="media",
         start_x=260,
     )
+    # The helper always emits exactly one unconditional edge sourced from
+    # `trigger_node_id` (see its own docstring - every combination of
+    # empty/non-empty scope+keywords collapses to exactly one) - redirect
+    # it to originate from `guard-comment`'s "true" handle instead of
+    # `trigger-comment` directly, so the chain only proceeds for a real
+    # comment event (see the guard-node comment above).
+    for edge in chain_a_edges:
+        if edge["source"] == "trigger-comment" and "sourceHandle" not in edge:
+            edge["source"] = "guard-comment"
+            edge["sourceHandle"] = "true"
+            edge["id"] = f"e-guard-comment-true-{edge['target']}"
+            break
+    else:
+        raise AssertionError(
+            "expected build_scoped_keyword_condition_chain to emit exactly one unconditional edge from trigger_node_id"
+        )
     nodes.extend(chain_a_nodes)
     edges.extend(chain_a_edges)
 
@@ -231,7 +297,7 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
         {
             "id": "action-send-menu",
             "type": "action",
-            "position": {"x": 260, "y": 450},
+            "position": {"x": 440, "y": 450},
             "data": {
                 "nodeType": "connector.action",
                 "label": "Send Menu",
@@ -250,7 +316,71 @@ def build_graph(config: dict[str, Any], connector_instance_id: uuid.UUID) -> dic
             },
         }
     )
-    edges.append({"id": "e-trigger-message-action-send-menu", "source": "trigger-message", "target": "action-send-menu"})
+    nodes.append(
+        {
+            "id": "guard-dm-not-comment",
+            "type": "condition",
+            "position": {"x": 180, "y": 380},
+            "data": {
+                "nodeType": "condition.field_compare",
+                "label": "Not a Comment Event",
+                "config": {"field_path": "trigger.comment_id", "operator": "eq", "value": None},
+            },
+        }
+    )
+    nodes.append(
+        {
+            "id": "guard-dm-not-postback",
+            "type": "condition",
+            "position": {"x": 440, "y": 380},
+            "data": {
+                "nodeType": "condition.field_compare",
+                "label": "Not a Button Tap",
+                "config": {"field_path": "trigger.payload", "operator": "eq", "value": None},
+            },
+        }
+    )
+    nodes.append(
+        {
+            "id": "guard-dm-noop",
+            "type": "action",
+            "position": {"x": 180, "y": 560},
+            "data": {"nodeType": "log.noop", "label": "Not a Plain DM", "config": {}},
+        }
+    )
+    edges.append({"id": "e-trigger-message-guard-dm-1", "source": "trigger-message", "target": "guard-dm-not-comment"})
+    edges.append(
+        {
+            "id": "e-guard-dm-1-true",
+            "source": "guard-dm-not-comment",
+            "target": "guard-dm-not-postback",
+            "sourceHandle": "true",
+        }
+    )
+    edges.append(
+        {
+            "id": "e-guard-dm-1-false",
+            "source": "guard-dm-not-comment",
+            "target": "guard-dm-noop",
+            "sourceHandle": "false",
+        }
+    )
+    edges.append(
+        {
+            "id": "e-guard-dm-2-true",
+            "source": "guard-dm-not-postback",
+            "target": "action-send-menu",
+            "sourceHandle": "true",
+        }
+    )
+    edges.append(
+        {
+            "id": "e-guard-dm-2-false",
+            "source": "guard-dm-not-postback",
+            "target": "guard-dm-noop",
+            "sourceHandle": "false",
+        }
+    )
 
     # --- Chain C: button tap -> reply, or ticket + confirmation ---
     chain_c_x = 260
