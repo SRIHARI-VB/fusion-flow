@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { AlertTriangle, MessageSquareOff, Plus, ShieldAlert, Users } from "lucide-react";
+import { AlertTriangle, Lock, MessageSquareOff, Plus, ShieldAlert, Users } from "lucide-react";
 import {
   Badge,
   Button,
@@ -60,10 +60,14 @@ export function SettingsPage() {
   const setBusiness = useAuthStore((s) => s.setBusiness);
   const businessId = claims?.tenant_id ?? null;
   const queryClient = useQueryClient();
-  // Both the members list AND this update route are owner/admin-only on the
-  // backend - a non-owner/admin viewer's `members` query would already have
-  // failed (see `membersError` below) before this toggle could ever render,
-  // so no separate frontend role check is needed to decide whether to show it.
+  // Business profile, messaging kill switch, team members, and team
+  // permissions are ALL owner/admin-only on the backend (require_role) - a
+  // Member/Viewer/doctor's underlying requests would already 403, but
+  // without this check the page would still render the forms/tables/toggles
+  // looking fully interactive right up until a save silently fails. Gate
+  // the sections themselves instead, so what's on screen matches what the
+  // backend will actually allow.
+  const canManageBusiness = business?.role === "owner" || business?.role === "admin";
   const isDoctorMutation = useMutation({
     mutationFn: ({ membershipId, isDoctor }: { membershipId: string; isDoctor: boolean }) => {
       if (!businessId) throw new Error("No active business on this session");
@@ -177,7 +181,7 @@ export function SettingsPage() {
   } = useQuery({
     queryKey: ["settings", "members", businessId],
     queryFn: () => fetchMembers(businessId as string),
-    enabled: !!businessId,
+    enabled: !!businessId && canManageBusiness,
   });
 
   return (
@@ -189,7 +193,24 @@ export function SettingsPage() {
         </p>
       </div>
 
+      {!canManageBusiness && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Lock className="h-5 w-5" />
+              Limited settings access
+            </CardTitle>
+            <CardDescription>
+              Your role ({business?.role ?? "member"}) can't view or change business profile,
+              messaging, team members, or team permissions. Ask an owner or admin if you need
+              something changed here.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
       {/* Profile */}
+      {canManageBusiness && (
       <Card>
         <CardHeader>
           <CardTitle>Business profile</CardTitle>
@@ -245,11 +266,14 @@ export function SettingsPage() {
           </form>
         </CardContent>
       </Card>
+      )}
 
       {/* Clinic scheduling */}
       <ClinicSchedulingCard businessId={businessId} />
 
       {/* Messaging kill switch */}
+      {canManageBusiness && (
+      <>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -318,8 +342,11 @@ export function SettingsPage() {
         onConfirm={() => killSwitchMutation.mutate(true)}
         onCancel={() => setConfirmPauseOpen(false)}
       />
+      </>
+      )}
 
       {/* Team members */}
+      {canManageBusiness && (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-4">
@@ -516,9 +543,10 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Team permissions */}
-      <TeamPermissionsCard />
+      {canManageBusiness && <TeamPermissionsCard />}
 
       {/* Sidebar customization */}
       <SidebarCustomizationCard />

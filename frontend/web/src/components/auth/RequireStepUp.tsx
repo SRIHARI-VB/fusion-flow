@@ -33,12 +33,18 @@ export interface RequireStepUpProps {
  */
 export function RequireStepUp({ children, when, reason }: RequireStepUpProps) {
   const business = useAuthStore((s) => s.business);
+  // Select the underlying token/expiry, not the `isValid` function itself -
+  // that function reference never changes, so subscribing to it would never
+  // trigger a re-render when `confirmPassword` succeeds and this component
+  // would stay stuck showing the gate even after a valid token is stored.
+  const token = useStepUpAuth((s) => s.token);
+  const expiresAt = useStepUpAuth((s) => s.expiresAt);
   const isValid = useStepUpAuth((s) => s.isValid);
 
   if (!when(business)) {
     return <>{children}</>;
   }
-  if (isValid()) {
+  if (token && expiresAt && isValid()) {
     return <>{children}</>;
   }
   return <StepUpPasswordGate reason={reason} />;
