@@ -24,10 +24,9 @@ then re-enqueues itself. `InProcessAsyncQueue`'s bounded retry-on-exception
 wraps each pass, so one failing pass doesn't kill the polling loop
 outright — only that pass's attempt is retried/logged.
 
-Two safety properties added for multi-process/production correctness:
-`_process_tenant_inbox` locks its inbox rows with `FOR UPDATE SKIP LOCKED`
-so two concurrent pollers (a horizontal scale-out scenario) divide the
-work instead of double-processing the same row, and `poll_once` only
+Dispatch is serialized per tenant using a transaction advisory lock, so
+concurrent workers cannot process a reply ahead of a queued reset. Inbox
+rows are also locked against double processing, and `poll_once` only
 visits tenants that actually have unprocessed inbox rows (one indexed
 query) instead of scanning every tenant in `businesses` every cycle.
 """
@@ -35,18 +34,21 @@ query) instead of scanning every tenant in `businesses` every cycle.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from fusionflow.db.session import async_session_factory, set_tenant_context
 from fusionflow.modules.inbox import service as inbox_service
 from fusionflow.modules.tenancy.models import Business
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
+from fusionflow.modules.workflows.engine import event_bus
+from fusionflow.modules.workflows.engine.conversation_reset import INSTAGRAM_EVENTS, prepare_instagram_event
 from fusionflow.modules.workflows.engine.run_loop import DELAY_CORRELATION_KEY, RunLoopError, execute_run, resume_run
 from fusionflow.modules.workflows.models import (
     RunStatus,
@@ -80,6 +82,15 @@ _CONVERSATIONAL_TRIGGER_TYPES = {
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def _lock_tenant_dispatch(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    # Lock BEFORE selecting inbox rows. SKIP LOCKED alone lets a second
+    # worker overtake /clear with a newer message. Block rather than skip:
+    # on serverless there may be no later poll to process that newer row.
+    key = int.from_bytes(hashlib.sha256(f"workflow-dispatch:{tenant_id}".encode()).digest()[:8],
+                         byteorder="big", signed=True)
+    await session.execute(select(func.pg_advisory_xact_lock(key)))
 
 
 async def poll_once(
@@ -135,6 +146,7 @@ async def _resume_due_delays(session: AsyncSession, tenant_id: uuid.UUID) -> Non
     expiry elapses, not fail. Must run before `_expire_stale_waits` in the
     same pass so a delay wait is never mistaken for a stale reply-wait and
     force-failed instead of resumed."""
+    await _lock_tenant_dispatch(session, tenant_id)
     due_runs = (
         await session.execute(
             select(WorkflowRun).where(
@@ -176,6 +188,7 @@ async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> No
     handled by `_resume_due_delays` above, which runs first in the same
     pass; this query would otherwise force-fail a delay the instant it
     elapses instead of letting it resume."""
+    await _lock_tenant_dispatch(session, tenant_id)
     stale_runs = (
         await session.execute(
             select(WorkflowRun).where(
@@ -201,10 +214,9 @@ async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> No
 
 
 async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> int:
-    # `with_for_update(skip_locked=True)`: if this app ever runs more than
-    # one backend process, two pollers racing on the same tenant divide the
-    # work instead of double-processing the same row (each locks out the
-    # rows the other has already claimed instead of blocking on them).
+    await _lock_tenant_dispatch(session, tenant_id)
+    # Keep row locks as well as the dispatch lock: each event is claimed
+    # once, including when maintenance code separately locks an inbox row.
     rows = (
         await session.execute(
             select(WorkflowTriggerInbox)
@@ -212,12 +224,32 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
                 WorkflowTriggerInbox.tenant_id == tenant_id,
                 WorkflowTriggerInbox.processed_at.is_(None),
             )
-            .order_by(WorkflowTriggerInbox.created_at)
+            .order_by(WorkflowTriggerInbox.created_at, WorkflowTriggerInbox.id)
             .with_for_update(skip_locked=True)
         )
     ).scalars().all()
 
     for inbox_row in rows:
+        # autoflush is disabled. Persist a consumed reset marker before a
+        # subsequent event refreshes this conversation in the same batch.
+        await session.flush()
+        reset = None
+        if inbox_row.event_type in INSTAGRAM_EVENTS:
+            reset = await prepare_instagram_event(session, inbox_row)
+            if reset.handled:
+                inbox_row.processed_at = _now()
+                continue
+            if (inbox_row.event_type == "instagram.message_received"
+                    and inbox_row.connector_instance_id is not None and inbox_row.payload.get("from")):
+                pending_run = await event_bus.find_pending_wait(
+                    session, tenant_id=tenant_id,
+                    connector_instance_id=inbox_row.connector_instance_id,
+                    correlation_key=inbox_row.payload["from"],
+                )
+                if pending_run is not None:
+                    await _resume_waiting_run(session, pending_run, inbox_row.payload)
+                    inbox_row.processed_at = _now()
+                    continue
         if inbox_row.event_type == "workflow.resume":
             await _resume_run_for_inbox_row(session, inbox_row)
             inbox_row.processed_at = _now()
@@ -260,7 +292,10 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
             continue
 
         for trigger in matching:
-            await _start_run_for_trigger(session, trigger, inbox_row)
+            run = await _start_run_for_trigger(session, trigger, inbox_row)
+            if (reset is not None and reset.conversation is not None and run is not None
+                    and run.status in {RunStatus.COMPLETED, RunStatus.WAITING}):
+                reset.conversation.flow_reset_pending = False
 
         inbox_row.processed_at = _now()
 
@@ -285,6 +320,10 @@ async def _resume_run_for_inbox_row(session: AsyncSession, inbox_row: WorkflowTr
         )
         return
 
+    await _resume_waiting_run(session, run, inbox_row.payload["reply"])
+
+
+async def _resume_waiting_run(session: AsyncSession, run: WorkflowRun, reply_payload: dict) -> None:
     version = await session.get(WorkflowVersion, run.workflow_version_id)
     if version is None:
         logger.warning("workflow run %s references missing workflow version %s", run.id, run.workflow_version_id)
@@ -292,7 +331,7 @@ async def _resume_run_for_inbox_row(session: AsyncSession, inbox_row: WorkflowTr
 
     graph = WorkflowGraph.from_json(version.compiled_graph or version.graph)
     try:
-        await resume_run(session, run, graph, reply_payload=inbox_row.payload["reply"])
+        await resume_run(session, run, graph, reply_payload=reply_payload)
     except RunLoopError as exc:
         run.status = RunStatus.FAILED
         run.completed_at = _now()
@@ -301,7 +340,7 @@ async def _resume_run_for_inbox_row(session: AsyncSession, inbox_row: WorkflowTr
 
 async def _start_run_for_trigger(
     session: AsyncSession, trigger: WorkflowTrigger, inbox_row: WorkflowTriggerInbox
-) -> None:
+) -> WorkflowRun | None:
     workflow = await session.get(Workflow, trigger.workflow_id)
     if workflow is None or workflow.current_published_version_id is None:
         logger.warning(
@@ -339,6 +378,7 @@ async def _start_run_for_trigger(
         run.status = RunStatus.FAILED
         run.completed_at = _now()
         logger.warning("workflow run %s could not start: %s", run.id, exc)
+    return run
 
 
 async def process_pending_now(session: AsyncSession, tenant_id: uuid.UUID) -> int:

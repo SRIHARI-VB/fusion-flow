@@ -86,6 +86,13 @@ class Conversation(Base, TenantScopedMixin, TimestampMixin):
     # own sweep.
     automation_paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # A reset changes conversational state, never the customer's identity.
+    # The timestamp also rejects late deliveries from before the reset.
+    flow_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    flow_reset_pending: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # Read-only convenience relationship for eager-loading in
     # `service.list_conversations` (no `back_populates` needed on
     # `ConnectorInstance` - this direction is all `to_conversation_out`

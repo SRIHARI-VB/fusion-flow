@@ -1273,6 +1273,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "from": (messaging.get("sender") or {}).get("id"),
                     "message_id": message.get("mid"),
                     "text": message.get("text"),
+                    "timestamp": messaging.get("timestamp"),
                 }
         return None
 
@@ -1342,6 +1343,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                         "payload": postback.get("payload"),
                         "title": postback.get("title"),
                         "mid": postback.get("mid"),
+                        "timestamp": messaging.get("timestamp"),
                     }
                 message = messaging.get("message")
                 quick_reply = (message or {}).get("quick_reply")
@@ -1351,6 +1353,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                         "payload": quick_reply.get("payload"),
                         "title": message.get("text"),
                         "mid": message.get("mid"),
+                        "timestamp": messaging.get("timestamp"),
                     }
         return None
 
@@ -1481,40 +1484,17 @@ class InstagramAdapter(base.ConnectorAdapter):
 
         inbound_message = self._extract_inbound_message(body)
         if inbound_message is not None:
-            # Phase 8 Part A (mirrors whatsapp/adapter.py's identical
-            # check): if this contact already has a run paused waiting for
-            # exactly their next reply (on this connector instance), this
-            # message resumes that run instead of firing a brand-new
-            # trigger - needed for `instagram.collect_text`'s suspend/
-            # resume multi-turn capability. A second inbound message from
-            # the same contact while a run is waiting always continues
-            # that same conversation, never starts a parallel one.
-            pending_run = await event_bus.find_pending_wait(
+            # Decide resume versus new flow in the ordered dispatcher. Doing
+            # it here would bind a fast-following Hi to the pre-/clear run
+            # before the queued reset has had a chance to cancel that run.
+            await event_bus.publish_trigger_event(
                 session,
                 tenant_id=instance.tenant_id,
+                event_type="instagram.message_received",
+                payload=inbound_message,
                 connector_instance_id=instance.id,
-                correlation_key=inbound_message.get("from"),
+                dedupe_key=inbound_message.get("message_id"),
             )
-            if pending_run is not None:
-                await event_bus.publish_resume_event(
-                    session,
-                    run=pending_run,
-                    reply_payload=inbound_message,
-                    dedupe_key=inbound_message.get("message_id"),
-                )
-            else:
-                await event_bus.publish_trigger_event(
-                    session,
-                    tenant_id=instance.tenant_id,
-                    event_type="instagram.message_received",
-                    payload={
-                        "from": inbound_message.get("from"),
-                        "message_id": inbound_message.get("message_id"),
-                        "text": inbound_message.get("text"),
-                    },
-                    connector_instance_id=instance.id,
-                    dedupe_key=inbound_message.get("message_id"),
-                )
             # Unified Inbox: DMs only - comments (below) aren't a
             # "conversation" in the inbox sense. Recorded regardless of
             # resume-vs-trigger above - the inbox is a plain message log,
@@ -1580,6 +1560,7 @@ class InstagramAdapter(base.ConnectorAdapter):
                     "from": inbound_postback.get("from"),
                     "payload": inbound_postback.get("payload"),
                     "title": inbound_postback.get("title"),
+                    "timestamp": inbound_postback.get("timestamp"),
                 },
                 connector_instance_id=instance.id,
                 # `postback.mid` IS a stable id (see `_extract_postback`'s

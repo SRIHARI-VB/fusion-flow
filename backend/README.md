@@ -226,6 +226,43 @@ was available in that environment:
 
 ## Design notes
 
+### Instagram `/clear`
+
+An exact `/clear` DM (case-insensitive, surrounding whitespace allowed)
+cancels that sender's active conversation on the receiving Instagram
+connection. It clears suspended answers and deletes only records marked
+`draft` that belong to the cancelled runs and that customer. Patient
+profiles, tickets, submitted appointments, and message/run history remain.
+
+The bot acknowledges the reset and asks the sender to send `Hi`. The next
+message carries `trigger.conversation_reset = true`; the clinic workflow
+routes it to its initial welcome regardless of whether the patient already
+exists. A successful fresh run consumes the flag. Earlier message/button
+deliveries are ignored using their original timestamps. Normal later
+conversations retain the returning-patient greeting.
+
+Deploy migration `0039_conversation_reset` before deploying the backend.
+For the existing clinic graph, run the guarded repair in dry-run mode first:
+
+```bash
+python scripts/repair_clinic_instagram_workflow.py \
+  --tenant-id TENANT_UUID --workflow-id WORKFLOW_UUID \
+  --actor-email OWNER_EMAIL --expected-version CURRENT_VERSION \
+  --enable-conversation-reset
+```
+
+Add `--apply` after validation to publish a new version. The script preserves
+the previous published version and never executes the workflow or sends DMs.
+
+Reset integration tests require a disposable migrated `TEST_DATABASE_URL`
+using a non-superuser, non-BYPASSRLS role; provider calls are mocked:
+
+```bash
+pytest tests/test_instagram_conversation_reset.py tests/test_instagram_reset_postgres.py
+```
+
+### Database and secrets
+
 **`SET LOCAL`, not `SET`.** `db/session.py::set_tenant_context` issues
 `SET LOCAL app.current_tenant_id = '<uuid>'`. Async sessions sit on pooled
 connections that are handed to a *different* request once the session

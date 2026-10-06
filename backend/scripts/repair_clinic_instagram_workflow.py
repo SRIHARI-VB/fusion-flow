@@ -14,6 +14,10 @@ Run from backend with its virtualenv and environment configured:
 The default is a read-only validation. Review the result, then repeat with
 --apply to publish one new version through the normal workflow service.
 This script never executes the workflow or sends any messages.
+
+After deploying the /clear backend and migration 0039, add
+--enable-conversation-reset to route the next message through the initial
+welcome even when the sender already has a customer profile.
 """
 
 from __future__ import annotations
@@ -111,9 +115,39 @@ def repair_graph(original: dict) -> dict:
     return graph
 
 
+def enable_reset_graph(original: dict) -> dict:
+    graph = repair_graph(original)
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    router = nodes.get("intent-router", {}).get("data", {})
+    welcome = nodes.get("send-main-menu-firsttime", {}).get("data", {})
+    if router.get("nodeType") != "condition.multi_branch" or welcome.get("nodeType") != "connector.action":
+        raise RepairError("Initial greeting router/menu does not match the clinic workflow")
+    case = {"label": "conversation-reset", "field_path": "trigger.conversation_reset",
+            "operator": "eq", "value": True}
+    cases = router["config"]["cases"]
+    existing = [c for c in cases if c["label"] == case["label"]]
+    reset_edges = [e for e in graph["edges"] if e["source"] == "intent-router"
+                   and e.get("sourceHandle") == case["label"]]
+    if existing:
+        if (existing != [case] or cases[0] != case or len(reset_edges) != 1
+                or reset_edges[0]["target"] != "send-main-menu-firsttime"):
+            raise RepairError("Reset route has unexpected configuration")
+    else:
+        if reset_edges:
+            raise RepairError("An unexpected reset edge already exists")
+        cases.insert(0, case)
+        graph["edges"].append({"id": "e-router-conversation-reset", "source": "intent-router",
+                               "target": "send-main-menu-firsttime", "sourceHandle": case["label"]})
+    # A fresh conversation can belong to an existing patient.
+    params = welcome["config"]["params"]
+    params["text"] = params["text"].replace(" for the first time.", ".")
+    return graph
+
+
 async def repair_workflow(
     session, *, tenant_id: uuid.UUID, workflow_id: uuid.UUID,
     actor_email: str, expected_version: int, apply: bool = False,
+    graph_transform=repair_graph,
 ) -> dict:
     """Stage the repair in the caller's transaction; never commit or execute."""
     from sqlalchemy import select
@@ -144,7 +178,7 @@ async def repair_workflow(
     if actor_id is None:
         raise RepairError("Actor must be an owner or admin of the target tenant")
 
-    candidate = repair_graph(version.graph)
+    candidate = graph_transform(version.graph)
     report = {
         "workflow_id": str(workflow.id), "previous_version": version.version_number,
         "changed": candidate != version.graph,
@@ -179,7 +213,10 @@ async def main() -> None:
     parser.add_argument("--actor-email", required=True)
     parser.add_argument("--expected-version", type=int, required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--enable-conversation-reset", action="store_true")
     args = parser.parse_args()
+    options = vars(args).copy()
+    reset_enabled = options.pop("enable_conversation_reset")
 
     from sqlalchemy import text
     from fusionflow.db import models as _models  # noqa: F401
@@ -189,7 +226,9 @@ async def main() -> None:
         if not args.apply:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         await set_tenant_context(session, args.tenant_id)
-        report = await repair_workflow(session, **vars(args))
+        report = await repair_workflow(
+            session, **options, graph_transform=enable_reset_graph if reset_enabled else repair_graph,
+        )
     # Emit success only after commit completes.
     print(json.dumps(report, indent=2))
 
