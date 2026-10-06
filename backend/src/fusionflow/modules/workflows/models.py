@@ -324,6 +324,9 @@ class WorkflowTriggerInbox(Base, TenantScopedMixin):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # A dispatch failure may occur after an external message was delivered.
+    # Quarantine it for review instead of replaying it on every webhook.
+    processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class WorkflowUserComponent(Base, TenantScopedMixin, TimestampMixin):

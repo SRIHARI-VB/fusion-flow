@@ -24,10 +24,11 @@ then re-enqueues itself. `InProcessAsyncQueue`'s bounded retry-on-exception
 wraps each pass, so one failing pass doesn't kill the polling loop
 outright — only that pass's attempt is retried/logged.
 
-Dispatch is serialized per tenant using a transaction advisory lock, so
+Dispatch is serialized per event and tenant using a transaction advisory lock, so
 concurrent workers cannot process a reply ahead of a queued reset. Inbox
-rows are also locked against double processing, and `poll_once` only
-visits tenants that actually have unprocessed inbox rows (one indexed
+rows are also locked against double processing. Each event commits
+independently, and dispatch failures are quarantined instead of replayed.
+`poll_once` visits tenants that actually have unprocessed inbox rows (one indexed
 query) instead of scanning every tenant in `businesses` every cycle.
 """
 
@@ -214,94 +215,109 @@ async def _expire_stale_waits(session: AsyncSession, tenant_id: uuid.UUID) -> No
 
 
 async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> int:
-    await _lock_tenant_dispatch(session, tenant_id)
-    # Keep row locks as well as the dispatch lock: each event is claimed
-    # once, including when maintenance code separately locks an inbox row.
-    rows = (
-        await session.execute(
-            select(WorkflowTriggerInbox)
-            .where(
+    processed = 0
+    while True:
+        # Each event commits independently. Re-establish RLS and the ordering
+        # lock after every commit; another worker may drain the next event.
+        await set_tenant_context(session, tenant_id)
+        await _lock_tenant_dispatch(session, tenant_id)
+        inbox_row = (await session.execute(
+            select(WorkflowTriggerInbox).where(
                 WorkflowTriggerInbox.tenant_id == tenant_id,
                 WorkflowTriggerInbox.processed_at.is_(None),
+            ).order_by(WorkflowTriggerInbox.created_at, WorkflowTriggerInbox.id)
+            .limit(1).with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+        if inbox_row is None:
+            await session.commit()  # Release the dispatch lock even on an empty queue.
+            return processed
+
+        inbox_id = inbox_row.id
+        try:
+            # Flush INSIDE the savepoint: constraint errors can surface only
+            # when the last node's pending WAITING transition reaches Postgres.
+            async with session.begin_nested():
+                await _dispatch_inbox_row(session, tenant_id, inbox_row)
+                await session.flush()
+        except Exception as exc:
+            # Provider effects cannot be rolled back. Preserve the failed
+            # event for investigation, but do not send its question again on
+            # every webhook or stop unrelated conversations behind it.
+            logger.exception("workflow inbox row %s failed; automatic replay disabled", inbox_id)
+            inbox_row = await session.get(WorkflowTriggerInbox, inbox_id, populate_existing=True)
+            sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+            inbox_row.processing_error = (
+                f"{type(exc).__name__}{f' ({sqlstate})' if sqlstate else ''}; "
+                "automatic replay disabled; review required"
             )
-            .order_by(WorkflowTriggerInbox.created_at, WorkflowTriggerInbox.id)
-            .with_for_update(skip_locked=True)
+        inbox_row.processed_at = _now()
+        await session.commit()
+        processed += 1
+
+
+async def _dispatch_inbox_row(
+    session: AsyncSession, tenant_id: uuid.UUID, inbox_row: WorkflowTriggerInbox,
+) -> None:
+    reset = None
+    if inbox_row.event_type in INSTAGRAM_EVENTS:
+        reset = await prepare_instagram_event(session, inbox_row)
+        if reset.handled:
+            return
+        if (inbox_row.event_type == "instagram.message_received"
+                and inbox_row.connector_instance_id is not None and inbox_row.payload.get("from")):
+            pending_run = await event_bus.find_pending_wait(
+                session, tenant_id=tenant_id,
+                connector_instance_id=inbox_row.connector_instance_id,
+                correlation_key=inbox_row.payload["from"],
+            )
+            if pending_run is not None:
+                await _resume_waiting_run(session, pending_run, inbox_row.payload)
+                return
+    if inbox_row.event_type == "workflow.resume":
+        await _resume_run_for_inbox_row(session, inbox_row)
+        return
+
+    matching = (
+        await session.execute(
+            select(WorkflowTrigger).where(
+                WorkflowTrigger.tenant_id == tenant_id,
+                WorkflowTrigger.trigger_type == inbox_row.event_type,
+            )
         )
     ).scalars().all()
 
-    for inbox_row in rows:
-        # autoflush is disabled. Persist a consumed reset marker before a
-        # subsequent event refreshes this conversation in the same batch.
-        await session.flush()
-        reset = None
-        if inbox_row.event_type in INSTAGRAM_EVENTS:
-            reset = await prepare_instagram_event(session, inbox_row)
-            if reset.handled:
-                inbox_row.processed_at = _now()
-                continue
-            if (inbox_row.event_type == "instagram.message_received"
-                    and inbox_row.connector_instance_id is not None and inbox_row.payload.get("from")):
-                pending_run = await event_bus.find_pending_wait(
-                    session, tenant_id=tenant_id,
-                    connector_instance_id=inbox_row.connector_instance_id,
-                    correlation_key=inbox_row.payload["from"],
-                )
-                if pending_run is not None:
-                    await _resume_waiting_run(session, pending_run, inbox_row.payload)
-                    inbox_row.processed_at = _now()
-                    continue
-        if inbox_row.event_type == "workflow.resume":
-            await _resume_run_for_inbox_row(session, inbox_row)
-            inbox_row.processed_at = _now()
-            continue
+    if inbox_row.connector_instance_id is not None:
+        matching = [
+            t
+            for t in matching
+            if t.connector_instance_id is None
+            or t.connector_instance_id == inbox_row.connector_instance_id
+        ]
 
-        matching = (
-            await session.execute(
-                select(WorkflowTrigger).where(
-                    WorkflowTrigger.tenant_id == tenant_id,
-                    WorkflowTrigger.trigger_type == inbox_row.event_type,
-                )
-            )
-        ).scalars().all()
+    if (
+        inbox_row.event_type in _CONVERSATIONAL_TRIGGER_TYPES
+        and inbox_row.connector_instance_id is not None
+        and isinstance(inbox_row.payload, dict)
+        and inbox_row.payload.get("from")
+        and await inbox_service.is_automation_paused(
+            session,
+            tenant_id=tenant_id,
+            connector_instance_id=inbox_row.connector_instance_id,
+            external_contact_id=inbox_row.payload["from"],
+        )
+    ):
+        # Human handoff (`inbox.pause_automation`) is in effect for
+        # this conversation - skip starting any run for it, but still
+        # mark the row processed (same "no match" outcome as a
+        # keyword condition that didn't fire, not an error).
+        return
 
-        if inbox_row.connector_instance_id is not None:
-            matching = [
-                t
-                for t in matching
-                if t.connector_instance_id is None
-                or t.connector_instance_id == inbox_row.connector_instance_id
-            ]
-
-        if (
-            inbox_row.event_type in _CONVERSATIONAL_TRIGGER_TYPES
-            and inbox_row.connector_instance_id is not None
-            and isinstance(inbox_row.payload, dict)
-            and inbox_row.payload.get("from")
-            and await inbox_service.is_automation_paused(
-                session,
-                tenant_id=tenant_id,
-                connector_instance_id=inbox_row.connector_instance_id,
-                external_contact_id=inbox_row.payload["from"],
-            )
-        ):
-            # Human handoff (`inbox.pause_automation`) is in effect for
-            # this conversation - skip starting any run for it, but still
-            # mark the row processed (same "no match" outcome as a
-            # keyword condition that didn't fire, not an error).
-            inbox_row.processed_at = _now()
-            continue
-
-        for trigger in matching:
-            run = await _start_run_for_trigger(session, trigger, inbox_row)
-            if (reset is not None and reset.conversation is not None and run is not None
-                    and run.status in {RunStatus.COMPLETED, RunStatus.WAITING}):
-                reset.conversation.flow_reset_pending = False
-
-        inbox_row.processed_at = _now()
-
-    if rows:
-        await session.commit()
-    return len(rows)
+    for trigger in matching:
+        run = await _start_run_for_trigger(session, trigger, inbox_row)
+        if (reset is not None and reset.conversation is not None and run is not None
+                and run.status in {RunStatus.COMPLETED, RunStatus.WAITING}):
+            reset.conversation.flow_reset_pending = False
 
 
 async def _resume_run_for_inbox_row(session: AsyncSession, inbox_row: WorkflowTriggerInbox) -> None:
@@ -383,7 +399,7 @@ async def _start_run_for_trigger(
 
 async def process_pending_now(session: AsyncSession, tenant_id: uuid.UUID) -> int:
     """Dispatch `tenant_id`'s pending inbox rows immediately, in the
-    caller's own session/transaction - the serverless (Vercel) substitute
+    caller's session, committing one event at a time - the serverless (Vercel) substitute
     for waiting on `_poll_forever_job`'s next pass.
 
     A serverless deployment has no persistent process to run that loop in

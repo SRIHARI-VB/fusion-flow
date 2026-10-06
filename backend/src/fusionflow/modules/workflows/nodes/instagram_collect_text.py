@@ -11,6 +11,8 @@ now wired in alongside this node).
 from __future__ import annotations
 
 import uuid
+import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -26,6 +28,10 @@ from fusionflow.modules.workflows.engine.registry import (
     node_executor_registry,
 )
 from fusionflow.modules.workflows.engine.templating import interpolate
+from fusionflow.modules.workflows.engine.event_bus import find_pending_wait
+from fusionflow.modules.workflows.models import RunStatus
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramCollectTextConfig(BaseModel):
@@ -79,6 +85,24 @@ class InstagramCollectTextExecutor(NodeExecutor):
         )
         if instance is None:
             return Failure(f"connector instance {connector_instance_id} not found for this tenant")
+
+        # A button tap can start a different form while an earlier form is
+        # waiting for this sender's text. Replace that wait before sending
+        # another question; otherwise the unique waiting-correlation index
+        # rejects the new run only AFTER Instagram has delivered its DM.
+        # The inbox dispatcher serializes these decisions per tenant.
+        pending = await find_pending_wait(
+            context.session, tenant_id=context.tenant_id,
+            connector_instance_id=connector_instance_id, correlation_key=recipient_id,
+        )
+        if pending is not None and pending.id != context.run_id:
+            pending.status = RunStatus.CANCELLED
+            pending.completed_at = datetime.now(timezone.utc)
+            for field in ("waiting_node_id", "waiting_connector_instance_id", "waiting_correlation_key",
+                          "waiting_frontier", "waiting_variables", "waiting_expires_at"):
+                setattr(pending, field, None)
+            await context.session.flush()
+            logger.info("workflow run %s text wait superseded by run %s", pending.id, context.run_id)
 
         await instagram_adapter.send_direct_message(
             instance=instance, session=context.session, recipient_id=recipient_id, text=question

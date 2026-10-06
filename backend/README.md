@@ -292,6 +292,30 @@ Google's external **Testing** mode, grants with Calendar scopes expire after
 seven days; review the app's publishing status for an ongoing deployment
 ([Google OAuth documentation](https://developers.google.com/identity/protocols/oauth2#expiration)).
 
+### Instagram waiting flows and inbox failures
+
+A new `instagram.collect_text` question replaces an older waiting run for the
+same tenant, Instagram connector and sender before sending. The old run is
+retained as cancelled; customer records and submitted appointments are untouched.
+This allows switching from consultation to a treatment while a name is pending
+without violating `uq_workflow_runs_waiting_correlation` after a DM was sent.
+
+The dispatcher commits each inbox event independently, reacquiring its tenant
+context and ordering lock each time. An unexpected dispatch/flush failure rolls
+back only that event's database changes and records `processing_error` with
+`processed_at` on its inbox row. It does not automatically replay the event:
+external messages may already have been delivered. Review such rows and their
+provider effects before any manual replay. Later users continue normally.
+This prevents the constraint-error replay loop; it is not a claim of exactly-once
+provider delivery across process termination or a database outage during a send.
+
+Apply migration `0040_inbox_processing_error` before deploying this dispatcher.
+Regression coverage uses the disposable Postgres database with mocked providers:
+
+```bash
+pytest tests/test_instagram_dispatch_postgres.py tests/test_instagram_reset_postgres.py
+```
+
 ### Database and secrets
 
 **`SET LOCAL`, not `SET`.** `db/session.py::set_tenant_context` issues
