@@ -15,11 +15,13 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.auth.models import User
 from fusionflow.modules.business_objects import service as business_objects_service
+from fusionflow.modules.business_objects.models import ObjectRecord, ObjectTypeDefinition
 from fusionflow.modules.business_objects.schemas import ObjectFieldDefinitionUpdate
 from fusionflow.modules.clinic_queue.models import PatientVisit, PatientVisitStage, PaymentMode
 from fusionflow.modules.clinic_queue.schemas import (
@@ -71,14 +73,29 @@ async def _next_position(session: AsyncSession, tenant_id: uuid.UUID, stage: Pat
 async def create_patient_visit(
     session: AsyncSession, *, tenant_id: uuid.UUID, payload: PatientCreate
 ) -> PatientVisit:
-    customer = await find_or_create_patient_customer(
-        session, tenant_id=tenant_id, name=payload.name, phone=payload.phone
-    )
+    customer = None
+    if payload.appointment_ref_id is not None:
+        appointment = (await session.execute(select(ObjectRecord).join(
+            ObjectTypeDefinition, ObjectRecord.object_type_id == ObjectTypeDefinition.id,
+        ).where(
+            ObjectRecord.id == payload.appointment_ref_id, ObjectRecord.tenant_id == tenant_id,
+            ObjectTypeDefinition.tenant_id == tenant_id, ObjectTypeDefinition.key == "appointment",
+        ).with_for_update(of=ObjectRecord))).scalar_one_or_none()
+        if appointment is None or appointment.payload.get("status") != "confirmed":
+            raise HTTPException(status_code=409, detail="Appointment is no longer available for check-in")
+        if appointment.customer_id:
+            customer = await customers_service.get_customer(session, tenant_id, appointment.customer_id)
+    if customer is None:
+        customer = await find_or_create_patient_customer(
+            session, tenant_id=tenant_id, name=payload.name, phone=payload.phone
+        )
     visit = PatientVisit(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
         customer_id=customer.id,
         appointment_ref_id=payload.appointment_ref_id,
+        patient_name=payload.name,
+        patient_phone=payload.phone,
         assigned_doctor_membership_id=payload.assigned_doctor_membership_id,
         stage=PatientVisitStage.RECEPTION,
         checked_in_at=datetime.now(timezone.utc),
@@ -237,8 +254,8 @@ def to_patient_visit_out_dict(
     out: dict[str, Any] = {
         "id": visit.id,
         "customer_id": visit.customer_id,
-        "customer_name": customer.name,
-        "customer_phone": customer.phone,
+        "customer_name": visit.patient_name or customer.name,
+        "customer_phone": visit.patient_phone or customer.phone,
         "appointment_ref_id": visit.appointment_ref_id,
         "assigned_doctor_membership_id": visit.assigned_doctor_membership_id,
         "assigned_doctor_name": doctor_name,

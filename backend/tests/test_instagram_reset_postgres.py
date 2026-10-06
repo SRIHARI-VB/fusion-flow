@@ -156,7 +156,7 @@ async def test_clear_then_immediate_hi_starts_initial_flow_and_consumes_flag_onc
     assert data.send.call_args.kwargs["params"]["text"].startswith("Welcome back!")
 
 
-async def test_reset_is_scoped_and_preserves_submitted_records(data):
+async def test_reset_is_scoped_and_removes_all_active_bookings(data):
     target = await waiting(data)
     delayed = await waiting(data, delay=True)
     other_sender = await waiting(data, sender="other-sender")
@@ -168,7 +168,8 @@ async def test_reset_is_scoped_and_preserves_submitted_records(data):
         kind = ObjectTypeDefinition(id=uuid.uuid4(), tenant_id=data.tenants[0], key="appointment", name="Appointment")
         s.add(kind)
         await s.flush()
-        for status, run_id in [("draft", target), ("requested", target), ("confirmed", target), ("draft", completed)]:
+        for status, run_id in [("draft", target), ("requested", target), ("confirmed", target), ("draft", completed),
+                               ("completed", completed), ("cancelled", completed), ("confirmed", other_connection)]:
             s.add(ObjectRecord(tenant_id=data.tenants[0], object_type_id=kind.id, customer_id=data.customers[0],
                                created_by_run_id=run_id, payload={"status": status}))
         s.add(Ticket(tenant_id=data.tenants[0], customer_id=data.customers[0], subject="Retained history"))
@@ -183,7 +184,7 @@ async def test_reset_is_scoped_and_preserves_submitted_records(data):
             assert (await s.get(WorkflowRun, run_id)).status == RunStatus.WAITING
         assert (await s.get(WorkflowRun, completed)).status == RunStatus.COMPLETED
         records = (await s.execute(select(ObjectRecord))).scalars().all()
-        assert sorted(r.payload["status"] for r in records) == ["confirmed", "draft", "requested"]
+        assert sorted(r.payload["status"] for r in records) == ["cancelled", "completed", "confirmed"]
         assert len((await s.execute(select(Ticket))).scalars().all()) == 1
         assert await s.get(WorkflowRun, other_tenant) is None  # Actual RLS isolation.
         await set_tenant_context(s, data.tenants[1])

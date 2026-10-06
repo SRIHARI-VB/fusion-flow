@@ -54,6 +54,7 @@ export function DayDetailsModal({ open, dateKey, appointments, onClose }: DayDet
                     <span className="font-medium text-foreground">{appt.customerName}</span>
                     <StatusBadge status={appt.status} />
                   </div>
+                  {appt.customerPhone && <div className="mt-1 text-sm text-muted-foreground">{appt.customerPhone}</div>}
                   <div className="mt-1 text-sm text-muted-foreground">{appt.timeSlot ?? "No time specified"}</div>
                   {appt.service && <div className="mt-1 text-sm text-foreground">{appt.service}</div>}
                   <div className="mt-2 flex flex-wrap items-center gap-3">

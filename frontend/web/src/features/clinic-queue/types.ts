@@ -71,6 +71,7 @@ export interface AppointmentRecordSummary {
   customer_id: string | null;
   payload: {
     customer_name?: string;
+    customer_phone?: string;
     appointment_date?: string;
     status?: string;
     service?: string;

@@ -61,6 +61,9 @@ class RecordUpsertExecutor(NodeExecutor):
         fields = interpolate_dict_values(config.fields, context.variables)
 
         if config.operation == "create":
+            from fusionflow.modules.business_objects.workflow_adapter import CustomObjectQueryAdapter
+            if isinstance(adapter, CustomObjectQueryAdapter):
+                adapter.created_by_run_id = context.run_id
             count_fn = _COUNT_FNS.get(config.module)
             if count_fn is not None:
                 limit = await admin_service.get_resource_limit(

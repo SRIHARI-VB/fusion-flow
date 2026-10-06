@@ -293,6 +293,23 @@ class GoogleCalendarAdapter(base.ConnectorAdapter):
                 "attendees": [{"email": email} for email in (attendees or [])],
             }
 
+    async def delete_event(self, instance: ConnectorInstance, session: AsyncSession, *, event_id: str) -> None:
+        """Idempotent cancellation; never fabricate success on network failure.
+
+        https://developers.google.com/workspace/calendar/api/v3/reference/events/delete
+        """
+        from urllib.parse import quote
+
+        access_token = await google_oauth.get_valid_access_token(session, instance=instance)
+        async with httpx.AsyncClient(base_url=settings.GOOGLE_CALENDAR_API_BASE_URL, timeout=15.0) as client:
+            response = await client.delete(
+                f"/calendars/primary/events/{quote(event_id, safe='')}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"sendUpdates": "none"},
+            )
+            if response.status_code not in (404, 410):
+                response.raise_for_status()
+
     async def list_events(
         self,
         instance: ConnectorInstance,

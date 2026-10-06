@@ -48,6 +48,7 @@ export type AppointmentMode = "online" | "offline";
  */
 export interface AppointmentPayload {
   customer_name?: string;
+  customer_phone?: string;
   appointment_date?: string;
   time_slot?: string;
   appointment_mode?: AppointmentMode | string;

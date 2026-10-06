@@ -56,6 +56,7 @@ export function AddPatientModal({ open, onClose }: { open: boolean; onClose: () 
     const appointment = todaysAppointments.find((a) => a.id === id);
     if (!appointment) return;
     setName(appointment.payload.customer_name ?? "");
+    setPhone(appointment.payload.customer_phone ?? "");
   }
 
   const canSubmit = name.trim().length > 0 && phone.trim().length > 0 && !mutation.isPending;
@@ -79,12 +80,12 @@ export function AddPatientModal({ open, onClose }: { open: boolean; onClose: () 
 
       <div className="flex flex-col gap-1.5">
         <label className="text-sm font-medium text-foreground">Patient name</label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" autoFocus />
+        <Input maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" autoFocus />
       </div>
 
       <div className="flex flex-col gap-1.5">
         <label className="text-sm font-medium text-foreground">Phone number</label>
-        <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
+        <Input type="tel" maxLength={40} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
       </div>
 
       <div className="flex flex-col gap-1.5">

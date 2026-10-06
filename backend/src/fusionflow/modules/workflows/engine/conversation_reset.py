@@ -1,8 +1,8 @@
 """Instagram /clear, processed in inbox order before any resume decision.
 
 The dispatcher owns the transaction and serializes dispatch for the tenant.
-No patient, ticket, submitted appointment, or message history is deleted.
-Only explicitly draft object records belonging to cancelled runs are removed.
+Patient, ticket, completed appointment and message history are preserved.
+Active appointments are removed with durable calendar cancellation intents.
 """
 
 from __future__ import annotations
@@ -15,10 +15,11 @@ import uuid
 from sqlalchemy import String, cast, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fusionflow.modules.business_objects.models import ObjectRecord
+from fusionflow.modules.business_objects.models import ObjectRecord, ObjectTypeDefinition
 from fusionflow.modules.customers.models import Customer
 from fusionflow.modules.inbox.models import Conversation
 from fusionflow.modules.workflows.models import RunStatus, WorkflowRun, WorkflowTriggerInbox
+from fusionflow.modules.workflows.engine.appointment_reset import clear_active_appointments
 
 logger = logging.getLogger(__name__)
 INSTAGRAM_EVENTS = {"instagram.message_received", "instagram.postback_received"}
@@ -72,6 +73,10 @@ async def cancel_conversation_runs(session: AsyncSession, conversation: Conversa
             ObjectRecord.customer_id.in_(customer_ids),
             ObjectRecord.created_by_run_id.in_([run.id for run in runs]),
             ObjectRecord.payload["status"].astext == "draft",
+            ObjectRecord.object_type_id.not_in(select(ObjectTypeDefinition.id).where(
+                ObjectTypeDefinition.tenant_id == conversation.tenant_id,
+                ObjectTypeDefinition.key == "appointment",
+            )),
         ))
     await session.flush()
 
@@ -104,6 +109,7 @@ async def prepare_instagram_event(session: AsyncSession, row: WorkflowTriggerInb
             )
             session.add(conversation)
         await cancel_conversation_runs(session, conversation)
+        removed, calendar_pending = await clear_active_appointments(session, conversation)
         conversation.flow_reset_at = event_time(row)
         conversation.flow_reset_pending = True
         # An explicit restart also releases a prior human-handoff pause.
@@ -120,8 +126,16 @@ async def prepare_instagram_event(session: AsyncSession, row: WorkflowTriggerInb
         try:
             if instance is None:
                 raise ValueError("Reset acknowledgement connector is missing")
+            acknowledgement = RESET_ACK
+            if removed:
+                acknowledgement = (
+                    f"Your conversation has been reset and {removed} active booking(s) removed. "
+                    "Send Hi to start again."
+                )
+                if calendar_pending:
+                    acknowledgement += " Calendar cancellations have been queued for syncing."
             await registry.get("instagram").perform_action(
-                action="send_direct_message", params={"recipient_id": sender, "text": RESET_ACK},
+                action="send_direct_message", params={"recipient_id": sender, "text": acknowledgement},
                 instance=instance, session=session,
             )
         except Exception:

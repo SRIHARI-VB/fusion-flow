@@ -41,7 +41,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from fusionflow.db.session import async_session_factory, set_tenant_context
@@ -50,6 +50,9 @@ from fusionflow.modules.tenancy.models import Business
 from fusionflow.modules.workflows.engine.graph import WorkflowGraph
 from fusionflow.modules.workflows.engine import event_bus
 from fusionflow.modules.workflows.engine.conversation_reset import INSTAGRAM_EVENTS, prepare_instagram_event
+from fusionflow.modules.workflows.engine.appointment_reset import (
+    CALENDAR_CANCEL_EVENT, defer_calendar_cancellation, dispatch_calendar_cancellation,
+)
 from fusionflow.modules.workflows.engine.run_loop import DELAY_CORRELATION_KEY, RunLoopError, execute_run, resume_run
 from fusionflow.modules.workflows.models import (
     RunStatus,
@@ -122,6 +125,7 @@ async def poll_once(
                     .where(
                         WorkflowTriggerInbox.tenant_id == tenant_id,
                         WorkflowTriggerInbox.processed_at.is_(None),
+                        or_(WorkflowTriggerInbox.available_at.is_(None), WorkflowTriggerInbox.available_at <= _now()),
                     )
                     .limit(1)
                 )
@@ -225,6 +229,7 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
             select(WorkflowTriggerInbox).where(
                 WorkflowTriggerInbox.tenant_id == tenant_id,
                 WorkflowTriggerInbox.processed_at.is_(None),
+                or_(WorkflowTriggerInbox.available_at.is_(None), WorkflowTriggerInbox.available_at <= _now()),
             ).order_by(WorkflowTriggerInbox.created_at, WorkflowTriggerInbox.id)
             .limit(1).with_for_update(skip_locked=True)
             .execution_options(populate_existing=True)
@@ -244,14 +249,19 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
             # Provider effects cannot be rolled back. Preserve the failed
             # event for investigation, but do not send its question again on
             # every webhook or stop unrelated conversations behind it.
-            logger.exception("workflow inbox row %s failed; automatic replay disabled", inbox_id)
+            logger.exception("workflow inbox row %s failed", inbox_id)
             inbox_row = await session.get(WorkflowTriggerInbox, inbox_id, populate_existing=True)
             sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
             inbox_row.processing_error = (
                 f"{type(exc).__name__}{f' ({sqlstate})' if sqlstate else ''}; "
                 "automatic replay disabled; review required"
             )
-        inbox_row.processed_at = _now()
+            if inbox_row.event_type == CALENDAR_CANCEL_EVENT:
+                defer_calendar_cancellation(inbox_row, exc)
+            else:
+                inbox_row.available_at = None
+        if inbox_row.event_type != CALENDAR_CANCEL_EVENT or inbox_row.available_at is None:
+            inbox_row.processed_at = _now()
         await session.commit()
         processed += 1
 
@@ -259,6 +269,9 @@ async def _process_tenant_inbox(session: AsyncSession, tenant_id: uuid.UUID) -> 
 async def _dispatch_inbox_row(
     session: AsyncSession, tenant_id: uuid.UUID, inbox_row: WorkflowTriggerInbox,
 ) -> None:
+    if inbox_row.event_type == CALENDAR_CANCEL_EVENT:
+        await dispatch_calendar_cancellation(session, inbox_row)
+        return
     reset = None
     if inbox_row.event_type in INSTAGRAM_EVENTS:
         reset = await prepare_instagram_event(session, inbox_row)

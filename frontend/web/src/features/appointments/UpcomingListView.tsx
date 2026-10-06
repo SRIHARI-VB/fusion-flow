@@ -38,6 +38,7 @@ export function UpcomingListView({ appointments }: { appointments: NormalizedApp
             >
               <div className="flex min-w-[10rem] flex-col gap-0.5">
                 <span className="font-medium text-foreground">{appt.customerName}</span>
+                {appt.customerPhone && <span className="text-sm text-muted-foreground">{appt.customerPhone}</span>}
                 <span className="text-sm text-muted-foreground">{appt.service ?? "—"}</span>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -74,6 +75,7 @@ export function UpcomingListView({ appointments }: { appointments: NormalizedApp
                   <span className="font-medium text-foreground">{appt.customerName}</span>
                   <StatusBadge status={appt.status} />
                 </div>
+                {appt.customerPhone && <span className="text-muted-foreground">{appt.customerPhone}</span>}
                 {appt.service && <span className="text-muted-foreground">{appt.service}</span>}
                 <span className="text-xs text-muted-foreground">{appt.preferredTime ?? "No date/time on record"}</span>
               </div>

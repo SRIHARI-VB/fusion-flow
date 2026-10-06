@@ -51,6 +51,7 @@ class CustomObjectQueryAdapter(ModuleQueryAdapter):
     def __init__(self, object_type: ObjectTypeDefinition) -> None:
         self.object_type = object_type
         self.module_key = object_type.key
+        self.created_by_run_id: uuid.UUID | None = None
 
     async def list(
         self, session: AsyncSession, *, tenant_id: uuid.UUID, filters: dict[str, Any], limit: int
@@ -89,6 +90,7 @@ class CustomObjectQueryAdapter(ModuleQueryAdapter):
                 field_defs=field_defs,
                 payload=fields,
                 customer_id=uuid.UUID(str(customer_id)) if customer_id else None,
+                created_by_run_id=self.created_by_run_id,
             )
         except HTTPException as exc:
             raise ValueError(_flatten_detail(exc)) from exc

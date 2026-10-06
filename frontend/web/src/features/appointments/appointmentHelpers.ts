@@ -19,6 +19,7 @@ export interface NormalizedAppointment {
    * are shown separately as "Pending requests". */
   isPending: boolean;
   customerName: string;
+  customerPhone: string | null;
   service: string | null;
   timeSlot: string | null;
   mode: AppointmentMode | null;
@@ -131,6 +132,7 @@ export function normalizeAppointment(
     id: record.id,
     isPending: date === null,
     customerName: directCustomerName ?? resolveCustomerName(record.customer_id),
+    customerPhone: nonEmptyString(payload.customer_phone),
     service: nonEmptyString(payload.service),
     timeSlot: nonEmptyString(payload.time_slot),
     mode,

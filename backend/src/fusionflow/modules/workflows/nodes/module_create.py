@@ -92,6 +92,9 @@ class ModuleCreateExecutor(NodeExecutor):
                     return Failure(f"tenant has reached its plan's limit of {limit} for {config.module!r}")
 
         fields = interpolate_dict_values(config.fields, context.variables)
+        from fusionflow.modules.business_objects.workflow_adapter import CustomObjectQueryAdapter
+        if isinstance(adapter, CustomObjectQueryAdapter):
+            adapter.created_by_run_id = context.run_id
         try:
             item = await adapter.create(context.session, tenant_id=context.tenant_id, fields=fields)
         except NotImplementedError as exc:

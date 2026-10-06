@@ -30,7 +30,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +61,10 @@ class PatientVisit(Base, TenantScopedMixin, TimestampMixin):
     )
     # Not a real FK - see module docstring.
     appointment_ref_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), nullable=True)
+    # A later Instagram booking may change the contact's profile. Keep
+    # this visit's actual patient details stable, including after /clear.
+    patient_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    patient_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     assigned_doctor_membership_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL"), nullable=True, index=True
     )

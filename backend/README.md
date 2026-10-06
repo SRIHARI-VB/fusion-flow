@@ -230,9 +230,22 @@ was available in that environment:
 
 An exact `/clear` DM (case-insensitive, surrounding whitespace allowed)
 cancels that sender's active conversation on the receiving Instagram
-connection. It clears suspended answers and deletes only records marked
-`draft` that belong to the cancelled runs and that customer. Patient
-profiles, tickets, submitted appointments, and message/run history remain.
+connection. It clears suspended answers and removes all of that sender's
+Instagram-created `draft`, `requested` and `confirmed` appointment records,
+including bookings from completed workflow runs. Exact workflow provenance
+scopes deletion to the tenant, Instagram connection and sender. Manual/other-
+channel bookings, completed appointments, patient profiles, tickets and
+message/run history remain. Completed clinical visits protect their linked
+appointments even if the appointment status is stale. Other visits retain
+their clinical notes and patient detail snapshots, with the deleted booking
+reference detached. Non-appointment drafts from cancelled runs are also removed.
+
+Linked Google Calendar cancellations are queued in the same transaction as
+booking deletion. These idempotent DELETEs retry with backoff on subsequent
+webhooks/poller passes; a revoked token still needs the calendar reconnected.
+The reset acknowledgement says calendar synchronization is queued rather than
+claiming Google has already deleted the event. Ordinary Instagram sends and
+failed workflows are never automatically replayed by this retry path.
 
 The bot acknowledges the reset and asks the sender to send `Hi`. The next
 message carries `trigger.conversation_reset = true`; the clinic workflow
@@ -315,6 +328,29 @@ Regression coverage uses the disposable Postgres database with mocked providers:
 ```bash
 pytest tests/test_instagram_dispatch_postgres.py tests/test_instagram_reset_postgres.py
 ```
+
+### Clinic patient details and booking reset
+
+Apply `0041_patient_booking_reset` before deploying the backend. It adds visit
+name/phone snapshots (backfilled from existing customers) and the cancellation
+retry timestamp. Publish the clinic graph using the guarded script below;
+omit `--apply` for read-only validation:
+
+```bash
+python -m scripts.upgrade_clinic_patient_details \
+  --tenant-id TENANT_UUID --workflow-id WORKFLOW_UUID \
+  --actor-email OWNER_EMAIL --expected-version CURRENT_VERSION --apply
+```
+
+The upgrade asks one name question followed by a phone question on consultation,
+treatment and legacy booking branches. All 18 appointment creation paths read
+current patient details before saving a booking snapshot; calendar descriptions
+include the phone. The script adds optional phone/event-link fields and recovers
+old booking provenance and calendar IDs from exact successful step outputs.
+It does not execute a workflow or cancel an existing booking. Waiting runs keep
+their immutable version; `/clear` followed by `Hi` starts the new version.
+Patient Flow quick check-in pre-fills both fields and preserves the appointment's
+customer identity while recording the visit's name and phone independently.
 
 ### Database and secrets
 

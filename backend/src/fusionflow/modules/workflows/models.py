@@ -327,6 +327,8 @@ class WorkflowTriggerInbox(Base, TenantScopedMixin):
     # A dispatch failure may occur after an external message was delivered.
     # Quarantine it for review instead of replaying it on every webhook.
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Only idempotent calendar cancellations opt into delayed retry.
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WorkflowUserComponent(Base, TenantScopedMixin, TimestampMixin):
