@@ -147,6 +147,9 @@ uvicorn fusionflow.main:app --reload --port 8000
 - ReDoc: <http://localhost:8000/redoc>
 - Health: <http://localhost:8000/healthz>
 
+If you change the API port, update `BACKEND_PUBLIC_BASE_URL` and both
+frontend apps' `VITE_API_URL` values to match.
+
 CORS is preconfigured for the frontend dev servers on
 `http://localhost:5173` (`frontend/web`) and `http://localhost:5174`
 (`frontend/admin`), with credentials enabled so the httpOnly refresh
