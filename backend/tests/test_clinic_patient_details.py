@@ -126,3 +126,13 @@ async def test_calendar_delete_never_claims_success_on_provider_error(monkeypatc
     monkeypatch.setattr(oauth, "get_valid_access_token", AsyncMock(return_value="test-token"))
     with pytest.raises(httpx.HTTPStatusError):
         await GoogleCalendarAdapter().delete_event(SimpleNamespace(), MemorySession(), event_id="event1")
+
+
+def test_historical_missing_phone_is_not_replaced_by_a_later_patient_contact():
+    from fusionflow.modules.clinic_queue.models import PatientVisit
+    from fusionflow.modules.clinic_queue.service import to_patient_visit_out_dict
+
+    visit = PatientVisit(patient_name="Earlier Patient", patient_phone=None)
+    customer = SimpleNamespace(name="Later Patient", phone="9999999999")
+    result = to_patient_visit_out_dict(visit, customer=customer, doctor_name=None, include_notes=False)
+    assert result["customer_name"] == "Earlier Patient" and result["customer_phone"] is None

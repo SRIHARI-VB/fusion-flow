@@ -255,7 +255,7 @@ def to_patient_visit_out_dict(
         "id": visit.id,
         "customer_id": visit.customer_id,
         "customer_name": visit.patient_name or customer.name,
-        "customer_phone": visit.patient_phone or customer.phone,
+        "customer_phone": visit.patient_phone if visit.patient_name is not None else customer.phone,
         "appointment_ref_id": visit.appointment_ref_id,
         "assigned_doctor_membership_id": visit.assigned_doctor_membership_id,
         "assigned_doctor_name": doctor_name,
