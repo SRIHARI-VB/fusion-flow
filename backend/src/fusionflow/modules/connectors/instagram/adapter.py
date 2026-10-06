@@ -1270,10 +1270,18 @@ class InstagramAdapter(base.ConnectorAdapter):
                     continue
                 if message.get("quick_reply"):
                     continue
+                # Instagram can send a second, attachment-only phone card
+                # immediately after the number's text message. It has its
+                # own mid, so delivery deduplication cannot remove it. This
+                # text trigger must not treat that card (or other textless
+                # media/status events) as a new message or a collected answer.
+                message_text = message.get("text")
+                if not isinstance(message_text, str) or not message_text.strip():
+                    continue
                 return {
                     "from": (messaging.get("sender") or {}).get("id"),
                     "message_id": message.get("mid"),
-                    "text": message.get("text"),
+                    "text": message_text,
                     "timestamp": messaging.get("timestamp"),
                 }
         return None

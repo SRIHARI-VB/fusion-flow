@@ -272,6 +272,13 @@ async def _dispatch_inbox_row(
     if inbox_row.event_type == CALENDAR_CANCEL_EVENT:
         await dispatch_calendar_cancellation(session, inbox_row)
         return
+    if inbox_row.event_type == "instagram.message_received":
+        message_text = inbox_row.payload.get("text")
+        if not isinstance(message_text, str) or not message_text.strip():
+            # Also protects rows already queued by an older webhook worker.
+            # Do this before reset handling: an empty card must not consume
+            # the fresh-conversation marker or answer a pending question.
+            return
     reset = None
     if inbox_row.event_type in INSTAGRAM_EVENTS:
         reset = await prepare_instagram_event(session, inbox_row)
@@ -359,6 +366,11 @@ async def _resume_waiting_run(session: AsyncSession, run: WorkflowRun, reply_pay
         return
 
     graph = WorkflowGraph.from_json(version.compiled_graph or version.graph)
+    waiting_node = graph.node_by_id(run.waiting_node_id)
+    if waiting_node is not None and waiting_node.data.node_type == "instagram.collect_text":
+        message_text = reply_payload.get("text")
+        if not isinstance(message_text, str) or not message_text.strip():
+            return  # Legacy workflow.resume rows must also leave the question waiting.
     try:
         await resume_run(session, run, graph, reply_payload=reply_payload)
     except RunLoopError as exc:

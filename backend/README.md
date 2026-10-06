@@ -352,6 +352,16 @@ their immutable version; `/clear` followed by `Hi` starts the new version.
 Patient Flow quick check-in pre-fills both fields and preserves the appointment's
 customer identity while recording the visit's name and phone independently.
 
+Instagram may add its own WhatsApp/Call phone preview after a user types a
+number. The observed webhook delivers the number as text and the preview as
+a separate attachment-only template with a different message ID. We retain
+both raw webhook audit events but only route nonblank text to the text-message
+workflow. The dispatcher also skips textless rows queued by older workers,
+including legacy text-question resumes, so the card cannot consume a pending
+answer, restart the welcome menu or consume the `/clear` fresh-start flag.
+The application does not send those preview buttons or control their display
+in the Instagram client.
+
 ### Database and secrets
 
 **`SET LOCAL`, not `SET`.** `db/session.py::set_tenant_context` issues
