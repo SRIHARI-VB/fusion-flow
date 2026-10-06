@@ -1,9 +1,7 @@
 """`instagram.ask_calendar_slot` — computes real available time slots
 within a period (e.g. "morning") on a given date, by checking the
-tenant's connected Google Calendar's actual busy events, and sends up to
-13 of them as an Instagram Quick Replies message (Meta's real cap for
-that message type - a plain Button Template tops out at 3, too few once
-a clinic has more than 3 openings in one period).
+tenant's connected Google Calendar's actual busy events, and sends the
+available choices as button messages, with at most three buttons each.
 
 Combines "compute the slots" and "send them" into one node rather than a
 separate compute-then-render pair, for the same reason
@@ -25,15 +23,13 @@ author can recover "what was this a slot for" once the tap that picked a
 slot starts a brand-new run (postback taps always do in this engine) and
 the original chain's variables are gone.
 
-More than 13 available slots in a period (a real possibility with a
-short slot duration across a long period) is a graph-authoring pattern
-(chain two instances with offset=0,13, exactly like `instagram.ask_choice`
-already established for services/products), not something this single
-node paginates internally.
+`limit` and `offset` select the slot window independently of the per-message
+button cap. Up to 288 slots covers a full day at the minimum five minutes.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -41,7 +37,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, Field, field_validator
 
 from fusionflow.modules.connectors import service as connector_service
-from fusionflow.modules.connectors.base import registry as connector_registry
+from fusionflow.modules.connectors.base import ConnectorReconnectRequired, registry as connector_registry
 from fusionflow.modules.workflows.engine.registry import (
     ExecutionContext,
     Failure,
@@ -52,7 +48,9 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 from fusionflow.modules.workflows.engine.templating import interpolate
 
-_MAX_OPTIONS = 13
+logger = logging.getLogger(__name__)
+
+_MAX_OPTIONS = 288
 _MAX_TITLE_LENGTH = 20
 
 
@@ -73,8 +71,14 @@ class AskCalendarSlotConfig(BaseModel):
             "literal like '30' also works."
         ),
     )
-    limit: int = Field(default=_MAX_OPTIONS, ge=1, le=_MAX_OPTIONS)
+    limit: int = Field(default=13, ge=1, le=_MAX_OPTIONS)
     offset: int = Field(default=0, ge=0)
+    calendar_unavailable_text: str = Field(
+        default="Sorry, online appointment booking is temporarily unavailable. "
+        "Please contact the clinic directly to arrange your visit.",
+        min_length=1,
+        json_schema_extra={"format": "textarea"},
+    )
     context: str = Field(
         default="",
         description=(
@@ -134,7 +138,7 @@ class AskCalendarSlotExecutor(NodeExecutor):
     palette_group = "Talk to Customer"
     icon = "calendar-clock"
     label = "Ask Customer to Pick a Calendar Slot (Instagram)"
-    description = "Computes real available time slots from a connected Google Calendar and sends up to 13 as Quick Replies."
+    description = "Computes real available time slots from a connected Google Calendar and sends the choices as button messages in groups of three."
     config_model = AskCalendarSlotConfig
     output_schema = _OUTPUT_SCHEMA
     required_connector_type_key = "instagram"
@@ -186,10 +190,25 @@ class AskCalendarSlotExecutor(NodeExecutor):
         try:
             busy_result = await cal_adapter.perform_action(
                 action="list_events",
-                params={"time_min": period_start.isoformat(), "time_max": period_end.isoformat(), "max_results": 50},
+                params={"time_min": period_start.isoformat(), "time_max": period_end.isoformat(),
+                        "max_results": 50, "require_live": True},
                 instance=cal_instance,
                 session=context.session,
             )
+        except ConnectorReconnectRequired as exc:
+            # Stop here: failed authorization is not an empty calendar and
+            # must never flow into the downstream "no slots"/booking branch.
+            try:
+                await ig_adapter.perform_action(
+                    action="send_direct_message",
+                    params={"recipient_id": recipient_id,
+                            "text": interpolate(config.calendar_unavailable_text, context.variables)},
+                    instance=ig_instance,
+                    session=context.session,
+                )
+            except Exception:  # A failed notice must not retry the revoked grant.
+                logger.exception("Could not send the calendar-unavailable notice for node %s", context.node_id)
+            return Failure(str(exc))
         except NotImplementedError as exc:
             return Failure(str(exc))
 
@@ -228,8 +247,8 @@ class AskCalendarSlotExecutor(NodeExecutor):
 
         try:
             await ig_adapter.perform_action(
-                action="send_quick_replies",
-                params={"recipient_id": recipient_id, "text": text, "replies": replies},
+                action="send_button_template",
+                params={"recipient_id": recipient_id, "text": text, "buttons": replies},
                 instance=ig_instance,
                 session=context.session,
             )

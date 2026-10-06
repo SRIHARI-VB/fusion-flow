@@ -261,6 +261,37 @@ using a non-superuser, non-BYPASSRLS role; provider calls are mocked:
 pytest tests/test_instagram_conversation_reset.py tests/test_instagram_reset_postgres.py
 ```
 
+### Instagram button menus and calendar reconnection
+
+`send_button_template` splits an option list into ordered messages containing
+at most three postback buttons. Titles are capped at 20 characters; payloads
+stay unchanged. The first message carries the prompt and later messages say
+"More options:". A partially delivered menu is not automatically replayed.
+`instagram.ask_choice` supports up to 100 module options; calendar-slot pickers
+support up to 288 slots, independently of the three-button message limit.
+
+Deploy the updated backend before upgrading the clinic graph. Run from
+`backend` with the configured environment (read-only unless `--apply` is added):
+
+```bash
+python -m scripts.upgrade_clinic_button_menus \
+  --tenant-id TENANT_UUID --workflow-id WORKFLOW_UUID \
+  --actor-email OWNER_EMAIL --expected-version CURRENT_VERSION
+```
+
+This preserves existing routing and `/clear`, removes the welcome typing hint,
+and replaces the two hardcoded service pages with one dynamic picker.
+
+Google `invalid_grant` marks the connector **Action required** and stops workflow
+retries. Slot selection sends a patient-facing unavailability message and stops
+before any booking confirmation. Reconnect through **Connectors → Google
+Calendar → Connect with Google**, using the account that owns the calendar;
+the app stores the new tokens automatically. No token needs to be copied.
+A revoked refresh token cannot be repaired with code. If the OAuth app is in
+Google's external **Testing** mode, grants with Calendar scopes expire after
+seven days; review the app's publishing status for an ongoing deployment
+([Google OAuth documentation](https://developers.google.com/identity/protocols/oauth2#expiration)).
+
 ### Database and secrets
 
 **`SET LOCAL`, not `SET`.** `db/session.py::set_tenant_context` issues

@@ -121,8 +121,8 @@ capability instead of hardcoding an assumption, and treats "no instance
 of that type exists at all" as a normal `False`, never an error.
 
 `instagram_ask_choice` (`instagram.ask_choice`) is the Instagram sibling of
-`whatsapp.ask_choice`'s module-sourced mode - a text prompt with up to 3
-tappable postback buttons pulled live from a module (Services, Products,
+`whatsapp.ask_choice`'s module-sourced mode - postback button messages
+with three options each, pulled live from a module (Services, Products,
 or a custom object type), option titles annotated with a "🎁" when
 `catalog.service.get_active_discounts` finds an active coupon/offer for
 that row. Unlike `whatsapp.ask_choice` it never suspends: a button tap
@@ -131,9 +131,8 @@ this node (see `instagram_postback_received.py`), so branching on the
 answer is an entirely separate downstream run matched by a
 `condition.field_compare`/`condition.multi_branch` node against the tapped
 payload - this node just sends and completes, exactly like
-`connector.action`'s own `send_button_template` dispatch. More than 3
-options is a graph-authoring pattern (chain two instances with
-`offset=0,3,...`), not something this single node does internally.
+`connector.action`'s own `send_button_template` dispatch. The adapter
+automatically splits the selected list into messages of up to three buttons.
 
 `catalog_get_active_discounts` (`catalog.get_active_discounts`) wraps
 `catalog.service.get_active_discounts` as a plain node - a service/product

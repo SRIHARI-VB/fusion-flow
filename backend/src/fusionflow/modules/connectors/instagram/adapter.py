@@ -710,14 +710,26 @@ class InstagramAdapter(base.ConnectorAdapter):
         text: str,
         buttons: list[dict[str, str]],
     ) -> None:
-        """Send a Button Template message: a text prompt with up to 3
-        tappable postback buttons - the `instagram.button_menu_automation`
-        predefined automation's "menu" reply. Each button is
-        `{"title": ..., "payload": ...}`; a tap comes back through the
-        Messaging webhook as a `postback` event (see `_extract_postback`),
-        carrying that same `payload` string back for a condition node to
-        branch on.
+        """Send every option as postback buttons, in ordered groups of three.
+
+        Meta caps each template at three buttons and titles at 20 characters.
+        Subsequent messages use a short continuation prompt. Payloads are never
+        shortened: they identify the existing workflow's postback branches.
         """
+        if not isinstance(buttons, list) or not buttons or any(
+            not isinstance(button, dict)
+            or not isinstance(button.get("title"), str) or not button["title"].strip()
+            or not isinstance(button.get("payload"), str) or not button["payload"]
+            for button in buttons
+        ):
+            raise ValueError("Button options require non-empty title and payload strings")
+        if not isinstance(text, str) or not text.strip() or len(text) > 640:
+            raise ValueError("Button prompt must contain between 1 and 640 characters")
+        # Validate the complete list before sending any part of the menu.
+        normalized = [
+            {"type": "postback", "title": button["title"][:20], "payload": button["payload"]}
+            for button in buttons
+        ]
         secret = await connector_service.get_credential_secret(session, instance=instance)
         if secret is None:
             raise RuntimeError(f"no credential stored for connector instance {instance.id}")
@@ -726,55 +738,47 @@ class InstagramAdapter(base.ConnectorAdapter):
         if not instagram_account_id:
             raise RuntimeError(f"connector instance {instance.id} has no instagram_account_id on record")
 
-        # TODO(meta-graph-api): POST /{instagram_account_id}/messages
-        #   Authorization: Bearer {access_token}
-        #   {"recipient": {"id": "{recipient_id}"}, "message": {"attachment":
-        #     {"type": "template", "payload": {"template_type": "button",
-        #     "text": "{text}", "buttons": [{"type": "postback", "title": ...,
-        #     "payload": ...}, ...]}}}}
+        delivered = 0
         try:
             async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
-                response = await client.post(
-                    f"/{instagram_account_id}/messages",
-                    headers={"Authorization": f"Bearer {secret['access_token']}"},
-                    json={
-                        "recipient": {"id": recipient_id},
-                        "message": {
-                            "attachment": {
-                                "type": "template",
-                                "payload": {
-                                    "template_type": "button",
-                                    "text": text,
-                                    "buttons": [
-                                        {"type": "postback", "title": b["title"], "payload": b["payload"]}
-                                        for b in buttons
-                                    ],
-                                },
-                            }
+                for offset in range(0, len(normalized), 3):
+                    response = await client.post(
+                        f"/{instagram_account_id}/messages",
+                        headers={"Authorization": f"Bearer {secret['access_token']}"},
+                        json={
+                            "recipient": {"id": recipient_id},
+                            "message": {
+                                "attachment": {
+                                    "type": "template",
+                                    "payload": {
+                                        "template_type": "button",
+                                        "text": text if offset == 0 else "More options:",
+                                        "buttons": normalized[offset : offset + 3],
+                                    },
+                                }
+                            },
                         },
-                    },
-                )
-                response.raise_for_status()
+                    )
+                    response.raise_for_status()
+                    delivered += 1
         except _NETWORK_UNREACHABLE_ERRORS as exc:
-            logger.warning(
-                "[instagram] could not reach %s (%s) - stub mode: skipping this button menu so "
-                "the workflow action stays testable offline (instance=%s, recipient_id=%s).",
-                settings.INSTAGRAM_GRAPH_API_BASE_URL,
-                exc,
-                instance.id,
-                recipient_id,
-            )
+            if delivered:
+                raise base.ConnectorActionNotRetryable(
+                    "Instagram button menu was partially delivered; not retrying earlier messages"
+                ) from exc
+            raise
         except httpx.HTTPStatusError as exc:
-            # A real Meta rejection (bad token, closed 24h messaging window,
-            # rate limit, ...) must not be swallowed like the network-
-            # unreachable case above - re-raise with Meta's own error
-            # message so the caller gets a diagnosable failure instead of a
-            # raw exception, same convention as `set_ice_breakers`.
+            # Retrying the whole node after a later message fails would
+            # duplicate all the options already delivered to the recipient.
             detail = exc.response.text
             try:
                 detail = exc.response.json().get("error", {}).get("message", detail)
             except ValueError:
                 pass
+            if delivered:
+                raise base.ConnectorActionNotRetryable(
+                    f"Instagram button menu was partially delivered: {detail}"
+                ) from exc
             raise ValueError(f"Meta rejected the button template send: {detail}") from exc
 
     async def send_quick_replies(
@@ -788,10 +792,7 @@ class InstagramAdapter(base.ConnectorAdapter):
     ) -> None:
         """Send a Quick Replies message: a text prompt with up to 13
         tappable options (Meta's real cap - the Button Template's 3-button
-        limit above is a *different*, stricter message type) - use this
-        instead of `send_button_template` whenever a workflow may have more
-        than 3 genuinely distinct options to offer in one message (e.g.
-        `instagram.ask_calendar_slot`'s available time slots). Each reply
+        limit above is per message; that sender batches longer lists). Each reply
         is `{"title": ..., "payload": ...}`; a tap arrives through the
         Messaging webhook as an ordinary `postback` event, identical to a
         button-template tap, so existing postback-routing chains need no

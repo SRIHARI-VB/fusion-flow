@@ -28,17 +28,9 @@ rather than failing the run for anything that isn't a well-formed
 `module:id` pair - so it's always safe to wire as a postback chain's final
 fallback, even one this node never produced.
 
-Meta hard-caps a single button template at 3 buttons (`send_button_template`'s
-own docstring in `modules/connectors/instagram/adapter.py`) and a button
-title at 20 characters (the same limit `_whatsapp_common.py::ButtonEntry`
-already documents for WhatsApp's own quick-reply buttons - Meta enforces
-the same title cap across both button-template surfaces). Showing more
-than 3 options is a known, already-solved *graph-authoring* pattern in
-this codebase's live Faheem workflow: chain multiple `instagram.ask_choice`
-instances back-to-back ("page 1" / "page 2"), each with its own `limit`/
-`offset` into the same module+filters - not something a single node
-instance does internally. `offset` exists on this node's config for
-exactly that chaining.
+The adapter splits the resolved options into messages with at most three
+buttons each. `limit` and `offset` select the list window, independently
+of Meta's per-message cap; existing explicitly paged workflows still work.
 
 The actual point of this node beyond being an Instagram port of
 `whatsapp.ask_choice`: a Services/Products option whose id has an active
@@ -58,7 +50,7 @@ from pydantic import BaseModel, Field
 
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.base import registry as connector_registry
-from fusionflow.modules.workflows.engine.module_registry import interpolate_dict_values, resolve_adapter
+from fusionflow.modules.workflows.engine.module_registry import MAX_LIST_LIMIT, interpolate_dict_values, resolve_adapter
 from fusionflow.modules.workflows.engine.registry import (
     ExecutionContext,
     Failure,
@@ -69,11 +61,6 @@ from fusionflow.modules.workflows.engine.registry import (
 )
 from fusionflow.modules.workflows.engine.templating import interpolate
 
-# Meta's own button-template limits (see `send_button_template`'s docstring
-# in `modules/connectors/instagram/adapter.py`, and `_whatsapp_common.py`'s
-# `ButtonEntry.title`'s identical 20-char cap for the sibling WhatsApp
-# surface).
-_MAX_BUTTONS = 3
 _MAX_TITLE_LENGTH = 20
 _DISCOUNT_SUFFIX = " \U0001f381"  # " 🎁"
 
@@ -84,13 +71,11 @@ class ModuleSource(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     label_field: str = Field(default="name")
     value_field: str = Field(default="id")
-    limit: int = Field(default=3, ge=1, le=_MAX_BUTTONS, description="Meta's own 3-button-per-message cap.")
+    limit: int = Field(default=3, ge=1, le=MAX_LIST_LIMIT, description="Options to show, automatically split into messages of three.")
     offset: int = Field(
         default=0,
         ge=0,
-        description="Skip this many matching rows before taking `limit` - chain two instances of this "
-        "node (offset=0/limit=3, then offset=3/limit=3, ...) to page through more than 3 options, "
-        "matching this codebase's existing hardcoded 'page 1'/'page 2' treatment-picker pattern.",
+        description="Skip this many matching rows before taking `limit`.",
     )
 
 
@@ -183,7 +168,7 @@ class AskChoiceExecutor(NodeExecutor):
     icon = "list-checks"
     label = "Ask Customer to Choose (Instagram)"
     description = (
-        "Sends a text prompt with up to 3 tappable buttons pulled live from a module (e.g. Services), "
+        "Sends options pulled live from a module (e.g. Services) as button messages in groups of three, "
         "annotating any option with an active discount. Does not wait for a reply - a tap starts a "
         "new run, matched downstream by a condition node on the postback payload."
     )

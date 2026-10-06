@@ -11,9 +11,9 @@ Cloudflare R2 are all `auth_mode="api_key"` and never touch it.
 Stub-on-network-unreachable convention (matches `whatsapp/adapter.py`,
 `razorpay/adapter.py`, `cloudflare_r2/adapter.py` exactly): a real rejection
 from Google (bad code, bad refresh token, revoked grant) raises `ValueError`
-and must surface as a clean error; only "could not reach Google at all"
-(this sandbox has no network) falls back to a fabricated-but-clearly-logged
-stub token, so the connect/refresh lifecycle stays testable offline.
+and must surface as a clean error. Initial development connections can use
+stubs when offline; refreshing a real credential always propagates network
+errors so a temporary outage never overwrites it with a fabricated token.
 
 Credential shape stored by every Google adapter via
 `connector_service.upsert_credential` (a small JSON dict, Fernet-encrypted -
@@ -39,8 +39,9 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.connectors import service as connector_service
+from fusionflow.modules.connectors.base import ConnectorReconnectRequired
 from fusionflow.modules.connectors.config import get_connector_settings
-from fusionflow.modules.connectors.models import ConnectorInstance
+from fusionflow.modules.connectors.models import ConnectorInstance, ConnectorState, HealthStatus
 
 logger = logging.getLogger(__name__)
 settings = get_connector_settings()
@@ -53,6 +54,15 @@ _NETWORK_UNREACHABLE_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.N
 # expires_in is reported in seconds by Google; refresh this many seconds
 # early so a token that's about to expire mid-call still gets renewed.
 _EXPIRY_SKEW_SECONDS = 60
+
+_RECONNECT_MESSAGE = (
+    "Google authorization has expired or been revoked. Reconnect this Google connector in Integrations."
+)
+
+
+class GoogleReconnectRequired(ConnectorReconnectRequired):
+    def __init__(self) -> None:
+        super().__init__(_RECONNECT_MESSAGE)
 
 
 @dataclass
@@ -185,16 +195,21 @@ async def refresh_access_token(*, refresh_token: str) -> GoogleTokenResult:
                 },
             )
         if response.status_code in (400, 401):
-            raise ValueError(f"Google rejected this refresh token - reconnect required: {response.text}")
+            try:
+                error = response.json().get("error")
+            except ValueError:
+                error = None
+            if error == "invalid_grant":
+                raise GoogleReconnectRequired()
+            # A client configuration error is different from a revoked grant.
+            raise ValueError(f"Google token refresh failed (HTTP {response.status_code}, {error or 'unknown error'})")
         response.raise_for_status()
         return _token_result_from_response(response.json(), fallback_refresh_token=refresh_token)
     except _NETWORK_UNREACHABLE_ERRORS as exc:
-        logger.warning(
-            "[google-oauth] could not reach %s (%s) - stub mode: assuming the refresh would have "
-            "succeeded so the lifecycle stays testable offline.",
-            settings.GOOGLE_OAUTH_TOKEN_URL, exc,
-        )
-        return _stub_tokens(refresh_token=refresh_token)
+        # Never replace a real stored credential with fabricated tokens on a
+        # transient outage. Let the workflow's normal retry policy recover.
+        logger.warning("[google-oauth] token refresh unavailable: %s", type(exc).__name__)
+        raise
 
 
 async def revoke_token(*, token: str) -> None:
@@ -261,13 +276,12 @@ async def get_valid_access_token(session: AsyncSession, *, instance: ConnectorIn
 
     Reads the stored credential, transparently refreshes (and re-persists)
     it if within `_EXPIRY_SKEW_SECONDS` of expiring, and returns a ready-
-    to-use access token. Raises `RuntimeError` if no credential is stored
-    at all (the instance was never connected) and `ValueError` if Google
-    reports the stored refresh token itself as invalid (reconnect needed) -
-    callers let both propagate; `connectors.service` turns them into a
-    clean instance-state transition the same way it already does for every
-    other adapter-raised exception.
+    to-use access token. A revoked grant marks the connector as requiring
+    reconnection in the caller's transaction, including workflow calls that
+    bypass the connector lifecycle service. OAuth reconnection clears it.
     """
+    if instance.state == ConnectorState.ACTION_REQUIRED and instance.last_error_message == _RECONNECT_MESSAGE:
+        raise GoogleReconnectRequired()
     secret = await connector_service.get_credential_secret(session, instance=instance)
     if secret is None:
         raise RuntimeError(f"no credential stored for connector instance {instance.id}")
@@ -275,7 +289,16 @@ async def get_valid_access_token(session: AsyncSession, *, instance: ConnectorIn
     if float(secret.get("expires_at", 0)) - _EXPIRY_SKEW_SECONDS > time.time():
         return str(secret["access_token"])
 
-    result = await refresh_access_token(refresh_token=secret["refresh_token"])
+    try:
+        if not secret.get("refresh_token"):
+            raise GoogleReconnectRequired()
+        result = await refresh_access_token(refresh_token=secret["refresh_token"])
+    except GoogleReconnectRequired:
+        instance.state = ConnectorState.ACTION_REQUIRED
+        instance.health_status = HealthStatus.DOWN
+        instance.last_error_message = _RECONNECT_MESSAGE
+        await session.flush()
+        raise
     await connector_service.upsert_credential(
         session,
         instance=instance,

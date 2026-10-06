@@ -23,6 +23,14 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
+
+class ConnectorActionNotRetryable(ValueError):
+    """Repeating this action cannot safely recover from the failure."""
+
+
+class ConnectorReconnectRequired(ConnectorActionNotRetryable):
+    """Authorization cannot recover by retrying; the owner must reconnect."""
+
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids import cycles at runtime
     from sqlalchemy.ext.asyncio import AsyncSession
 

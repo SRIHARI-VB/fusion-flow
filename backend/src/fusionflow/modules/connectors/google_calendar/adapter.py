@@ -301,6 +301,7 @@ class GoogleCalendarAdapter(base.ConnectorAdapter):
         time_min: str | None = None,
         time_max: str | None = None,
         max_results: int = 10,
+        require_live: bool = False,
     ) -> list[dict[str, Any]]:
         """List upcoming events on the tenant's primary calendar.
 
@@ -309,6 +310,9 @@ class GoogleCalendarAdapter(base.ConnectorAdapter):
         is unreachable - see module docstring.
         """
         access_token = await google_oauth.get_valid_access_token(session, instance=instance)
+
+        if require_live and access_token.startswith("stub-access-token-"):
+            raise RuntimeError("Live calendar availability requires a connected Google account")
 
         params: dict[str, Any] = {"maxResults": max_results, "singleEvents": "true", "orderBy": "startTime"}
         if time_min:
@@ -326,6 +330,9 @@ class GoogleCalendarAdapter(base.ConnectorAdapter):
                 response.raise_for_status()
                 return response.json().get("items", [])
         except _NETWORK_UNREACHABLE_ERRORS as exc:
+            if require_live:
+                # An unavailable calendar is not an empty calendar.
+                raise
             logger.warning(
                 "[google_calendar] could not reach %s (%s) - stub mode: returning an empty event list "
                 "so the workflow action stays testable offline (instance=%s).",
@@ -412,6 +419,7 @@ class GoogleCalendarAdapter(base.ConnectorAdapter):
                 time_min=params.get("time_min"),
                 time_max=params.get("time_max"),
                 max_results=params.get("max_results", 10),
+                require_live=params.get("require_live", False),
             )
             return {"items": items}
         if action == "update_event":

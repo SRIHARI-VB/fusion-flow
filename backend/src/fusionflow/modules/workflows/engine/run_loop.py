@@ -35,6 +35,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fusionflow.modules.connectors.base import ConnectorActionNotRetryable
 from fusionflow.modules.workflows.engine import entitlement
 from fusionflow.modules.workflows.engine.conditions import evaluate_condition
 from fusionflow.modules.workflows.engine.graph import GraphEdge, GraphNode, WorkflowGraph
@@ -479,6 +480,11 @@ async def _execute_single_node(
         step.attempt = attempt
         try:
             result = await executor.execute(context)
+            last_exc = None
+            break
+        except ConnectorActionNotRetryable as exc:
+            # Revoked grants and partially delivered menus must not replay.
+            result = Failure(str(exc))
             last_exc = None
             break
         except (ChildExecutionError, LoopGuardExceeded) as exc:
