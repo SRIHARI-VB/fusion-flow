@@ -850,7 +850,7 @@ class InstagramAdapter(base.ConnectorAdapter):
         endpoint, never from `perform_action`/a workflow graph. Each
         question is `{"question": ..., "payload": ...}`; tapping one
         arrives as an ordinary `postback` event, same as a button-template
-        tap.
+        tap. An empty list removes the account's ice breakers.
         """
         secret = await connector_service.get_credential_secret(session, instance=instance)
         if secret is None:
@@ -883,39 +883,28 @@ class InstagramAdapter(base.ConnectorAdapter):
         # doesn't match the API's own validation.
         try:
             async with httpx.AsyncClient(base_url=settings.INSTAGRAM_GRAPH_API_BASE_URL, timeout=15.0) as client:
-                response = await client.post(
-                    f"/{instagram_account_id}/messenger_profile",
-                    headers={"Authorization": f"Bearer {secret['access_token']}"},
-                    json={
+                path = f"/{instagram_account_id}/messenger_profile"
+                headers = {"Authorization": f"Bearer {secret['access_token']}"}
+                if questions:
+                    response = await client.post(path, headers=headers, json={
                         "platform": "instagram",
-                        "ice_breakers": [
-                            {
-                                "call_to_actions": [
-                                    {"question": q["question"], "payload": q["payload"]} for q in questions
-                                ],
-                                "locale": "default",
-                            }
-                        ],
-                    },
-                )
+                        "ice_breakers": [{
+                            "call_to_actions": [
+                                {"question": q["question"], "payload": q["payload"]} for q in questions
+                            ],
+                            "locale": "default",
+                        }],
+                    })
+                else:
+                    # Meta requires DELETE to remove this profile field; an
+                    # empty call_to_actions POST is not a removal operation.
+                    response = await client.delete(path, headers=headers,
+                                                   params={"fields": json.dumps(["ice_breakers"])})
                 response.raise_for_status()
         except _NETWORK_UNREACHABLE_ERRORS as exc:
-            logger.warning(
-                "[instagram] could not reach %s (%s) - stub mode: skipping ice breaker save so "
-                "the settings screen stays testable offline (instance=%s).",
-                settings.INSTAGRAM_GRAPH_API_BASE_URL,
-                exc,
-                instance.id,
-            )
+            raise ValueError("Could not reach Instagram; the ice breakers update was not confirmed.") from exc
         except httpx.HTTPStatusError as exc:
-            # Unlike `get_ice_breakers`/`list_media` (read paths, where
-            # falling back to an empty result on any failure is a safe,
-            # legal state), this is a write called synchronously from
-            # `instagram/router.py::set_ice_breakers` - swallowing a real
-            # Meta rejection here would tell the settings screen "saved!"
-            # when nothing was actually saved. Re-raised as `ValueError`
-            # with Meta's own error message so the router can turn it into
-            # a real 4xx instead of an unhandled 500 with no detail at all.
+            # Never tell the settings screen "saved" when Meta rejected it.
             detail = exc.response.text
             try:
                 detail = exc.response.json().get("error", {}).get("message", detail)
@@ -924,10 +913,8 @@ class InstagramAdapter(base.ConnectorAdapter):
             raise ValueError(f"Meta rejected the ice breakers update: {detail}") from exc
 
     async def get_ice_breakers(self, *, instance: ConnectorInstance, session: AsyncSession) -> list[dict[str, str]]:
-        """Fetch the currently configured ice breakers, to pre-fill the
-        settings screen. Returns `[]` on any stub/unreachable/not-yet-set
-        condition rather than raising - an empty welcome menu is a normal,
-        legal state, not an error."""
+        """Read the default-locale questions. Failures must not look like
+        an empty saved menu in the settings screen."""
         secret = await connector_service.get_credential_secret(session, instance=instance)
         if secret is None:
             return []
@@ -951,19 +938,23 @@ class InstagramAdapter(base.ConnectorAdapter):
                 response.raise_for_status()
                 data = response.json()
         except (*_NETWORK_UNREACHABLE_ERRORS, httpx.HTTPStatusError, ValueError) as exc:
-            logger.warning(
-                "[instagram] could not fetch ice breakers (%s) - returning empty (instance=%s).",
-                exc,
-                instance.id,
-            )
-            return []
+            raise ValueError("Could not load Instagram ice breakers. Please try again.") from exc
 
-        entries = data.get("data") or data.get("ice_breakers") or []
+        entries = data.get("data", data.get("ice_breakers", []))
+        # The live profile response nests the locale entries under
+        # data[].ice_breakers; Meta's examples also show them directly.
+        if entries and "ice_breakers" in entries[0]:
+            entries = entries[0]["ice_breakers"] or []
         if not entries:
             return []
+        if "question" in entries[0]:
+            actions = entries
+        else:
+            default = next((entry for entry in entries if entry.get("locale") == "default"), entries[0])
+            actions = default.get("call_to_actions") or []
         return [
             {"question": cta.get("question", ""), "payload": cta.get("payload", "")}
-            for cta in (entries[0].get("call_to_actions") or [])
+            for cta in actions
         ]
 
     async def _resolve_mention_details(

@@ -44,7 +44,10 @@ async def get_ice_breakers(
 ) -> list[IceBreakerQuestion]:
     instance = await _get_instance_or_404(session, context.tenant_id, instance_id)
     adapter = connector_registry.get("instagram")
-    questions = await adapter.get_ice_breakers(instance=instance, session=session)
+    try:
+        questions = await adapter.get_ice_breakers(instance=instance, session=session)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return [IceBreakerQuestion(**q) for q in questions]
 
 

@@ -28,7 +28,7 @@ export function InstagramIceBreakersSettingsPage() {
     (instance) => instance.connector_type_key === "instagram" && instance.state === "connected",
   );
 
-  const { data: iceBreakers, isLoading: iceBreakersLoading } = useQuery({
+  const { data: iceBreakers, isLoading: iceBreakersLoading, isError: iceBreakersError, refetch } = useQuery({
     queryKey: ["instagram-ice-breakers", instagramInstance?.id],
     queryFn: () => fetchIceBreakers(instagramInstance!.id),
     enabled: !!instagramInstance,
@@ -114,6 +114,11 @@ export function InstagramIceBreakersSettingsPage() {
         <CardContent className="flex flex-col gap-4 pt-6">
           {iceBreakersLoading ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : iceBreakersError ? (
+            <>
+              <p className="text-sm text-destructive">Could not load the welcome menu. Please try again.</p>
+              <Button variant="outline" onClick={() => void refetch()}>Retry</Button>
+            </>
           ) : (
             <>
               {questions.length === 0 && (
