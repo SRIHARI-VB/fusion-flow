@@ -62,6 +62,7 @@ from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.base import registry as connector_registry
 from fusionflow.modules.connectors.models import ConnectorState
 from fusionflow.modules.customers import service as customers_service
+from fusionflow.modules.workflows.engine import entitlement
 from fusionflow.modules.tenancy.models import Business
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -83,6 +84,9 @@ def _yesterday_date_str() -> str:
     return (datetime.now(_TZ) - timedelta(days=1)).date().isoformat()
 
 
+_REQUIRED_MODULES = ("instagram", "business_objects")
+
+
 async def poll_once(
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
 ) -> int:
@@ -99,6 +103,9 @@ async def poll_once(
 
 
 async def _process_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    if not await entitlement.tenant_has_access(session, tenant_id=tenant_id, keys=_REQUIRED_MODULES):
+        logger.info("%s: skipping tenant %s - required module access revoked", __name__, tenant_id)
+        return 0
     object_type = await bo_service.get_object_type_by_key(session, tenant_id=tenant_id, key=_APPOINTMENT_TYPE_KEY)
     if object_type is None:
         return 0

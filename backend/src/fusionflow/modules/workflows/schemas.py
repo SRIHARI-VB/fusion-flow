@@ -49,6 +49,12 @@ class WorkflowUpdateRequest(BaseModel):
     graph: dict[str, Any] | None = None
 
 
+class BlockedModuleOut(BaseModel):
+    key: str
+    display_name: str
+    reason: str  # 'denied' | 'not_requested' | 'pending'
+
+
 class WorkflowOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +66,8 @@ class WorkflowOut(BaseModel):
     current_published_version_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    # Computed at read time (router) from the published graph; never stored.
+    blocked_modules: list[BlockedModuleOut] = Field(default_factory=list)
 
 
 class WorkflowVersionOut(BaseModel):

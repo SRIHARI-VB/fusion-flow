@@ -71,7 +71,40 @@ async def validate_for_publish(
     _check_unsafe_loops(graph, result)
     _check_containment_validity(graph, result)
     _check_no_suspend_in_container(graph, result)
+    await _check_module_entitlement(session, tenant_id, graph, result)
     return result
+
+
+# --- Rule 8: module/connector entitlement ----------------------------------
+
+
+async def _check_module_entitlement(
+    session: AsyncSession, tenant_id: uuid.UUID, graph: WorkflowGraph, result: ValidationResult
+) -> None:
+    """Nodes that need a module/connector the tenant doesn't currently have
+    (never granted, pending, denied or revoked by an administrator)."""
+    from fusionflow.modules.workflows.engine import entitlement
+
+    cache: dict = {}
+    for node in graph.nodes:
+        for key in sorted(entitlement.node_required_keys(node)):
+            status, display_name = await entitlement.key_access(
+                session, tenant_id=tenant_id, key=key, cache=cache
+            )
+            if status == "granted":
+                continue
+            result.issues.append(
+                ValidationIssue(
+                    rule="module_not_entitled",
+                    severity="error",
+                    node_id=node.id,
+                    message=(
+                        f"This workflow uses the {display_name} module, which is not available "
+                        f"for this business (status: {status.replace('_', ' ')}). Remove the step "
+                        "or ask an administrator for access."
+                    ),
+                )
+            )
 
 
 # --- Rule 1: missing required fields --------------------------------------

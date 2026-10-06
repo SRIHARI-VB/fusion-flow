@@ -172,10 +172,33 @@ async def provision_component(component_id: str, context: TenantContextDep, sess
     await commit_and_keep_tenant_context(session)
 
 
+async def _workflow_out(
+    session, tenant_id: uuid.UUID, workflow: Workflow, cache: dict | None = None
+) -> schemas.WorkflowOut:
+    """`WorkflowOut` plus `blocked_modules`: modules/connectors the published
+    graph needs that the tenant doesn't currently have (computed, no DB column)."""
+    from fusionflow.modules.workflows.engine import entitlement
+    from fusionflow.modules.workflows.models import WorkflowVersion
+
+    out = schemas.WorkflowOut.model_validate(workflow)
+    if workflow.current_published_version_id is None:
+        return out
+    version = await session.get(WorkflowVersion, workflow.current_published_version_id)
+    if version is None:
+        return out
+    keys = entitlement.graph_required_keys_from_json(version.compiled_graph or version.graph)
+    blocked = await entitlement.find_blocked(session, tenant_id=tenant_id, keys=keys, cache=cache)
+    out.blocked_modules = [
+        schemas.BlockedModuleOut(key=k, display_name=name, reason=status) for k, name, status in blocked
+    ]
+    return out
+
+
 @router.get("", response_model=list[schemas.WorkflowOut])
 async def list_workflows(context: TenantContextDep, session: SessionDep) -> list[schemas.WorkflowOut]:
     workflows = await service.list_workflows(session, tenant_id=context.tenant_id)
-    return [schemas.WorkflowOut.model_validate(w) for w in workflows]
+    cache: dict = {}
+    return [await _workflow_out(session, context.tenant_id, w, cache) for w in workflows]
 
 
 @router.post("", response_model=schemas.WorkflowOut, status_code=status.HTTP_201_CREATED)
@@ -215,7 +238,7 @@ async def get_workflow(
     workflow_id: uuid.UUID, context: TenantContextDep, session: SessionDep
 ) -> schemas.WorkflowOut:
     workflow = await _get_workflow_or_404(session, context.tenant_id, workflow_id)
-    return schemas.WorkflowOut.model_validate(workflow)
+    return await _workflow_out(session, context.tenant_id, workflow)
 
 
 @router.patch("/{workflow_id}", response_model=schemas.WorkflowVersionOut)

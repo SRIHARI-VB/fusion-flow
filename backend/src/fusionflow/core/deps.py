@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Awaitable
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fusionflow.core.security import decode_access_token, decode_step_up_token
 from fusionflow.db.session import get_db_session, set_tenant_context
 from fusionflow.modules.auth.models import User
-from fusionflow.modules.tenancy.models import MembershipRole
+from fusionflow.modules.tenancy.models import Membership, MembershipRole
 
 # auto_error=False so a missing header produces our own 401 shape rather
 # than FastAPI's default, and so optional-auth routes stay possible later.
@@ -74,6 +74,48 @@ async def get_token_payload(
 TokenPayloadDep = Annotated[dict[str, Any], Depends(get_token_payload)]
 
 
+# PRODUCT DECISION: the Viewer role is strictly read-only. Non-safe HTTP
+# methods are rejected for viewers everywhere under /api/v1 except the
+# session/identity plumbing below (a viewer must still be able to sign out,
+# refresh, re-auth, and switch business).
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_VIEWER_WRITE_EXEMPT_SUFFIXES = ("/switch",)
+_VIEWER_WRITE_EXEMPT_SEGMENTS = ("/auth/",)
+VIEWER_READ_ONLY_DETAIL = "Viewers have read-only access."
+
+
+def _viewer_write_exempt(path: str) -> bool:
+    return any(seg in path for seg in _VIEWER_WRITE_EXEMPT_SEGMENTS) or path.endswith(
+        _VIEWER_WRITE_EXEMPT_SUFFIXES
+    )
+
+
+def _reject_viewer_write(request: Request) -> None:
+    if request.method.upper() in _SAFE_METHODS or _viewer_write_exempt(request.url.path):
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=VIEWER_READ_ONLY_DETAIL)
+
+
+async def enforce_viewer_read_only(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> None:
+    """Applied once at the `/api/v1` api_router level. Claim-based and
+    DB-free: for a tenant-scoped token whose role claim is `viewer`, rejects
+    writes with 403. Missing/invalid tokens pass through untouched (the
+    route's own auth dependency produces the proper 401, and public routes
+    such as login/webhooks have no token). `get_tenant_context` repeats the
+    check against the fresh DB role, closing the stale-claim gap."""
+    if request.method.upper() in _SAFE_METHODS or credentials is None or not credentials.credentials:
+        return
+    try:
+        payload = decode_access_token(credentials.credentials)
+    except jwt.PyJWTError:
+        return
+    if payload.get("tenant_id") and payload.get("role") == MembershipRole.VIEWER.value:
+        _reject_viewer_write(request)
+
+
 async def get_current_user(payload: TokenPayloadDep, session: SessionDep) -> User:
     """Load the `users` row named by the token's `sub` claim.
 
@@ -98,6 +140,7 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 async def get_tenant_context(
+    request: Request,
     payload: TokenPayloadDep,
     user: CurrentUserDep,
     session: SessionDep,
@@ -128,13 +171,29 @@ async def get_tenant_context(
 
     raw_role = payload.get("role")
     try:
-        role = MembershipRole(raw_role)
+        MembershipRole(raw_role)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Malformed role claim"
         ) from exc
 
     await set_tenant_context(session, tenant_id)
+    # Re-verify membership and trust the DB role over the (possibly stale)
+    # JWT claim. One PK-indexed-ish query; impersonation tokens carry the
+    # target user's real membership so they pass unchanged.
+    role = (
+        await session.execute(
+            select(Membership.role).where(
+                Membership.user_id == user.id, Membership.business_id == tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="You are no longer a member of this business"
+        )
+    if role == MembershipRole.VIEWER:
+        _reject_viewer_write(request)
     return TenantContext(tenant_id=tenant_id, role=role, user=user)
 
 

@@ -22,6 +22,8 @@ import {
   TableRow,
   type BadgeVariant,
 } from "@fusion-flow/ui";
+import { ModuleAccessNotice } from "../../components/auth/ModuleAccessNotice";
+import { useModuleAccess } from "../../lib/useModuleAccess";
 import { listCustomers } from "../customers/api";
 import { createTicket, listTickets } from "./api";
 import type { TicketStatus } from "./types";
@@ -46,7 +48,15 @@ export function TicketsListPage() {
   const [formOpen, setFormOpen] = useState(false);
 
   const { data: tickets = [], isLoading } = useQuery({ queryKey: ["tickets"], queryFn: listTickets });
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: listCustomers });
+  // customer_id is optional on tickets, so without Customers access we just
+  // skip the picker and let tickets be created unassigned.
+  const { isGranted } = useModuleAccess();
+  const customersAvailable = isGranted("customers");
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers"],
+    queryFn: listCustomers,
+    enabled: customersAvailable,
+  });
 
   const {
     register,
@@ -107,18 +117,25 @@ export function TicketsListPage() {
                 <label htmlFor="customer_id" className="text-sm font-medium">
                   Customer
                 </label>
-                <select
-                  id="customer_id"
-                  className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
-                  {...register("customer_id")}
-                >
-                  <option value="">Unassigned</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </option>
-                  ))}
-                </select>
+                {customersAvailable ? (
+                  <select
+                    id="customer_id"
+                    className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
+                    {...register("customer_id")}
+                  >
+                    <option value="">Unassigned</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <ModuleAccessNotice title="Customer selection unavailable">
+                    The Customers module isn't enabled for your business or role. The ticket will be
+                    created without a customer.
+                  </ModuleAccessNotice>
+                )}
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="priority" className="text-sm font-medium">

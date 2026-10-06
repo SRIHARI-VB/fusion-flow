@@ -96,7 +96,12 @@ async def _write_audit_log(request: Request, status_code: int) -> None:
         action=f"{request.method} {request.url.path}",
         target_type=target_type,
         target_id=target_id,
-        extra_metadata={"status_code": status_code, "query": dict(request.query_params)},
+        extra_metadata={
+            "status_code": status_code,
+            "query": dict(request.query_params),
+            # Handlers may stash details (e.g. override reason) here.
+            **(getattr(request.state, "audit_extra", None) or {}),
+        },
         ip_address=request.client.host if request.client else None,
     )
     try:

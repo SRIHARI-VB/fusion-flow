@@ -48,6 +48,9 @@ class ConnectorTypeOut(BaseModel):
     # that doesn't need a manual webhook configuration step.
     webhook_callback_url: str | None = None
     webhook_verify_token: str | None = None
+    # Advisory module-dependency metadata (see `module_dependencies.py`).
+    depends_on: list[str] = Field(default_factory=list)
+    dependents: list[str] = Field(default_factory=list)
 
 
 class ConnectorInstanceOut(BaseModel):
@@ -133,6 +136,8 @@ class ModuleRoleAccessOut(BaseModel):
     display_name: str
     member_restricted: bool
     viewer_restricted: bool
+    depends_on: list[str] = Field(default_factory=list)
+    dependents: list[str] = Field(default_factory=list)
 
 
 class SetRoleRestrictionRequest(BaseModel):

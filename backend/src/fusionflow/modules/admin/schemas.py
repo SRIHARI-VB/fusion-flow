@@ -360,6 +360,34 @@ class TenantModuleAccessOut(BaseModel):
     access_status: str
     has_override: bool
     override_granted: bool | None = None
+    role_restrictions: list[str] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    dependents: list[str] = Field(default_factory=list)
+
+
+class RevokeImpactDependentOut(BaseModel):
+    key: str
+    display_name: str
+    access_status: str
+
+
+class RevokeImpactWorkflowOut(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class RevokeImpactRoleOut(BaseModel):
+    role: str
+
+
+class ConnectorRevokeImpactOut(BaseModel):
+    type_key: str
+    display_name: str
+    dependents: list[RevokeImpactDependentOut]
+    published_workflows: list[RevokeImpactWorkflowOut]
+    connected_instances: int
+    role_restrictions: list[RevokeImpactRoleOut]
+    active_users_count: int
 
 
 class ConnectorAccessOverrideRequest(BaseModel):

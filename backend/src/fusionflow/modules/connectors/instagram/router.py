@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.modules.connectors import service as connector_service
 from fusionflow.modules.connectors.base import registry as connector_registry
 from fusionflow.modules.connectors.instagram.schemas import (
@@ -25,7 +26,7 @@ from fusionflow.modules.connectors.instagram.schemas import (
     InstagramMediaPage,
 )
 
-router = APIRouter(prefix="/connectors/{instance_id}/instagram", tags=["instagram"])
+router = APIRouter(prefix="/connectors/{instance_id}/instagram", tags=["instagram"], dependencies=[Depends(require_module_access("instagram"))])
 
 _NOT_FOUND = HTTPException(status_code=404, detail="Instagram connector instance not found")
 

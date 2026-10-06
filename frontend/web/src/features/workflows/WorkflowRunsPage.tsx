@@ -143,6 +143,13 @@ export function WorkflowRunsPage() {
           <CardContent>
             {!selectedRunId && <p className="text-sm text-muted-foreground">Select a run to see its step trace.</p>}
             {selectedRunId && !runDetail && <p className="text-sm text-muted-foreground">Loading steps...</p>}
+            {runDetail?.status === "failed" && (
+              <p className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                Run failed:{" "}
+                {runDetail.steps.find((step) => step.status === "failed" && step.error)?.error ??
+                  "no error message was recorded."}
+              </p>
+            )}
             {runDetail && <RunStepTrace steps={runDetail.steps} nodeParentMap={nodeParentMap} />}
           </CardContent>
         </Card>

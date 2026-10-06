@@ -22,6 +22,8 @@ import {
   TableRow,
   type BadgeVariant,
 } from "@fusion-flow/ui";
+import { ModuleAccessNotice } from "../../components/auth/ModuleAccessNotice";
+import { useModuleAccess } from "../../lib/useModuleAccess";
 import { listCustomers } from "../customers/api";
 import { createOrder, listOrders } from "./api";
 import type { OrderStatus } from "./types";
@@ -47,7 +49,15 @@ export function OrdersListPage() {
   const [formOpen, setFormOpen] = useState(false);
 
   const { data: orders = [], isLoading } = useQuery({ queryKey: ["orders"], queryFn: listOrders });
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: listCustomers });
+  // Orders need a customer; without Customers access the picker can't load,
+  // so creation is disabled (the backend requires customer_id) rather than failing on submit.
+  const { isGranted } = useModuleAccess();
+  const customersAvailable = isGranted("customers");
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers"],
+    queryFn: listCustomers,
+    enabled: customersAvailable,
+  });
 
   const {
     register,
@@ -92,6 +102,12 @@ export function OrdersListPage() {
             <CardDescription>Create an order manually.</CardDescription>
           </CardHeader>
           <CardContent>
+            {!customersAvailable && (
+              <ModuleAccessNotice title="Customer selection unavailable" className="mb-4">
+                The Customers module isn't enabled for your business or role, and every order needs a
+                customer - so new orders can't be created right now. Ask your Owner or Admin for access.
+              </ModuleAccessNotice>
+            )}
             <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleSubmit(onSubmit)} noValidate>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="customer_id" className="text-sm font-medium">
@@ -100,6 +116,7 @@ export function OrdersListPage() {
                 <select
                   id="customer_id"
                   className="h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground"
+                  disabled={!customersAvailable}
                   {...register("customer_id")}
                 >
                   <option value="">Select a customer</option>
@@ -151,7 +168,7 @@ export function OrdersListPage() {
                 {errors.currency && <p className="text-xs text-destructive">{errors.currency.message}</p>}
               </div>
               <div className="flex items-center gap-2 sm:col-span-2">
-                <Button type="submit" disabled={createMutation.isPending}>
+                <Button type="submit" disabled={createMutation.isPending || !customersAvailable}>
                   {createMutation.isPending ? "Creating..." : "Create order"}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>

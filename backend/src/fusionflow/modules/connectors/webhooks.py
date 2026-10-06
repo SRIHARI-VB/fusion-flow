@@ -110,6 +110,23 @@ async def _dispatch(
         logger.warning("[webhooks] resolved instance %s vanished on re-fetch", instance_id)
         return {"received": False}
 
+    # Runtime entitlement: an admin may have revoked this channel connector
+    # for the tenant after the instance was connected. Ack (2xx) so the
+    # provider doesn't retry-storm, but record nothing and trigger nothing.
+    from fusionflow.modules.workflows.engine import entitlement
+
+    access_status, _display = await entitlement.key_access(session, tenant_id=tenant_id, key=type_key)
+    if access_status != "granted":
+        logger.warning(
+            "[webhooks] tenant %s lost access to connector %r (status=%s) - acknowledging webhook "
+            "for instance %s without triggering automations",
+            tenant_id,
+            type_key,
+            access_status,
+            instance_id,
+        )
+        return {"received": True, "processed": False}
+
     events = await adapter_impl.handle_webhook(
         instance=instance, raw_payload=raw_payload, headers=headers, session=session
     )

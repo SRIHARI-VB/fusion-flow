@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.predefined_automations import service as automations_service
 from fusionflow.modules.predefined_automations.registry import registry
@@ -26,7 +27,7 @@ from fusionflow.modules.predefined_automations.schemas import (
 )
 from fusionflow.modules.predefined_automations.service import PredefinedAutomationError
 
-router = APIRouter(prefix="/predefined-automations", tags=["predefined-automations"])
+router = APIRouter(prefix="/predefined-automations", tags=["predefined-automations"], dependencies=[Depends(require_module_access("communication"))])
 
 _NOT_FOUND = HTTPException(status_code=404, detail="Predefined automation not found")
 

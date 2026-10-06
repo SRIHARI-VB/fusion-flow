@@ -59,6 +59,7 @@ import { flattenOutputPaths } from "./jsonSchemaForm";
 import { useGraphHistory } from "./useGraphHistory";
 import { CardNode } from "./nodes/CardNode";
 import { ContainerNode, CONTAINER_MIN_HEIGHT, CONTAINER_MIN_WIDTH } from "./nodes/ContainerNode";
+import { BlockedModulesBadge, describeBlockedModules } from "./components/BlockedModulesBadge";
 import { NodePalette } from "./components/NodePalette";
 import { EdgeConfigDrawer } from "./components/EdgeConfigDrawer";
 import { NodeInspectorPanel } from "./components/NodeInspectorPanel";
@@ -869,6 +870,7 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
               {latestVersion && ` · v${latestVersion.version_number}`}
             </span>
           )}
+          <BlockedModulesBadge blocked={workflow?.blocked_modules} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -941,6 +943,13 @@ function WorkflowEditorInner({ workflowId }: { workflowId: string }) {
           </Button>
         </div>
       </div>
+
+      {workflow?.blocked_modules && workflow.blocked_modules.length > 0 && (
+        <div role="note" className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+          {describeBlockedModules(workflow.blocked_modules)} You can keep editing, but publishing or
+          triggering it will fail until then.
+        </div>
+      )}
 
       {/* Canvas + palette/drawer */}
       <div className="relative flex flex-1 overflow-hidden">

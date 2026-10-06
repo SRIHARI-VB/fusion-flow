@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fusionflow.modules.admin import service as admin_service
@@ -31,6 +31,7 @@ from fusionflow.modules.admin.schemas import (
     BusinessTemplateOut,
     BusinessTemplateUpdateRequest,
     ConnectorAccessOverrideOut,
+    ConnectorRevokeImpactOut,
     ConnectorAccessOverrideRequest,
     ConnectorAccessRequestAdminOut,
     ConnectorAccessRequestReviewOut,
@@ -667,6 +668,19 @@ async def get_tenant_module_access(
     return [TenantModuleAccessOut(**row) for row in rows]
 
 
+@router.get(
+    "/tenants/{business_id}/connectors/{type_key}/revoke-impact", response_model=ConnectorRevokeImpactOut
+)
+async def get_connector_revoke_impact(
+    business_id: uuid.UUID, type_key: str, _admin: PlatformAdminDep, session: SessionDep
+) -> ConnectorRevokeImpactOut:
+    try:
+        data = await admin_service.get_connector_revoke_impact(session, business_id, type_key)
+    except AdminError as exc:
+        raise _http(exc) from exc
+    return ConnectorRevokeImpactOut(**data)
+
+
 @router.put(
     "/tenants/{business_id}/connectors/{type_key}/override", response_model=ConnectorAccessOverrideOut
 )
@@ -674,9 +688,16 @@ async def set_connector_access_override(
     business_id: uuid.UUID,
     type_key: str,
     payload: ConnectorAccessOverrideRequest,
+    request: Request,
     admin: PlatformAdminDep,
     session: SessionDep,
 ) -> ConnectorAccessOverrideOut:
+    # Picked up by AuditLoggingRoute so the audit row records what/why.
+    request.state.audit_extra = {
+        "connector_type_key": type_key,
+        "granted": payload.granted,
+        "reason": payload.reason,
+    }
     try:
         override = await admin_service.set_connector_access_override(
             session,

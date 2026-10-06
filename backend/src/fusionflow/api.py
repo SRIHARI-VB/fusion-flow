@@ -7,7 +7,9 @@ though inbound provider calls are unauthenticated, matching the plan's
 route-grouping section, which lists webhooks under `/api/v1/*`.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from fusionflow.core.deps import enforce_viewer_read_only
 
 from fusionflow.modules.auth.router import router as auth_router
 from fusionflow.modules.broadcast_campaigns.router import router as broadcast_campaigns_router
@@ -42,7 +44,7 @@ from fusionflow.modules.workflows.router import router as workflows_router
 
 API_V1_PREFIX = "/api/v1"
 
-api_router = APIRouter(prefix=API_V1_PREFIX)
+api_router = APIRouter(prefix=API_V1_PREFIX, dependencies=[Depends(enforce_viewer_read_only)])
 api_router.include_router(auth_router)
 api_router.include_router(business_objects_router)
 api_router.include_router(business_templates_router)

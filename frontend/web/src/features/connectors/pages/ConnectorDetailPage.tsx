@@ -1,3 +1,4 @@
+import { useCanManageAccess } from "../../../lib/useModuleAccess";
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Check, CheckCircle2, Copy, RefreshCw, Unplug } from "lucide-react";
@@ -64,6 +65,8 @@ export function ConnectorDetailPage() {
   const { data: instances, isLoading } = useConnectorInstances();
   const { data: connectorTypes } = useConnectorTypes();
   const { data: events, isLoading: eventsLoading } = useConnectorEvents(instanceId);
+  const { canManage } = useCanManageAccess();
+  const manageHint = canManage ? undefined : "Only an Owner or Admin can manage connectors.";
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
@@ -187,12 +190,19 @@ export function ConnectorDetailPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => testMutation.mutate(instance.id)}
-                disabled={testMutation.isPending}
+                disabled={testMutation.isPending || !canManage}
+                title={manageHint}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 {testMutation.isPending ? "Testing…" : "Test connection"}
               </Button>
-              <Button variant="destructive" size="sm" onClick={() => setConfirmingDisconnect(true)}>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!canManage}
+                title={manageHint}
+                onClick={() => setConfirmingDisconnect(true)}
+              >
                 <Unplug className="h-3.5 w-3.5" />
                 Disconnect
               </Button>

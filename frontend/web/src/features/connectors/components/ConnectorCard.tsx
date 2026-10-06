@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Activity, Clock, Lock, RefreshCw, Unplug, Webhook } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@fusion-flow/ui";
+import { useCanManageAccess } from "../../../lib/useModuleAccess";
 import type { ConnectorInstance, ConnectorType } from "../types";
 import { CONNECTOR_LOGO, CONNECTOR_LOGO_COLOR } from "../connector-logos";
 import {
@@ -46,6 +47,9 @@ export function ConnectorCard({
   requestAccessBusy,
 }: ConnectorCardProps) {
   const navigate = useNavigate();
+  // Connect/Disconnect/Test/Request-access are Owner/Admin only at the API (403).
+  const { canManage } = useCanManageAccess();
+  const manageHint = canManage ? undefined : "Only an Owner or Admin can manage connectors.";
   // Real per-provider brand mark when one exists, falling back to a
   // generic category icon shared by every connector in that category
   // (e.g. a future connector added before its logo lands) - see
@@ -87,6 +91,9 @@ export function ConnectorCard({
           <Webhook className="h-4 w-4" />
           <span>Last webhook: {formatRelativeTimestamp(instance?.last_webhook_at)}</span>
         </div>
+        {!canManage && (
+          <p className="text-xs">Read-only for your role - ask an Owner or Admin to connect or change this.</p>
+        )}
         {instance?.last_error_message && (
           <p className="text-xs text-destructive">{instance.last_error_message}</p>
         )}
@@ -99,7 +106,8 @@ export function ConnectorCard({
               variant="outline"
               size="sm"
               onClick={() => onTest?.(instance.id)}
-              disabled={testBusy}
+              disabled={testBusy || !canManage}
+              title={manageHint}
             >
               <RefreshCw className="h-3.5 w-3.5" />
               Test
@@ -107,6 +115,8 @@ export function ConnectorCard({
             <Button
               variant="destructive"
               size="sm"
+              disabled={!canManage}
+              title={manageHint}
               onClick={() => onDisconnect?.(instance.id)}
             >
               <Unplug className="h-3.5 w-3.5" />
@@ -115,7 +125,12 @@ export function ConnectorCard({
           </>
         )}
         {canConnect && (
-          <Button size="sm" onClick={() => navigate(`/connectors/${connectorType.key}/connect`)}>
+          <Button
+            size="sm"
+            disabled={!canManage}
+            title={manageHint}
+            onClick={() => navigate(`/connectors/${connectorType.key}/connect`)}
+          >
             {state ? "Reconnect" : "Connect"}
           </Button>
         )}
@@ -130,7 +145,8 @@ export function ConnectorCard({
             size="sm"
             variant="outline"
             onClick={() => onRequestAccess?.(connectorType.key)}
-            disabled={requestAccessBusy}
+            disabled={requestAccessBusy || !canManage}
+            title={manageHint}
           >
             <Lock className="h-3.5 w-3.5" />
             {connectorType.access_status === "denied" ? "Request access again" : "Request access"}

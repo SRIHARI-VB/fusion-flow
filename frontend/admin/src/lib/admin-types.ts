@@ -36,6 +36,8 @@ export interface TenantDetail {
   created_at: string;
   memberships: TenantMembership[];
   denial_reason?: string | null;
+  /** Null when the tenant has no business template (grandfathered implicit module access). */
+  business_template_id?: string | null;
 }
 
 export interface ConnectorHealthItem {
@@ -62,6 +64,24 @@ export interface TenantModuleAccess {
   access_status: "granted" | "pending" | "denied" | "not_requested";
   has_override: boolean;
   override_granted: boolean | null;
+  override_reason?: string | null;
+  override_set_by?: string | null;
+  /** Roles (member/viewer) restricted from this module for the tenant. */
+  role_restrictions?: string[];
+  /** Keys of modules this one depends on. */
+  depends_on?: string[];
+  /** Keys of modules that depend on this one. */
+  dependents?: string[];
+}
+
+export interface RevokeImpact {
+  type_key: string;
+  display_name: string;
+  dependents: { key: string; display_name: string; access_status: string }[];
+  published_workflows: { id: string; name: string }[];
+  connected_instances: number;
+  role_restrictions: { role: string }[];
+  active_users_count: number;
 }
 
 export interface ConnectorAccessOverride {

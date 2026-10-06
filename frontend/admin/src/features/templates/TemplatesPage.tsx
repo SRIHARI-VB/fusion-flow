@@ -278,6 +278,11 @@ export function TemplatesPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium">Connector bundle</span>
+            <p className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-foreground">
+              Unchecking a module here removes it for every tenant on this template that has no explicit
+              override. Their published workflows, webhooks and pollers for that module stop running
+              (runs fail with a clear reason). Use a per-tenant override to keep access for specific tenants.
+            </p>
             <div className="flex flex-col gap-2 rounded-md border border-border p-2">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">

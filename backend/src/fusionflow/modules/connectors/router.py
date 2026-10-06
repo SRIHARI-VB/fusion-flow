@@ -38,7 +38,9 @@ from fusionflow.modules.connectors.schemas import (
     ModuleRoleAccessOut,
     SetRoleRestrictionRequest,
 )
-from fusionflow.modules.connectors.service import ConnectorError
+from fusionflow.modules.connectors.models import ConnectorCategory, ConnectorType
+from fusionflow.modules.connectors.module_dependencies import MODULE_DEPENDENCIES, dependents_of
+from fusionflow.modules.connectors.service import NON_MODULE_KEYS, ConnectorError
 from fusionflow.modules.media_library import service as media_library_service
 from fusionflow.modules.tenancy.models import MembershipRole
 
@@ -75,8 +77,8 @@ async def list_connector_types(context: TenantContextDep, session: SessionDep) -
     role-restricted without a second call. Resolved for the CALLER's own
     role, not just the tenant - see `get_connector_access_map_for_role`."""
     types = await connector_service.list_connector_types(session)
-    access_map = await connector_service.get_connector_access_map_for_role(
-        session, tenant_id=context.tenant_id, connector_type_ids=[t.id for t in types], role=context.role
+    access_map = await connector_service.resolve_module_access_map(
+        session, tenant_id=context.tenant_id, connector_types=types, role=context.role
     )
     return [connector_service.to_type_out(t, access_map.get(t.id, "not_requested")) for t in types]
 
@@ -97,6 +99,8 @@ async def list_role_restrictions(
             display_name=t.display_name,
             member_restricted=member_restricted,
             viewer_restricted=viewer_restricted,
+            depends_on=list(MODULE_DEPENDENCIES.get(t.key, [])),
+            dependents=dependents_of(t.key),
         )
         for t, member_restricted, viewer_restricted in rows
     ]
@@ -116,6 +120,16 @@ async def set_role_restriction(
         raise HTTPException(
             status_code=400, detail="Only the member or viewer role can be restricted"
         )
+    connector_type = await session.get(ConnectorType, payload.connector_type_id)
+    if connector_type is None:
+        raise HTTPException(status_code=404, detail="Module not found")
+    if connector_type.category != ConnectorCategory.FEATURE or connector_type.key in NON_MODULE_KEYS:
+        raise HTTPException(status_code=400, detail="Only feature modules can be restricted by role")
+    tenant_access = await connector_service.resolve_module_access(
+        session, tenant_id=context.tenant_id, connector_type=connector_type, role=None
+    )
+    if tenant_access != "granted":
+        raise HTTPException(status_code=409, detail="Your business does not have this module")
     await connector_service.set_role_module_restriction(
         session,
         tenant_id=context.tenant_id,
@@ -135,7 +149,10 @@ async def list_connectors(context: TenantContextDep, session: SessionDep) -> lis
 
 @router.post("/{type_key}/connect", response_model=ConnectResponse)
 async def connect_connector(
-    type_key: str, payload: ConnectRequest, context: TenantContextDep, session: SessionDep
+    type_key: str,
+    payload: ConnectRequest,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
 ) -> ConnectResponse:
     """Start (api_key providers: complete) a connection for `type_key`."""
     try:
@@ -162,8 +179,8 @@ async def connect_connector(
 async def request_connector_access(
     type_key: str,
     payload: ConnectorAccessRequestCreate,
-    context: TenantContextDep,
     session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
 ) -> ConnectorAccessRequestOut:
     """A tenant asking an admin to grant a connector outside its
     business-template bundle. Feeds the admin's cross-tenant
@@ -229,7 +246,9 @@ async def oauth_callback(
 
 @router.post("/{instance_id}/test", response_model=ConnectorInstanceOut)
 async def test_connector(
-    instance_id: uuid.UUID, context: TenantContextDep, session: SessionDep
+    instance_id: uuid.UUID,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
 ) -> ConnectorInstanceOut:
     try:
         instance = await connector_service.test_connection(
@@ -242,7 +261,9 @@ async def test_connector(
 
 @router.post("/{instance_id}/disconnect", response_model=ConnectorInstanceOut)
 async def disconnect_connector(
-    instance_id: uuid.UUID, context: TenantContextDep, session: SessionDep
+    instance_id: uuid.UUID,
+    session: SessionDep,
+    context: TenantContext = Depends(require_role(MembershipRole.OWNER, MembershipRole.ADMIN)),
 ) -> ConnectorInstanceOut:
     """Frontend must show a confirm dialog before ever calling this."""
     try:

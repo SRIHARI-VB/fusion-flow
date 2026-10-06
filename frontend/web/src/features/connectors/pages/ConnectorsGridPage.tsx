@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Card, CardDescription, CardHeader, CardTitle } from "@fusion-flow/ui";
+import { getApiErrorDetail } from "../../../lib/access-events";
+import { useCanManageAccess } from "../../../lib/useModuleAccess";
 import { ConnectorCard } from "../components/ConnectorCard";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
@@ -27,6 +29,8 @@ export function ConnectorsGridPage() {
   const testMutation = useTestConnector();
   const disconnectMutation = useDisconnectConnector();
   const requestAccessMutation = useRequestConnectorAccess();
+  const { canManage } = useCanManageAccess();
+  const actionError = testMutation.error ?? disconnectMutation.error ?? requestAccessMutation.error;
   const [pendingDisconnectId, setPendingDisconnectId] = useState<string | null>(null);
 
   const instanceByTypeId = new Map((instances ?? []).map((instance) => [instance.connector_type_id, instance]));
@@ -41,6 +45,18 @@ export function ConnectorsGridPage() {
           connect → connected → test / disconnect lifecycle.
         </p>
       </div>
+
+      {!canManage && (
+        <p className="rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground">
+          You can see connector status, but only an Owner or Admin can connect, test, disconnect or
+          request access.
+        </p>
+      )}
+      {actionError && (
+        <p className="text-sm text-destructive">
+          {getApiErrorDetail(actionError, "That connector action failed. Please try again.")}
+        </p>
+      )}
 
       {typesLoading || instancesLoading ? (
         <p className="text-sm text-muted-foreground">Loading connectors…</p>

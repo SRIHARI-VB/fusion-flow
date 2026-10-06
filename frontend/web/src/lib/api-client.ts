@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import type { AuthTokens } from "@fusion-flow/ts-types";
 import { getAuthState } from "./auth-store";
+import { classifyForbiddenDetail, emitAccessEvent } from "./access-events";
 import { getStepUpAuthState } from "./step-up-auth-store";
 
 export const apiClient = axios.create({
@@ -69,6 +70,13 @@ apiClient.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`;
         return apiClient(original);
       }
+    }
+    if (error.response?.status === 403) {
+      // Access changed mid-session (module revoked/restricted) or a Viewer
+      // hit a write - tell the UI; never alters the rejection itself.
+      const detail = (error.response.data as { detail?: unknown } | undefined)?.detail;
+      const kind = classifyForbiddenDetail(detail);
+      if (kind) emitAccessEvent(kind, detail as string);
     }
     return Promise.reject(error);
   },

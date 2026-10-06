@@ -44,7 +44,8 @@ from fusionflow.modules.connectors.models import (
     RoleModuleRestriction,
 )
 from fusionflow.modules.connectors.schemas import ConnectorAccessRequestOut, ConnectorInstanceOut, ConnectorTypeOut
-from fusionflow.modules.tenancy.models import Business, MembershipRole
+from fusionflow.modules.connectors.module_dependencies import MODULE_DEPENDENCIES, dependents_of
+from fusionflow.modules.tenancy.models import Business, BusinessStatus, MembershipRole
 
 settings = get_connector_settings()
 
@@ -100,6 +101,14 @@ async def list_connector_types(session: AsyncSession) -> list[ConnectorType]:
     return list(rows.scalars().all())
 
 
+#: Catalog keys that only carry a resource limit (see
+#: `admin.service.LIMIT_ONLY_KEYS`), not a reachable module. Duplicated as a
+#: literal to avoid a circular import; keep in sync.
+NON_MODULE_KEYS = frozenset(
+    {"custom_fields_product", "custom_fields_service", "custom_fields_coupon", "custom_fields_offer"}
+)
+
+
 def to_type_out(connector_type: ConnectorType, access_status: str) -> ConnectorTypeOut:
     """`ConnectorTypeOut.model_validate` can't be used here since
     `access_status` isn't a column on `ConnectorType` - it's computed
@@ -120,6 +129,8 @@ def to_type_out(connector_type: ConnectorType, access_status: str) -> ConnectorT
         access_status=access_status,
         webhook_callback_url=(webhook_hint or {}).get("callback_url"),
         webhook_verify_token=(webhook_hint or {}).get("verify_token"),
+        depends_on=list(MODULE_DEPENDENCIES.get(connector_type.key, [])),
+        dependents=dependents_of(connector_type.key),
     )
 
 
@@ -217,6 +228,73 @@ async def get_role_restricted_connector_type_ids(
     return set(rows.scalars().all())
 
 
+async def resolve_module_access_map(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    connector_types: list[ConnectorType],
+    role: MembershipRole | None = None,
+) -> dict[uuid.UUID, str]:
+    """SINGLE SOURCE OF TRUTH for "what can this tenant (and role) use".
+
+    Layers, in order:
+    1. `get_connector_access_map` (override > bundle > access request).
+    2. Grandfathering: a FEATURE-category module for a pre-template ACTIVE
+       tenant (no `business_template_id`) turns "pending"/"not_requested"
+       into "granted". Explicit "denied" is never rescued. Integration-kind
+       connectors (WhatsApp/Razorpay/...) are never grandfathered.
+    3. Role overlay (only when `role` is MEMBER/VIEWER): "granted" becomes
+       "restricted" for modules with a `RoleModuleRestriction` row. Applies
+       to grandfathered-granted modules too. `role=None` (or OWNER/ADMIN)
+       means no overlay.
+
+    Returns one of granted/pending/denied/restricted/not_requested.
+    """
+    if not connector_types:
+        return {}
+    access_map = await get_connector_access_map(
+        session, tenant_id=tenant_id, connector_type_ids=[t.id for t in connector_types]
+    )
+    result = {t.id: access_map.get(t.id, "not_requested") for t in connector_types}
+
+    if any(
+        t.category == ConnectorCategory.FEATURE and result[t.id] in ("pending", "not_requested")
+        for t in connector_types
+    ):
+        business = await session.get(Business, tenant_id)
+        if (
+            business is not None
+            and business.business_template_id is None
+            and business.status == BusinessStatus.ACTIVE
+        ):
+            for t in connector_types:
+                if t.category == ConnectorCategory.FEATURE and result[t.id] in ("pending", "not_requested"):
+                    result[t.id] = "granted"
+
+    if role in (MembershipRole.MEMBER, MembershipRole.VIEWER):
+        restricted_ids = await get_role_restricted_connector_type_ids(
+            session, tenant_id=tenant_id, role=role
+        )
+        for type_id, status in list(result.items()):
+            if status == "granted" and type_id in restricted_ids:
+                result[type_id] = "restricted"
+    return result
+
+
+async def resolve_module_access(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    connector_type: ConnectorType,
+    role: MembershipRole | None = None,
+) -> str:
+    """Single-type form of `resolve_module_access_map`."""
+    result = await resolve_module_access_map(
+        session, tenant_id=tenant_id, connector_types=[connector_type], role=role
+    )
+    return result.get(connector_type.id, "not_requested")
+
+
 async def get_connector_access_map_for_role(
     session: AsyncSession,
     *,
@@ -224,40 +302,38 @@ async def get_connector_access_map_for_role(
     connector_type_ids: list[uuid.UUID],
     role: MembershipRole,
 ) -> dict[uuid.UUID, str]:
-    """`get_connector_access_map`, then overlaid with this ONE caller's
-    role-based restriction - a fifth status, "restricted", alongside the
-    other four. OWNER/ADMIN are never restrictable (see
-    `RoleModuleRestriction`'s docstring), so they get the unmodified map
-    back with no extra query. Only ever turns "granted" into "restricted"
-    - a module the tenant was never granted in the first place is still
-    "pending"/"denied"/"not_requested" regardless of role, since a
-    restriction row only makes sense on top of access the tenant already
-    has.
-    """
-    access_map = await get_connector_access_map(
-        session, tenant_id=tenant_id, connector_type_ids=connector_type_ids
+    """Id-based wrapper over `resolve_module_access_map` (grandfathering +
+    role overlay)."""
+    if not connector_type_ids:
+        return {}
+    rows = await session.execute(select(ConnectorType).where(ConnectorType.id.in_(connector_type_ids)))
+    types = list(rows.scalars().all())
+    result = await resolve_module_access_map(
+        session, tenant_id=tenant_id, connector_types=types, role=role
     )
-    if role in (MembershipRole.OWNER, MembershipRole.ADMIN):
-        return access_map
-    restricted_ids = await get_role_restricted_connector_type_ids(session, tenant_id=tenant_id, role=role)
-    return {
-        type_id: ("restricted" if type_id in restricted_ids and status == "granted" else status)
-        for type_id, status in access_map.items()
-    }
+    # Ids with no catalog row: fall back to the raw map semantics.
+    missing = [i for i in connector_type_ids if i not in result]
+    if missing:
+        result.update(
+            await get_connector_access_map(session, tenant_id=tenant_id, connector_type_ids=missing)
+        )
+    return result
 
 
 async def list_module_role_access(
     session: AsyncSession, *, tenant_id: uuid.UUID
 ) -> list[tuple[ConnectorType, bool, bool]]:
-    """FEATURE-category modules this tenant actually has, each paired with
-    whether MEMBER/VIEWER are currently restricted from it - the data the
-    Settings "Team Permissions" tab renders as a table of toggles. Modules
-    the tenant doesn't have (pending/denied/not_requested) are omitted -
-    there's nothing to restrict yet."""
+    """FEATURE-category modules this tenant actually has (including
+    grandfathered ones), each paired with whether MEMBER/VIEWER are
+    currently restricted from it - the data the Settings "Team Permissions"
+    tab renders. Modules the tenant doesn't have are omitted. LIMIT_ONLY
+    catalog keys (custom_fields_*) are not modules and are omitted."""
     types = await list_connector_types(session)
-    feature_types = [t for t in types if t.category == ConnectorCategory.FEATURE]
-    access_map = await get_connector_access_map(
-        session, tenant_id=tenant_id, connector_type_ids=[t.id for t in feature_types]
+    feature_types = [
+        t for t in types if t.category == ConnectorCategory.FEATURE and t.key not in NON_MODULE_KEYS
+    ]
+    access_map = await resolve_module_access_map(
+        session, tenant_id=tenant_id, connector_types=feature_types, role=None
     )
     granted_types = [t for t in feature_types if access_map.get(t.id) == "granted"]
 

@@ -201,6 +201,8 @@ async def _fire_schedule(session: AsyncSession, schedule: WorkflowSchedule) -> N
                 run.completed_at = _now()
                 run_status = "failed"
                 logger.warning("workflow_schedule %s run %s could not start: %s", schedule.id, run.id, exc)
+            if run.status == RunStatus.FAILED:
+                run_status = "failed"
 
     fired_at = _now()
     schedule.last_run_at = fired_at

@@ -4,6 +4,8 @@ import { Button } from "@fusion-flow/ui";
 import { CalendarView } from "./CalendarView";
 import { UpcomingListView } from "./UpcomingListView";
 import { normalizeAppointment } from "./appointmentHelpers";
+import { ModuleAccessNotice } from "../../components/auth/ModuleAccessNotice";
+import { useModuleAccess } from "../../lib/useModuleAccess";
 import { getCustomersByIds, listObjectRecords } from "./api";
 
 /**
@@ -19,6 +21,10 @@ type ViewMode = "calendar" | "list";
 /** Read-only viewer for a tenant's "appointment" business-object records. */
 export function AppointmentRecordsPage() {
   const [view, setView] = useState<ViewMode>("calendar");
+  // Legacy records show a customer name resolved via /customers; skip that
+  // lookup (and say so) when the Customers module isn't accessible.
+  const { isGranted } = useModuleAccess();
+  const customersAvailable = isGranted("customers");
 
   const { data: records = [], isLoading: recordsLoading } = useQuery({
     queryKey: ["business-objects", "records", OBJECT_TYPE_KEY],
@@ -30,11 +36,12 @@ export function AppointmentRecordsPage() {
   const { data: customersById } = useQuery({
     queryKey: ["customers", "batch", customerIds.slice().sort().join(",")],
     queryFn: () => getCustomersByIds(customerIds),
-    enabled: customerIds.length > 0,
+    enabled: customerIds.length > 0 && customersAvailable,
   });
 
   function customerLabel(customerId: string | null): string {
     if (!customerId) return "—";
+    if (!customersAvailable) return "Customer hidden";
     const customer = customersById?.get(customerId);
     if (customer === undefined) return "Loading…";
     if (customer === null) return customerId;
@@ -46,7 +53,7 @@ export function AppointmentRecordsPage() {
   // change something on screen.
   const appointments = useMemo(
     () => records.map((record) => normalizeAppointment(record, customerLabel)),
-    [records, customersById],
+    [records, customersById, customersAvailable],
   );
 
   return (

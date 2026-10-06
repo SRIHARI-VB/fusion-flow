@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@fusion-flow/ui";
 
 /**
@@ -17,6 +18,8 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   destructive?: boolean;
   busy?: boolean;
+  /** Extra body content (e.g. a dependency warning list) under the description. */
+  children?: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -29,6 +32,7 @@ export function ConfirmDialog({
   cancelLabel = "Cancel",
   destructive = false,
   busy = false,
+  children,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -47,7 +51,7 @@ export function ConfirmDialog({
           <CardTitle>{title}</CardTitle>
           {description && <CardDescription>{description}</CardDescription>}
         </CardHeader>
-        <CardContent />
+        <CardContent>{children}</CardContent>
         <CardFooter className="justify-end gap-2">
           <Button variant="outline" onClick={onCancel} disabled={busy}>
             {cancelLabel}

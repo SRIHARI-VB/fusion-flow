@@ -33,8 +33,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fusionflow.core.deps import SessionDep, TenantContext, TenantContextDep
 from fusionflow.modules.admin import service as admin_service
 from fusionflow.modules.connectors import service as connector_service
-from fusionflow.modules.connectors.models import ConnectorCategory
-from fusionflow.modules.tenancy.models import Business, BusinessStatus
 
 
 def require_module_access(module_key: str):
@@ -51,48 +49,24 @@ def require_module_access(module_key: str):
                 detail=f"Module '{module_key}' is not registered in the catalog",
             )
 
-        access_map = await connector_service.get_connector_access_map_for_role(
-            session, tenant_id=context.tenant_id, connector_type_ids=[connector_type.id], role=context.role
+        access_status = await connector_service.resolve_module_access(
+            session, tenant_id=context.tenant_id, connector_type=connector_type, role=context.role
         )
-        access_status = access_map.get(connector_type.id, "not_requested")
         if access_status == "granted":
+            # Includes grandfathered pre-template ACTIVE tenants (FEATURE
+            # modules only) - resolved centrally in the service.
             return context
         if access_status == "denied":
-            # An explicit admin revoke (ConnectorAccessOverride) or a denied
-            # ConnectorAccessRequest - the grandfathering compat branch below
-            # must NEVER rescue an explicit denial, or an admin revoking a
-            # module from a pre-template tenant would have no effect at all.
+            # Explicit admin revoke or denied request - never rescued.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your business does not have access to this module.",
             )
         if access_status == "restricted":
-            # Tenant has the module; an Owner/Admin explicitly restricted
-            # THIS caller's role from it (RoleModuleRestriction) - same
-            # "never rescued by grandfathering" guarantee as "denied" above.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your role does not have access to this module. Ask an administrator.",
             )
-
-        # COMPAT: pre-template-system tenants (business_template_id never
-        # set) get full access to fixed modules until an admin assigns
-        # them a template, or explicitly revokes/grants one - see the plan
-        # doc "Next Implementation Phase 2"/"Phase 3". Only rescues
-        # "not_requested"/"pending" (handled above, an explicit "denied"
-        # already returned). Only applies to FEATURE-category modules,
-        # never integration-kind connectors (WhatsApp/Razorpay), which
-        # already have real, working entitlement state and don't need
-        # grandfathering.
-        if connector_type.category == ConnectorCategory.FEATURE:
-            business = await session.get(Business, context.tenant_id)
-            if (
-                business is not None
-                and business.business_template_id is None
-                and business.status == BusinessStatus.ACTIVE
-            ):
-                return context
-
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your business does not have access to this module yet. "

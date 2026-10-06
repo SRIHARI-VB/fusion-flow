@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.connectors.whatsapp import service as whatsapp_service
 from fusionflow.modules.connectors.whatsapp.schemas import (
@@ -23,7 +24,7 @@ from fusionflow.modules.connectors.whatsapp.schemas import (
 )
 from fusionflow.modules.connectors.whatsapp.service import ConnectorError
 
-router = APIRouter(prefix="/connectors/{instance_id}/whatsapp", tags=["whatsapp"])
+router = APIRouter(prefix="/connectors/{instance_id}/whatsapp", tags=["whatsapp"], dependencies=[Depends(require_module_access("whatsapp"))])
 
 
 def _http(exc: ConnectorError) -> HTTPException:

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { ArrowLeft, Blocks, CreditCard, Gauge, Plug, ShieldQuestion, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Blocks, CreditCard, Gauge, Plug, ShieldQuestion, Users } from "lucide-react";
 import {
   Badge,
   type BadgeVariant,
@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@fusion-flow/ui";
+import type { TenantModuleAccess } from "../../lib/admin-types";
 import type { BusinessStatus } from "@fusion-flow/ts-types";
 import { Modal } from "../../components/Modal";
 import {
@@ -28,6 +29,7 @@ import {
   clearTenantResourceLimit,
   denyTenant,
   fetchPlans,
+  fetchRevokeImpact,
   fetchTenantConnectors,
   fetchTenantDetail,
   fetchTenantModuleAccess,
@@ -52,6 +54,14 @@ const accessStatusVariant: Record<string, BadgeVariant> = {
   denied: "destructive",
   not_requested: "outline",
 };
+
+function accessLabel(item: TenantModuleAccess): string {
+  if (item.has_override) return item.override_granted ? "Granted" : "Revoked (override)";
+  if (item.access_status === "granted") return "Granted";
+  if (item.access_status === "pending") return "Pending";
+  if (item.access_status === "denied") return "Denied";
+  return "Not requested";
+}
 
 export function TenantDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -117,9 +127,13 @@ export function TenantDetailPage() {
     void queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId, "module-access"] });
   }
   const revokeMutation = useMutation({
-    mutationFn: (typeKey: string) =>
-      setConnectorAccessOverride(tenantId, typeKey, { granted: false, reason: "Revoked by admin" }),
-    onSuccess: invalidateModuleAccess,
+    mutationFn: ({ typeKey, reason }: { typeKey: string; reason: string }) =>
+      setConnectorAccessOverride(tenantId, typeKey, { granted: false, reason }),
+    onSuccess: () => {
+      invalidateModuleAccess();
+      void queryClient.invalidateQueries({ queryKey: ["admin", "tenants", tenantId, "connectors"] });
+      closeRevokeModal();
+    },
   });
   const grantMutation = useMutation({
     mutationFn: (typeKey: string) =>
@@ -130,6 +144,27 @@ export function TenantDetailPage() {
     mutationFn: (typeKey: string) => clearConnectorAccessOverride(tenantId, typeKey),
     onSuccess: invalidateModuleAccess,
   });
+
+  // Revoke confirmation flow: fetch the impact of revoking, require a reason.
+  const [revokeTarget, setRevokeTarget] = useState<{ key: string; name: string } | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
+  const {
+    data: revokeImpact,
+    isLoading: revokeImpactLoading,
+    isError: revokeImpactError,
+  } = useQuery({
+    queryKey: ["admin", "tenants", tenantId, "revoke-impact", revokeTarget?.key],
+    queryFn: () => fetchRevokeImpact(tenantId, revokeTarget!.key),
+    enabled: revokeTarget !== null,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  function closeRevokeModal() {
+    setRevokeTarget(null);
+    setRevokeReason("");
+    revokeMutation.reset();
+  }
   const moduleActionBusy = revokeMutation.isPending || grantMutation.isPending || resetOverrideMutation.isPending;
 
   function invalidateResourceLimits() {
@@ -369,7 +404,9 @@ export function TenantDetailPage() {
         <CardContent>
           <p className="mb-3 text-xs text-muted-foreground">
             Revoke or grant a single module/connector for this tenant, independent of its business
-            template or any request - an override always wins until reset.
+            template or any request - an override always wins until cleared. Revoking blocks the
+            module's workflows, webhooks and pollers for this tenant (runs fail with a clear reason);
+            role restrictions are kept and return on re-grant.
           </p>
           <Table>
             <TableHeader>
@@ -391,14 +428,56 @@ export function TenantDetailPage() {
                     {item.category === "feature" ? "Module" : "Integration"}
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <Badge variant={accessStatusVariant[item.access_status] ?? "outline"}>
-                        {item.access_status.replace(/_/g, " ")}
+                        {accessLabel(item)}
                       </Badge>
                       {item.has_override && (
-                        <Badge variant="outline" className="text-[10px]">
-                          override: {item.override_granted ? "granted" : "revoked"}
+                        <Badge
+                          variant="outline"
+                          className="text-[10px]"
+                          title={
+                            [
+                              item.override_reason ? `Reason: ${item.override_reason}` : null,
+                              item.override_set_by ? `Set by: ${item.override_set_by}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" | ") || "Admin override - wins over template and requests"
+                          }
+                        >
+                          Override
                         </Badge>
+                      )}
+                      {!item.has_override &&
+                        item.category === "feature" &&
+                        item.access_status === "granted" &&
+                        tenant?.business_template_id === null && (
+                          <span
+                            className="text-[10px] text-muted-foreground"
+                            title="This tenant has no business template, so feature modules are granted implicitly until an explicit override is set."
+                          >
+                            Implicit (no template)
+                          </span>
+                        )}
+                      {(item.role_restrictions ?? []).map((role) => (
+                        <Badge key={role} variant="secondary" className="text-[10px] capitalize">
+                          {role} restricted
+                        </Badge>
+                      ))}
+                      {((item.depends_on ?? []).length > 0 || (item.dependents ?? []).length > 0) && (
+                        <span
+                          className="cursor-help text-[10px] text-muted-foreground underline decoration-dotted"
+                          title={[
+                            (item.depends_on ?? []).length > 0 ? `Depends on: ${(item.depends_on ?? []).join(", ")}` : "",
+                            (item.dependents ?? []).length > 0
+                              ? `Required by: ${(item.dependents ?? []).join(", ")} (revoking partially breaks these)`
+                              : "",
+                          ]
+                            .filter(Boolean)
+                            .join("\n")}
+                        >
+                          deps
+                        </span>
                       )}
                     </div>
                   </TableCell>
@@ -408,7 +487,7 @@ export function TenantDetailPage() {
                         size="sm"
                         variant="destructive"
                         disabled={moduleActionBusy}
-                        onClick={() => revokeMutation.mutate(item.connector_type_key)}
+                        onClick={() => setRevokeTarget({ key: item.connector_type_key, name: item.display_name })}
                       >
                         Revoke
                       </Button>
@@ -417,7 +496,16 @@ export function TenantDetailPage() {
                         size="sm"
                         variant="success"
                         disabled={moduleActionBusy}
-                        onClick={() => grantMutation.mutate(item.connector_type_key)}
+                        title="Grants access for this tenant regardless of template or request. Existing role restrictions are kept."
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Grant ${item.display_name} to this tenant?\n\nThis overrides its template/request status. Workflows and automations for this module resume, and any role restrictions set earlier come back.`,
+                            )
+                          ) {
+                            grantMutation.mutate(item.connector_type_key);
+                          }
+                        }}
                       >
                         Grant
                       </Button>
@@ -427,9 +515,14 @@ export function TenantDetailPage() {
                         size="sm"
                         variant="outline"
                         disabled={moduleActionBusy}
+                        title={
+                          item.category === "feature" && tenant?.business_template_id === null
+                            ? "Removes the override. This tenant has no template, so the module reverts to implicit access."
+                            : "Removes the override. Access reverts to what the business template / access request / plan gives this tenant."
+                        }
                         onClick={() => resetOverrideMutation.mutate(item.connector_type_key)}
                       >
-                        Reset to default
+                        Clear override
                       </Button>
                     )}
                   </TableCell>
@@ -532,6 +625,106 @@ export function TenantDetailPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Modal
+        open={revokeTarget !== null}
+        onClose={closeRevokeModal}
+        title={`Revoke ${revokeTarget?.name ?? "module"}?`}
+        description="Review the impact below. The reason is recorded on the override."
+      >
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (revokeTarget && revokeReason.trim()) {
+              revokeMutation.mutate({ typeKey: revokeTarget.key, reason: revokeReason.trim() });
+            }
+          }}
+        >
+          {revokeImpactLoading && <p className="text-sm text-muted-foreground">Checking impact...</p>}
+          {revokeImpactError && (
+            <p className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              Could not load the impact summary. You can still proceed, but the consequences are unknown.
+            </p>
+          )}
+          {revokeImpact && (
+            <ul className="flex flex-col gap-2 text-sm text-foreground">
+              <li>
+                <strong>{revokeImpact.active_users_count}</strong> active user
+                {revokeImpact.active_users_count === 1 ? "" : "s"} will lose access.
+              </li>
+              <li>
+                {revokeImpact.published_workflows.length === 0 ? (
+                  "No published workflows will stop running."
+                ) : (
+                  <>
+                    <strong>{revokeImpact.published_workflows.length}</strong> published workflow
+                    {revokeImpact.published_workflows.length === 1 ? "" : "s"} will stop running (runs fail):
+                    <ul className="ml-5 mt-1 list-disc text-muted-foreground">
+                      {revokeImpact.published_workflows.map((w) => (
+                        <li key={w.id}>{w.name}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </li>
+              <li>
+                <strong>{revokeImpact.connected_instances}</strong> connected channel instance
+                {revokeImpact.connected_instances === 1 ? "" : "s"} will stop receiving automations.
+              </li>
+              <li>
+                {revokeImpact.dependents.length === 0 ? (
+                  "No other modules depend on this one."
+                ) : (
+                  <>
+                    Dependent modules will be partially broken (e.g. pickers that reference this module):
+                    <ul className="ml-5 mt-1 list-disc text-muted-foreground">
+                      {revokeImpact.dependents.map((d) => (
+                        <li key={d.key}>
+                          {d.display_name} ({d.access_status.replace(/_/g, " ")})
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </li>
+              {revokeImpact.role_restrictions.length > 0 && (
+                <li className="text-muted-foreground">
+                  Existing role restrictions are retained (
+                  {revokeImpact.role_restrictions.map((r) => r.role).join(", ")}) and return on re-grant.
+                </li>
+              )}
+            </ul>
+          )}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium" htmlFor="revoke-reason">
+              Reason (required)
+            </label>
+            <textarea
+              id="revoke-reason"
+              className="h-20 w-full resize-none rounded-md border border-input bg-background p-2 text-sm text-foreground"
+              placeholder="e.g. non-payment, tenant request, abuse"
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              required
+            />
+          </div>
+          {revokeMutation.isError && <p className="text-sm text-destructive">Could not revoke the module.</p>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={closeRevokeModal}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              disabled={revokeMutation.isPending || revokeImpactLoading || !revokeReason.trim()}
+            >
+              {revokeImpactError ? "Revoke anyway" : "Revoke module"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal
         open={impersonateOpen}

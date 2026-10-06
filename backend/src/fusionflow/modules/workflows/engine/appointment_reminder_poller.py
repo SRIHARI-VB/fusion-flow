@@ -56,6 +56,7 @@ from fusionflow.modules.connectors.base import registry as connector_registry
 from fusionflow.modules.connectors.models import ConnectorState
 from fusionflow.modules.customers import service as customers_service
 from fusionflow.modules.inbox.models import Conversation
+from fusionflow.modules.workflows.engine import entitlement
 from fusionflow.modules.tenancy.models import Business
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,9 @@ def _parse_slot_start(appointment_date: str, time_slot: str) -> datetime | None:
     return datetime(d.year, d.month, d.day, hour, minute, tzinfo=_IST)
 
 
+_REQUIRED_MODULES = ("instagram", "business_objects")
+
+
 async def poll_once(session_factory: async_sessionmaker[AsyncSession] = async_session_factory) -> int:
     """One pass over every tenant. Returns the number of reminders sent."""
     async with session_factory() as session:
@@ -102,6 +106,9 @@ async def poll_once(session_factory: async_sessionmaker[AsyncSession] = async_se
 
 
 async def _process_tenant_reminders(session: AsyncSession, tenant_id: uuid.UUID) -> int:
+    if not await entitlement.tenant_has_access(session, tenant_id=tenant_id, keys=_REQUIRED_MODULES):
+        logger.info("%s: skipping tenant %s - required module access revoked", __name__, tenant_id)
+        return 0
     object_type = await bo_service.get_object_type_by_key(session, tenant_id=tenant_id, key="appointment")
     if object_type is None:
         return 0

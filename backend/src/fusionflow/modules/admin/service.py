@@ -331,11 +331,25 @@ async def get_tenant_module_access(session: AsyncSession, business_id: uuid.UUID
         return []
 
     await set_tenant_context(session, business_id)
+    from fusionflow.modules.connectors.models import RoleModuleRestriction
+    from fusionflow.modules.connectors.module_dependencies import MODULE_DEPENDENCIES, dependents_of
+
     types = [t for t in await connector_service.list_connector_types(session) if t.key not in LIMIT_ONLY_KEYS]
-    access_map = await connector_service.get_connector_access_map(
-        session, tenant_id=business_id, connector_type_ids=[t.id for t in types]
+    # Single source of truth (override > bundle > request, plus grandfathering).
+    access_map = await connector_service.resolve_module_access_map(
+        session, tenant_id=business_id, connector_types=types, role=None
     )
     overrides = await connector_service.get_connector_access_overrides(session, tenant_id=business_id)
+    restriction_rows = (
+        await session.execute(
+            select(RoleModuleRestriction.connector_type_id, RoleModuleRestriction.role).where(
+                RoleModuleRestriction.tenant_id == business_id
+            )
+        )
+    ).all()
+    restrictions_by_type: dict[uuid.UUID, list[str]] = {}
+    for type_id, role in restriction_rows:
+        restrictions_by_type.setdefault(type_id, []).append(getattr(role, "value", str(role)))
     return [
         {
             "connector_type_id": t.id,
@@ -345,9 +359,99 @@ async def get_tenant_module_access(session: AsyncSession, business_id: uuid.UUID
             "access_status": access_map.get(t.id, "not_requested"),
             "has_override": t.id in overrides,
             "override_granted": overrides[t.id].granted if t.id in overrides else None,
+            "role_restrictions": sorted(restrictions_by_type.get(t.id, [])),
+            "depends_on": list(MODULE_DEPENDENCIES.get(t.key, [])),
+            "dependents": dependents_of(t.key),
         }
         for t in types
     ]
+
+
+async def get_connector_revoke_impact(
+    session: AsyncSession, business_id: uuid.UUID, type_key: str
+) -> dict[str, Any]:
+    """What revoking `type_key` for this tenant would affect - shown in the
+    admin confirmation dialog before the override is written."""
+    if not _CONNECTORS_AVAILABLE:
+        raise AdminError("modules.connectors is not available in this checkout", status_code=501)
+
+    await set_tenant_context(session, business_id)
+    from fusionflow.modules.connectors.models import ConnectorState, RoleModuleRestriction
+    from fusionflow.modules.connectors.module_dependencies import dependents_of
+    from fusionflow.modules.workflows.engine import entitlement
+    from fusionflow.modules.workflows.models import Workflow, WorkflowVersion
+
+    connector_type = await connector_service.get_connector_type_by_key(session, type_key)
+    if connector_type is None:
+        raise AdminError(f"Unknown connector type: {type_key!r}", status_code=404)
+
+    all_types = {t.key: t for t in await connector_service.list_connector_types(session)}
+
+    dependents: list[dict[str, Any]] = []
+    dependent_types = [all_types[k] for k in dependents_of(type_key) if k in all_types]
+    if dependent_types:
+        dep_map = await connector_service.resolve_module_access_map(
+            session, tenant_id=business_id, connector_types=dependent_types, role=None
+        )
+        dependents = [
+            {"key": t.key, "display_name": t.display_name, "access_status": dep_map.get(t.id, "not_requested")}
+            for t in dependent_types
+            if dep_map.get(t.id) == "granted"
+        ]
+
+    workflow_rows = (
+        await session.execute(
+            select(Workflow, WorkflowVersion)
+            .join(WorkflowVersion, WorkflowVersion.id == Workflow.current_published_version_id)
+            .where(Workflow.tenant_id == business_id)
+        )
+    ).all()
+    published_workflows = [
+        {"id": wf.id, "name": wf.name}
+        for wf, version in workflow_rows
+        if type_key in entitlement.graph_required_keys_from_json(version.compiled_graph or version.graph)
+    ]
+
+    connected_instances = 0
+    if connector_type.category.value != "feature":
+        connected_instances = (
+            await session.execute(
+                select(func.count())
+                .select_from(ConnectorInstance)
+                .where(
+                    ConnectorInstance.tenant_id == business_id,
+                    ConnectorInstance.connector_type_id == connector_type.id,
+                    ConnectorInstance.state == ConnectorState.CONNECTED,
+                )
+            )
+        ).scalar_one()
+
+    roles = (
+        await session.execute(
+            select(RoleModuleRestriction.role).where(
+                RoleModuleRestriction.tenant_id == business_id,
+                RoleModuleRestriction.connector_type_id == connector_type.id,
+            )
+        )
+    ).scalars().all()
+
+    active_users_count = (
+        await session.execute(
+            select(func.count())
+            .select_from(Membership)
+            .where(Membership.business_id == business_id, Membership.accepted_at.is_not(None))
+        )
+    ).scalar_one()
+
+    return {
+        "type_key": connector_type.key,
+        "display_name": connector_type.display_name,
+        "dependents": dependents,
+        "published_workflows": published_workflows,
+        "connected_instances": int(connected_instances),
+        "role_restrictions": [{"role": getattr(r, "value", str(r))} for r in sorted(set(roles), key=str)],
+        "active_users_count": int(active_users_count),
+    }
 
 
 async def set_connector_access_override(

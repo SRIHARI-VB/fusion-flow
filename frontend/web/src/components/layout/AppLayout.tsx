@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { useLayoutStore } from "../../lib/layout-store";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { AccessNoticeToaster } from "./AccessNoticeToaster";
 import { PageTitleProvider } from "./page-title";
 
 export function AppLayout() {
@@ -43,6 +44,7 @@ export function AppLayout() {
           </main>
         </div>
       </div>
+      <AccessNoticeToaster />
     </PageTitleProvider>
   );
 }

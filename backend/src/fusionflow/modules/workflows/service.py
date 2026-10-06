@@ -604,8 +604,8 @@ async def list_node_types_with_templates(
             continue
         key_to_type[key] = connector_type
 
-    access_map = await connector_service.get_connector_access_map(
-        session, tenant_id=tenant_id, connector_type_ids=[t.id for t in key_to_type.values()]
+    access_map = await connector_service.resolve_module_access_map(
+        session, tenant_id=tenant_id, connector_types=list(key_to_type.values()), role=None
     )
 
     def _is_granted(key: str) -> bool:

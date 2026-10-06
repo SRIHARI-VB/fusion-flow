@@ -242,11 +242,26 @@ export default function App() {
           path="/communication/instagram/ice-breakers"
           element={<RequireModule moduleKey="instagram"><InstagramIceBreakersSettingsPage /></RequireModule>}
         />
-        <Route path="/communication/inbox" element={<InboxPage />} />
-        <Route path="/communication/quick-replies" element={<QuickRepliesPage />} />
-        <Route path="/communication/media-library" element={<MediaLibraryPage />} />
-        <Route path="/communication/broadcasts" element={<BroadcastCampaignsListPage />} />
-        <Route path="/communication/broadcasts/new" element={<BroadcastCampaignWizardPage />} />
+        <Route
+          path="/communication/inbox"
+          element={<RequireModule moduleKey="communication"><InboxPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/quick-replies"
+          element={<RequireModule moduleKey="communication"><QuickRepliesPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/media-library"
+          element={<RequireModule moduleKey="communication"><MediaLibraryPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/broadcasts"
+          element={<RequireModule moduleKey="communication"><BroadcastCampaignsListPage /></RequireModule>}
+        />
+        <Route
+          path="/communication/broadcasts/new"
+          element={<RequireModule moduleKey="communication"><BroadcastCampaignWizardPage /></RequireModule>}
+        />
 
         <Route
           path="/settings/custom-fields"

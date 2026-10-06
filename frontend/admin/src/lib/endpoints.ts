@@ -13,6 +13,7 @@ import type {
   FeatureFlag,
   FeatureFlagCatalogItem,
   FeatureFlagOverride,
+  RevokeImpact,
   GraphValidationResult,
   ImpersonateResponse,
   Plan,
@@ -89,6 +90,13 @@ export async function setConnectorAccessOverride(
   const { data } = await apiClient.put<ConnectorAccessOverride>(
     `/api/admin/tenants/${tenantId}/connectors/${typeKey}/override`,
     payload,
+  );
+  return data;
+}
+
+export async function fetchRevokeImpact(tenantId: string, typeKey: string): Promise<RevokeImpact> {
+  const { data } = await apiClient.get<RevokeImpact>(
+    `/api/admin/tenants/${tenantId}/connectors/${typeKey}/revoke-impact`,
   );
   return data;
 }

@@ -35,6 +35,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fusionflow.modules.workflows.engine import entitlement
 from fusionflow.modules.workflows.engine.conditions import evaluate_condition
 from fusionflow.modules.workflows.engine.graph import GraphEdge, GraphNode, WorkflowGraph
 from fusionflow.modules.workflows.engine.registry import (
@@ -119,6 +120,17 @@ class LoopGuardExceeded(Exception):
     so no container — not even Try/Catch — can ever catch and suppress
     it: a runaway loop must always force-fail the whole run, never be
     silently absorbed as a per-branch/per-iteration error.
+    """
+
+
+class ModuleAccessRevoked(LoopGuardExceeded):
+    """The tenant no longer has (tenant-level) access to a module/connector
+    a node touches - an admin revoked it after the workflow was published.
+
+    Subclasses `LoopGuardExceeded` on purpose: that is the engine's
+    existing "terminal, uncatchable" failure path - no container (not even
+    Try/Catch) can swallow it, `_execute_single_node` never retries it, and
+    `execute_run`/`resume_run` force-fail the whole run with its message.
     """
 
 
@@ -425,6 +437,22 @@ async def _execute_single_node(
     )
     session.add(step)
     await session.flush()
+
+    # Runtime entitlement: re-verify tenant-level access to every module/
+    # connector this node touches (admin revoke after publish). Terminal,
+    # non-retryable - see ModuleAccessRevoked.
+    cache = getattr(run, "_entitlement_cache", None)
+    if cache is None:
+        cache = {}
+        run._entitlement_cache = cache  # type: ignore[attr-defined] - per-run scratch, not a column
+    blocked_message = await entitlement.first_block_message(
+        session, tenant_id=run.tenant_id, keys=entitlement.node_required_keys(node), cache=cache
+    )
+    if blocked_message is not None:
+        step.status = StepStatus.FAILED
+        step.error = blocked_message
+        step.completed_at = _now()
+        raise ModuleAccessRevoked(blocked_message)
 
     is_container = executor.can_contain_children
 

@@ -1,4 +1,5 @@
-import { ShieldQuestion } from "lucide-react";
+import { useState } from "react";
+import { Info, ShieldQuestion } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -13,7 +14,9 @@ import {
   TableRow,
 } from "@fusion-flow/ui";
 import { useModuleRoleAccess, useSetRoleRestriction } from "../../connectors/hooks";
-import type { RestrictableRole } from "../../connectors/types";
+import { ConfirmDialog } from "../../connectors/components/ConfirmDialog";
+import { getApiErrorDetail } from "../../../lib/access-events";
+import type { ModuleRoleAccess, RestrictableRole } from "../../connectors/types";
 
 /**
  * Owner/Admin-only. Lists every FEATURE module this tenant currently has,
@@ -27,9 +30,24 @@ export function TeamPermissionsCard() {
   const { data: modules = [], isLoading, isError } = useModuleRoleAccess();
   const setRestriction = useSetRoleRestriction();
 
-  function toggle(connectorTypeId: string, role: RestrictableRole, currentlyRestricted: boolean) {
+  const [pending, setPending] = useState<{ module: ModuleRoleAccess; role: RestrictableRole } | null>(null);
+  const nameByKey = new Map(modules.map((m) => [m.key, m.display_name]));
+
+  function apply(connectorTypeId: string, role: RestrictableRole, currentlyRestricted: boolean) {
     setRestriction.mutate({ connector_type_id: connectorTypeId, role, restricted: !currentlyRestricted });
   }
+
+  function toggle(module: ModuleRoleAccess, role: RestrictableRole, currentlyRestricted: boolean) {
+    // Restricting a module others depend on silently degrades those modules
+    // for that role (e.g. no customer picker on Orders) - confirm first.
+    if (!currentlyRestricted && (module.dependents ?? []).length > 0) {
+      setPending({ module, role });
+      return;
+    }
+    apply(module.connector_type_id, role, currentlyRestricted);
+  }
+
+  const pendingDependents = (pending?.module.dependents ?? []).map((k) => nameByKey.get(k) ?? k);
 
   return (
     <Card>
@@ -45,6 +63,14 @@ export function TeamPermissionsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <p className="mb-3 flex items-start gap-2 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Owner and Admin are never restricted. Viewer is always read-only (they can look but not
+            change anything), even for modules left on. Member is restricted per module using the
+            toggles below.
+          </span>
+        </p>
         <Table>
           <TableHeader>
             <TableRow>
@@ -71,7 +97,8 @@ export function TeamPermissionsCard() {
             {!isLoading && !isError && modules.length === 0 && (
               <TableRow>
                 <TableCell colSpan={3} className="text-center text-muted-foreground">
-                  Your business doesn't have any restrictable modules yet.
+                  Your business doesn't have any restrictable modules yet. Once the platform enables
+                  modules for your business they'll appear here.
                 </TableCell>
               </TableRow>
             )}
@@ -83,7 +110,7 @@ export function TeamPermissionsCard() {
                     checked={!module.member_restricted}
                     disabled={setRestriction.isPending}
                     label={`Toggle ${module.display_name} for members`}
-                    onClick={() => toggle(module.connector_type_id, "member", module.member_restricted)}
+                    onClick={() => toggle(module, "member", module.member_restricted)}
                   />
                 </TableCell>
                 <TableCell>
@@ -91,7 +118,7 @@ export function TeamPermissionsCard() {
                     checked={!module.viewer_restricted}
                     disabled={setRestriction.isPending}
                     label={`Toggle ${module.display_name} for viewers`}
-                    onClick={() => toggle(module.connector_type_id, "viewer", module.viewer_restricted)}
+                    onClick={() => toggle(module, "viewer", module.viewer_restricted)}
                   />
                 </TableCell>
               </TableRow>
@@ -99,8 +126,30 @@ export function TeamPermissionsCard() {
           </TableBody>
         </Table>
         {setRestriction.isError && (
-          <p className="mt-2 text-sm text-destructive">Could not update that permission. Please try again.</p>
+          <p className="mt-2 text-sm text-destructive">
+            {getApiErrorDetail(setRestriction.error, "Could not update that permission. Please try again.")}
+          </p>
         )}
+        <ConfirmDialog
+          open={pending !== null}
+          title={`Restrict ${pending?.module.display_name ?? "this module"} for ${pending?.role ?? "this role"}s?`}
+          description="Other modules rely on this one, so they will be partly unavailable for that role too."
+          confirmLabel="Restrict"
+          destructive
+          busy={setRestriction.isPending}
+          onCancel={() => setPending(null)}
+          onConfirm={() => {
+            if (!pending) return;
+            apply(pending.module.connector_type_id, pending.role, false);
+            setPending(null);
+          }}
+        >
+          <ul className="list-disc pl-5 text-sm text-muted-foreground">
+            {pendingDependents.map((name) => (
+              <li key={name}>{name} - features that use {pending?.module.display_name} (e.g. pickers) will stop working</li>
+            ))}
+          </ul>
+        </ConfirmDialog>
       </CardContent>
     </Card>
   );

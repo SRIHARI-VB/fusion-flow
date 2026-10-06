@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.inbox import service as inbox_service
 from fusionflow.modules.inbox.schemas import (
@@ -28,7 +29,7 @@ from fusionflow.modules.inbox.schemas import (
 )
 from fusionflow.modules.inbox.service import InboxError
 
-router = APIRouter(prefix="/inbox", tags=["inbox"])
+router = APIRouter(prefix="/inbox", tags=["inbox"], dependencies=[Depends(require_module_access("communication"))])
 
 
 def _http(exc: InboxError) -> HTTPException:

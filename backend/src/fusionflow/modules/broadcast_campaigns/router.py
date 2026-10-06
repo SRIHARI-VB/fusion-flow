@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.broadcast_campaigns import service as campaigns_service
 from fusionflow.modules.broadcast_campaigns.models import BroadcastCampaign
@@ -17,7 +18,7 @@ from fusionflow.modules.broadcast_campaigns.schemas import (
 )
 from fusionflow.modules.broadcast_campaigns.service import BroadcastCampaignError
 
-router = APIRouter(prefix="/broadcast-campaigns", tags=["broadcast-campaigns"])
+router = APIRouter(prefix="/broadcast-campaigns", tags=["broadcast-campaigns"], dependencies=[Depends(require_module_access("communication"))])
 
 _NOT_FOUND = HTTPException(status_code=404, detail="Broadcast campaign not found")
 

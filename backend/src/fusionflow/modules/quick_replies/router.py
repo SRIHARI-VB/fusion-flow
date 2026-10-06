@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from fusionflow.core.deps import SessionDep, TenantContextDep
+from fusionflow.modules.connectors.deps import require_module_access
 from fusionflow.db.session import commit_and_keep_tenant_context
 from fusionflow.modules.quick_replies import service as quick_replies_service
 from fusionflow.modules.quick_replies.schemas import (
@@ -19,7 +20,7 @@ from fusionflow.modules.quick_replies.schemas import (
     QuickReplyUpdate,
 )
 
-router = APIRouter(prefix="/quick-replies", tags=["quick-replies"])
+router = APIRouter(prefix="/quick-replies", tags=["quick-replies"], dependencies=[Depends(require_module_access("communication"))])
 
 
 @router.get("", response_model=list[QuickReplyOut])

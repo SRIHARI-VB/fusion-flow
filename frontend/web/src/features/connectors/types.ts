@@ -52,6 +52,11 @@ export interface ConnectorType {
   oauth: boolean;
   is_enabled_globally: boolean;
   access_status: ConnectorAccessStatus;
+  // Module keys this module needs in order to work fully / module keys that
+  // need this one (e.g. customers -> dependents [orders, tickets]). Optional
+  // so an older backend response still type-checks.
+  depends_on?: string[];
+  dependents?: string[];
   // Static, tenant-independent webhook setup instructions (e.g. WhatsApp's
   // manual verify-token handshake) - null for a provider that doesn't need one.
   webhook_callback_url: string | null;
@@ -121,6 +126,8 @@ export interface ModuleRoleAccess {
   display_name: string;
   member_restricted: boolean;
   viewer_restricted: boolean;
+  depends_on?: string[];
+  dependents?: string[];
 }
 
 export type RestrictableRole = "member" | "viewer";

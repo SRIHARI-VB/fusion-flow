@@ -203,7 +203,7 @@ export function ConnectorRequestsPage() {
         <p className="text-sm text-muted-foreground">
           A tenant asking for a module or connector outside its business-template bundle - either
           picked as an add-on at signup, or requested later once already active. Approving grants
-          it immediately; the tenant can request again later if denied.
+          it immediately; the tenant can request again later if denied. Denying only declines the request - it does not revoke access already granted by a template or override (use the tenant's Modules & connectors panel for that).
         </p>
       </div>
 

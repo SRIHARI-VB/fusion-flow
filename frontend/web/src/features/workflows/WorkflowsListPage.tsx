@@ -24,6 +24,7 @@ import { useResourceLimits } from "../../lib/useResourceLimits";
 import { OptionPickerCard } from "../communication/wizard";
 import { useConnectorInstances } from "../connectors/hooks";
 import { createWorkflow, deleteWorkflow, listWorkflows } from "./api";
+import { BlockedModulesBadge } from "./components/BlockedModulesBadge";
 import { DeleteWorkflowDialog } from "./components/DeleteWorkflowDialog";
 import { StarterTemplatePicker } from "./components/StarterTemplatePicker";
 import type { Workflow, WorkflowPurpose, WorkflowStarterTemplate, WorkflowStatus } from "./types";
@@ -374,6 +375,7 @@ export function WorkflowsListPage() {
                   <span className="flex items-center gap-2">
                     <WorkflowIcon className="h-4 w-4 text-accent" />
                     {workflow.name}
+                    <BlockedModulesBadge blocked={workflow.blocked_modules} />
                   </span>
                 </TableCell>
                 <TableCell>
